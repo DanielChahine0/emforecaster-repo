@@ -1,0 +1,216 @@
+[
+  {
+    "label": "RF_EMF_MLP",
+    "params": 13952,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 0.2804680494591594,
+    "step_ms": 0.8896624999276053,
+    "components_ms": {
+      "fc1": 0.1220832618307412,
+      "act": 0.09124171138314884,
+      "fc2": 0.06714307624526936
+    },
+    "t_epoch_s": 0.05206484439161917,
+    "t_seed_100ep_s": 5.2109719279532625,
+    "t_total_5seed_100ep_s": 26.054859639766313
+  },
+  {
+    "label": "RF_EMF_CNN",
+    "params": 13952,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 1.9131701497826725,
+    "step_ms": 3.4277756999169164,
+    "components_ms": {
+      "conv1": 1.6181238631356247,
+      "act": 0.15590591981526675,
+      "fc": 0.13914036683178094
+    },
+    "t_epoch_s": 0.2072608003936087,
+    "t_seed_100ep_s": 20.756690761757394,
+    "t_total_5seed_100ep_s": 103.78345380878697
+  },
+  {
+    "label": "RF_EMF_LSTM",
+    "params": 50528,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 7.082855566598785,
+    "step_ms": 73.14697333960794,
+    "components_ms": {
+      "lstm": 6.988832266442733,
+      "fc": 0.0940233001560516
+    },
+    "t_epoch_s": 4.152893351550835,
+    "t_seed_100ep_s": 415.40266084414907,
+    "t_total_5seed_100ep_s": 2077.0133042207453
+  },
+  {
+    "label": "RF_EMF_Transformer",
+    "params": 372736,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 912.7748083905317,
+    "step_ms": 1139.5474500022829,
+    "components_ms": {
+      "fc1": 0.5125290148710815,
+      "enc": 214.06828758934356,
+      "conv1": 377.9845695663429,
+      "act": 1.7014055029057753,
+      "conv2": 318.0619746145069,
+      "fc2": 0.4460421025615291
+    },
+    "t_epoch_s": 71.1168556672521,
+    "t_seed_100ep_s": 7126.2899636594575,
+    "t_total_5seed_100ep_s": 35631.44981829729
+  },
+  {
+    "label": "Linear (DLinear)",
+    "params": 64704,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 3.9729923669559266,
+    "step_ms": 2.5791340332943946,
+    "components_ms": {
+      "decomposition": 2.88208402711038,
+      "Linear_Seasonal": 0.5832048049643657,
+      "Linear_Trend": 0.5077035348811809
+    },
+    "t_epoch_s": 0.17621544480013349,
+    "t_seed_100ep_s": 17.685112357884645,
+    "t_total_5seed_100ep_s": 88.42556178942323
+  },
+  {
+    "label": "TSMixer",
+    "params": 54323,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 11.7606687505031,
+    "step_ms": 35.64818263306127,
+    "components_ms": {
+      "revin": 1.7242834077682845,
+      "backbone": 9.747184716974136,
+      "head": 0.28920062576067973
+    },
+    "t_epoch_s": 2.090383577455456,
+    "t_seed_100ep_s": 209.22652844555364,
+    "t_total_5seed_100ep_s": 1046.1326422277682
+  },
+  {
+    "label": "PatchTST",
+    "params": 72130,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 48.805050745564095,
+    "step_ms": 103.83915508444058,
+    "components_ms": {
+      "revin": 8.083758384420149,
+      "patcher": 1.382943835960253,
+      "pos_enc": 1.7335409495442105,
+      "backbone": 37.604807575639484
+    },
+    "t_epoch_s": 6.205433090693185,
+    "t_seed_100ep_s": 621.3241898812475,
+    "t_total_5seed_100ep_s": 3106.6209494062377
+  },
+  {
+    "label": "EMForecaster",
+    "params": 2416907,
+    "in_shape": [
+      512,
+      336
+    ],
+    "batch_size": 512,
+    "epochs": 100,
+    "seeds": 5,
+    "batches": {
+      "train": 56,
+      "val": 8,
+      "test": 16
+    },
+    "fwd_ms": 350.7083792006597,
+    "step_ms": 932.859983399976,
+    "components_ms": {
+      "revin": 2.6881004037911,
+      "patcher": 0.4173800665417,
+      "patch_model": 323.37354751203475,
+      "patch_act": 16.11309410563888,
+      "patch_norm": 0.005701909538013468,
+      "base_model": 8.110555203115265
+    },
+    "t_epoch_s": 55.04582610400393,
+    "t_seed_100ep_s": 5510.193944467604,
+    "t_total_5seed_100ep_s": 27550.969722338017
+  }
+]

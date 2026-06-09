@@ -1,0 +1,45 @@
+__pycache__/
+.pytest_cache/
+emforecaster.egg-info/
+.eggs/
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+env/
+venv.nosync/
+venv_broken_backup/
+.venv.nosync/
+# iCloud-excluded folders (any name ending in .nosync)
+*.nosync/
+
+# Editor/IDE
+.vscode/
+.idea/
+.DS_Store
+emforecaster/hpc/logs/
+
+# Data
+data/
+dataset/
+
+
+checkpoint/
+**/.neptune
+test.py
+test.ipynb
+emforecaster/data_analysis/figures/
+
+# PM2 (for job scheduling and email notifications)
+ecosystem.config.js
+notify-completion.js
+package-lock.json
+package.json
+node_modules/
+
+# Temporary files
+logs/
+old_logs/
+figures/
+.ropeproject/
