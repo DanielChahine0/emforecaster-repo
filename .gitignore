@@ -43,3 +43,5 @@ logs/
 old_logs/
 figures/
 .ropeproject/
+
+.personal/

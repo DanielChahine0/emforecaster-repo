@@ -64,8 +64,8 @@ def main(job_name="test", ablation=None, ablation_id=1, quick=False):
     console = Console()
 
     # Load experimental configuration
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    args_path = os.path.join(base_dir, "emforecaster", "emforecaster", "jobs", "exp", job_name, "args.yaml")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    args_path = os.path.join(base_dir, "emforecaster", "jobs", "exp", job_name, "args.yaml")
     args = load_config(args_path)
     if ablation is not None:
         args = update_global_config(ablation, args, ablation_id)
