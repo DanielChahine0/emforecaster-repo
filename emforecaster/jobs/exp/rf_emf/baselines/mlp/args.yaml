@@ -4,7 +4,7 @@ exp:
   learning_type: "sl"
   id: "rf_emf"
   best_model_path: "checkpoint/rf_emf_baseline"
-  seed_list: [69421, 69422, 69423, 69424, 69425]
+  seed_list: [69421, 69422]
   seed: 69421
   mae: True
   neptune: True
@@ -13,7 +13,7 @@ exp:
 
 data:
   seq_load: True
-  dataset: "rf_emf_det"
+  dataset: "rf_emf_ptv"
   univariate: True
   window_stride: 1
   dtype: "float32"
