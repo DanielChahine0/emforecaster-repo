@@ -4,8 +4,8 @@ emforecaster.egg-info/
 .eggs/
 *.pyc
 
-# Virtual environments
-venv/
+# Virtual environments (no trailing slash so the venv -> venv.nosync symlink matches too)
+venv
 .venv/
 env/
 venv.nosync/

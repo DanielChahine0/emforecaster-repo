@@ -21,8 +21,8 @@ data:
   univariate: True
   window_stride: 1
   dtype: "float32"
-  seq_len: 336
-  pred_len: 96
+  seq_len: 192
+  pred_len: 336
   train_split: 0.7
   val_split: 0.1
   num_channels: 1
