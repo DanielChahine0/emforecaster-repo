@@ -13,7 +13,7 @@ exp:
 
 data:
   seq_load: True
-  dataset: "rf_emf_ptv"
+  dataset: "rf_emf_ptv2"
   univariate: True
   window_stride: 1
   dtype: "float32"
