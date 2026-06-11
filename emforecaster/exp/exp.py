@@ -822,7 +822,7 @@ class Experiment:
                 # MAE
                 if mae:
                     total_mae += (
-                        mae_loss(output, batch[1].to(self.device)) * num_batch_examples
+                        mae_loss(output.squeeze(1), batch[1].to(self.device)) * num_batch_examples
                     )
 
         preds = torch.cat(all_logits)
