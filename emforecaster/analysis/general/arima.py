@@ -95,7 +95,7 @@ def evaluate_arima_sliding(
 train, val, test = load_forecasting(
     dataset_name="rf_emf_ptv2",
     seq_len=336,
-    pred_len=96,
+    pred_len=336,
     window_stride=1,
     scale=True,
     train_split=0.7,
@@ -104,7 +104,7 @@ train, val, test = load_forecasting(
     resizing_mode="None",
     single_channel=False,
     target_channel=0,
-    clip=True,
+    clip=False,
     thresh=0.7,
     date=False,
     full_channels=False,
@@ -117,7 +117,7 @@ results = evaluate_arima_sliding(
     val=val,
     test=test,
     window_size=336,
-    pred_lengths=[96, 192, 336, 512],
+    pred_lengths=[336],
     order=(1, 0, 1),
 )
 
