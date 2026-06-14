@@ -2,12 +2,12 @@ exp:
   project_name: "rf-emf-forecasting/RF-EMF"
   model_id: "RF_EMF_Transformer"
   learning_type: "sl"
-  id: "rf_emf"
+  id: "rf_emf_ptv2_L336_O336"
   best_model_path: "checkpoint/rf_emf_baseline"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
-  neptune: True
+  neptune: False
   mps: True
   gpu_id: 2
 
@@ -18,7 +18,7 @@ data:
   window_stride: 1
   dtype: "float32"
   seq_len: 336
-  pred_len: 96
+  pred_len: 336
   train_split: 0.7
   val_split: 0.1
   num_channels: 1
