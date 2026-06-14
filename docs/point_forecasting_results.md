@@ -69,31 +69,7 @@ Table B is has early stopping: different runs stop at different epochs, so a slo
 ### Per-model summary
 Weights come from `parameters/sl/num_params` in each log. The Weights column gives the range across the four $(L, O)$ configurations so parameter counts grow with both $L$ and $O$ and are independent of dataset. The exact per-config breakdown is below. The number of epochs can be found under the length of `sl_train/loss` for each log.
 
-**Mean / epoch** divides each run's logged `parameters/running_time` by the epochs it actually ran (`len(sl_train/loss)`), then averages over every config and seed for the model. **Estimation for 100 ep** scales that mean to the 100-epoch early-stopping cap (`mean × 100`):
-
-```python
-import json, re
-from glob import glob
-from statistics import mean
-
-def to_seconds(t):  # "1hr 2min 3s" / "2min 49s" / "43s" -> seconds
-    units = {"d": 86400, "hr": 3600, "min": 60, "s": 1}
-    return sum(int(v) * units[u] for v, u in re.findall(r"(\d+)\s*(d|hr|min|s)", t))
-
-# one value per run: every (L, O) config and seed for the model.
-# deep models log as "<n>_<Model>_<id>"; the LSTM/Transformer baselines as
-# "<n>_RF_EMF_<Model>_...", so match an optional RF_EMF_ prefix.
-per_epoch = []
-for path in glob("logs/*_<Model>_*/*/log.json") + glob("logs/*_RF_EMF_<Model>_*/*/log.json"):
-    log = json.load(open(path))
-    epochs = len(log["sl_train/loss"])                   # epochs actually run
-    per_epoch.append(to_seconds(log["parameters/running_time"]) / epochs)
-
-m = mean(per_epoch)
-print(f"Mean / epoch:        {m:.2f}s")        # column 3
-print(f"Estimation (100 ep): {m * 100:.0f}s")  # column 4 (100-epoch cap), shown as "m s"
-```
-
+**Mean / epoch** divides each run's logged `parameters/running_time` by the epochs it actually ran (`len(sl_train/loss)`), then averages over every config and seed for the model. **Estimation for 100 ep** scales that mean to the 100-epoch early-stopping cap (`mean × 100`).
 
 | Model | Weights | Mean / epoch | Estimation for 100 ep |
 |---|---:|---:|---:|
