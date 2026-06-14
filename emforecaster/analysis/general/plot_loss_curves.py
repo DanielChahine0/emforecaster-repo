@@ -28,12 +28,16 @@ METRICS = {
 }
 
 
-def find_run_dirs(logs_dir, model, run_dir=None, latest=False):
+def find_run_dirs(logs_dir, model, run_dir=None, latest=False, exclude=()):
     if run_dir is not None:
         return [run_dir] if os.path.isdir(run_dir) else []
-    pattern = re.compile(rf"^\d+_{re.escape(model)}_\w+$")
+    # Deep models are logged as "<n>_<Model>_<id>", but the LSTM/Transformer
+    # baselines come through as "<n>_RF_EMF_<Model>_<dataset>_L..._O...", so we
+    # allow an optional RF_EMF_ prefix and still display the clean model name.
+    pattern = re.compile(rf"^\d+_(?:RF_EMF_)?{re.escape(model)}_\w+$")
     dirs = [d for d in glob.glob(os.path.join(logs_dir, "*"))
-            if os.path.isdir(d) and pattern.match(os.path.basename(d))]
+            if os.path.isdir(d) and pattern.match(os.path.basename(d))
+            and not any(x in os.path.basename(d) for x in exclude)]
     dirs.sort(key=os.path.getmtime)
     return dirs[-1:] if latest else dirs
 
@@ -124,7 +128,11 @@ def plot_metric(ax, logs, title, metric):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--logs-dir", default="logs")
-    p.add_argument("--models", nargs="+", default=["EMForecaster", "DLinear", "PatchTST", "TSMixer"])
+    p.add_argument("--models", nargs="+",
+                   default=["EMForecaster", "DLinear", "PatchTST", "TSMixer", "LSTM", "Transformer"])
+    p.add_argument("--exclude", nargs="*", default=["cptest"],
+                   help="skip run dirs whose name contains any of these substrings "
+                        "(default: cptest smoke-test runs; pass --exclude with no value to keep all)")
     p.add_argument("--run-dir", default=None, help="explicit run directory (use with a single model)")
     p.add_argument("--seed", type=int, default=None, help="plot one seed instead of aggregating")
     p.add_argument("--datasets", nargs="+", default=None, help="only runs trained on these datasets")
@@ -141,7 +149,8 @@ def main():
     runs = []
     for model in args.models:
         run_dirs = find_run_dirs(args.logs_dir, model,
-                                 args.run_dir if len(args.models) == 1 else None, args.latest)
+                                 args.run_dir if len(args.models) == 1 else None, args.latest,
+                                 exclude=args.exclude)
         if not run_dirs:
             print(f"[skip] {model}: no run directory found under {args.logs_dir}/")
             continue
