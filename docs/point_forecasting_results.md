@@ -73,23 +73,23 @@ Weights come from `parameters/sl/num_params` in each log. The Weights column giv
 
 | Model | Weights | Mean / epoch | Estimation for 100 ep |
 |---|---:|---:|---:|
-| DLinear      | 37k–226k  | **0.94s** | **~1m 34s** |
-| TSMixer      | 31k–135k  | 1.22s     | ~2m 2s |
-| LSTM         | 32k–58k   | 1.82s     | ~3m 2s |
-| PatchTST     | 44k–234k  | 2.02s     | ~3m 22s |
-| Transformer  | 131k–456k | 15.54s    | ~25m 54s |
-| EMForecaster | 1.5M–7.6M | 19.92s    | ~33m 12s |
+| DLinear (2023)     | 37k–226k  | **0.94s** | **~1m 34s** |
+| TSMixer (2023)     | 31k–135k  | 1.22s     | ~2m 2s |
+| LSTM (1997)        | 32k–58k   | 1.82s     | ~3m 2s |
+| PatchTST (2023)    | 44k–234k  | 2.02s     | ~3m 22s |
+| Transformer (2017) | 131k–456k | 15.54s    | ~25m 54s |
+| EMForecaster (2025)| 1.5M–7.6M | 19.92s    | ~33m 12s |
 
 Exact parameter counts per configuration (weights depend only on $L$ and $O$ and it doesn't depend on the dataset):
 
 | Model | L192 / O96 | L192 / O336 | L336 / O96 | L336 / O336 |
 |---|---:|---:|---:|---:|
-| DLinear      | 37,056    | 129,696   | 64,704    | 226,464   |
-| TSMixer      | 31,139    | 77,459    | 54,323    | 135,203   |
-| LSTM         | 32,096    | 40,016    | 50,528    | 58,448    |
-| PatchTST     | 44,194    | 136,594   | 72,130    | 233,650   |
-| Transformer  | 130,528   | 179,248   | 372,736   | 456,016   |
-| EMForecaster | 1,495,235 | 4,444,595 | 2,416,907 | 7,578,107 |
+| DLinear (2023)     | 37,056    | 129,696   | 64,704    | 226,464   |
+| TSMixer (2023)     | 31,139    | 77,459    | 54,323    | 135,203   |
+| LSTM (1997)        | 32,096    | 40,016    | 50,528    | 58,448    |
+| PatchTST (2023)    | 44,194    | 136,594   | 72,130    | 233,650   |
+| Transformer (2017) | 130,528   | 179,248   | 372,736   | 456,016   |
+| EMForecaster (2025)| 1,495,235 | 4,444,595 | 2,416,907 | 7,578,107 |
 
 ## Notes
 
