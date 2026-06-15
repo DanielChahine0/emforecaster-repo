@@ -98,3 +98,8 @@ Exact parameter counts per configuration (weights depend only on $L$ and $O$ and
 - **Training time:** Per epoch (Table C), DLinear is the fastest in all 12 settings. The two largest models are the slowest: EMForecaster (1.5M to 7.6M weights) and the Transformer (131k to 456k weights), both of which grow with $L$ and $O$. EMForecaster is slowest in 7 of the 12 settings, and the Transformer is slowest in the other 5. Those 5 are all at $L=336$, where the Transformer's parameter count rises to 373k to 456k and passes EMForecaster's per-epoch cost. Some rows in Table B look out of order (for example, EMForecaster's `O=336` looks faster than its `O=96`). This is an early-stopping artifact, and the per-epoch normalization in Table C removes it.
 - ARIMA is not trained with gradient descent, so it logs no per-epoch `running_time` and has no entry. It also does not use a learned lookback, so its L=192 and L=336 rows are the same for a given (dataset, O) in Table A.
 - Seed aggregation: for EMForecaster, DLinear, PatchTST, and TSMixer, DET rows average 5 seeds and PTV/PTV2 rows average 2 seeds. LSTM and Transformer average 2 seeds (`69421`, `69422`) in every row.
+
+---
+
+# With CP
+use similar values to the paper for the threshold and seem how CP behaves
