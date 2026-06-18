@@ -23,6 +23,7 @@ emforecaster/hpc/logs/
 # Data
 data/
 dataset/
+*.csv
 
 
 checkpoint/

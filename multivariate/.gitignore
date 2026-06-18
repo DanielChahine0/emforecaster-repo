@@ -1,0 +1,11 @@
+# Generated analysis output
+results/
+result/
+figures/
+*.png
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
