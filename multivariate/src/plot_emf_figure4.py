@@ -336,6 +336,12 @@ PANELS = [
     ("frequency", "full"), ("frequency", "zoom"),
 ]
 
+# Subset for the operators + technologies figure (no frequency panels).
+OPERATOR_TECH_PANELS = [
+    ("operator", "full"), ("operator", "zoom"),
+    ("technology", "full"), ("technology", "zoom"),
+]
+
 
 def _panel_data(df_full, df_zoom, span):
     return df_full if span == "full" else df_zoom
@@ -352,10 +358,9 @@ def _draw_panel(ax, breakdown, span, data, freq_cols, tech_cols, op_cols, fig=No
         plot_frequencies(ax, data, freq_cols, span, fig=fig)
 
 
-def build_combined_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir):
-    """One stacked figure: 6 rows (operator/tech/freq x full/zoom)."""
-    print("Building combined figure...")
-    fig, axes = plt.subplots(len(PANELS), 1, figsize=(15, 22))
+def build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols,
+                         out_dir, panels, stem):
+    """Stacked figure with one row per (breakdown, span) in `panels`, no suptitle."""
     titles = {
         ("operator", "full"):    "Operators (full period)",
         ("operator", "zoom"):    "Operators (2-week zoom)",
@@ -364,18 +369,19 @@ def build_combined_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_d
         ("frequency", "full"):   "All frequencies (full period)",
         ("frequency", "zoom"):   "All frequencies (2-week zoom)",
     }
-    for ax, (breakdown, span) in zip(axes, PANELS):
+    fig, axes = plt.subplots(len(panels), 1, figsize=(15, 3.7 * len(panels)))
+    if len(panels) == 1:
+        axes = [axes]
+    for ax, (breakdown, span) in zip(axes, panels):
         data = _panel_data(df_full, df_zoom, span)
         _draw_panel(ax, breakdown, span, data, freq_cols, tech_cols, op_cols, fig=fig)
         ax.set_title(titles[(breakdown, span)], fontsize=15, fontweight="bold")
 
-    fig.suptitle(f"EMF (V/m) time trends for {DATASET_LABEL}",
-                 fontsize=20, fontweight="bold", y=0.995)
-    fig.tight_layout(rect=(0, 0, 1, 0.99))
+    fig.tight_layout()
     fig.subplots_adjust(hspace=0.5)
 
-    png = out_dir / f"emf_figure4_{DATASET_LABEL}.png"
-    pdf = out_dir / f"emf_figure4_{DATASET_LABEL}.pdf"
+    png = out_dir / f"{stem}.png"
+    pdf = out_dir / f"{stem}.pdf"
     fig.savefig(png, dpi=300, bbox_inches="tight")
     fig.savefig(pdf, format="pdf", bbox_inches="tight")
     plt.close(fig)
@@ -424,7 +430,12 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output: {out_dir}")
 
-    build_combined_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir)
+    print("Building combined figure (operators, technologies, frequencies)...")
+    build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
+                         PANELS, f"emf_figure4_{DATASET_LABEL}")
+    print("Building operators + technologies figure (no frequency panels)...")
+    build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
+                         OPERATOR_TECH_PANELS, f"emf_operators_technology_{DATASET_LABEL}")
     build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir)
 
     print("\nDone. Files saved in:", out_dir.resolve())
