@@ -21,9 +21,9 @@ venv_broken_backup/
 emforecaster/hpc/logs/
 
 # Data
-data/
-dataset/
-*.csv
+# data/
+# dataset/
+# *.csv
 
 
 checkpoint/
