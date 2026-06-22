@@ -6,29 +6,27 @@ EMFusion Figure-4 style EMF (V/m) time-trend plots.
 
 This is a standalone editable copy that does not modify the original
 parse_continuous_periods_window.py (which reads raw .txt and only makes
-fixed zoom-window plots). Edit the CONFIG block below to change dataset,
-periods, colours, etc.
+fixed zoom-window plots). Edit the configuration block below to change the
+dataset, periods, colours, and so on.
 
-It reproduces the layout of Fig. 4 of the EMFusion paper and extends it:
-for each "breakdown" the EMF level (V/m) is plotted as a time trend, shown
-both over the whole continuous measurement period and over a ~2-week zoom.
+It reproduces the layout of Fig. 4 of the EMFusion paper and extends it: for
+each breakdown the EMF level (V/m) is plotted as a time trend, shown both over
+the whole continuous measurement period and over a roughly 2-week zoom.
 
-Breakdowns produced (each = full-period panel + zoom panel):
-  1. Operators    : W3 / Iliad / TIM / VF
-  2. Technologies : 2G / 3G / 4G / 5G
-  3. Frequencies  : every individual frequency band available (coloured by
-                    frequency, with a colour-bar instead of a 29-entry legend)
+Each breakdown produces a full-period panel and a zoom panel:
+  1. Operators: W3, Iliad, TIM, VF
+  2. Technologies: 2G, 3G, 4G, 5G
+  3. Frequencies: every individual frequency band available, coloured by
+     frequency with a colour bar instead of a 29-entry legend
 
-Outputs (into result/figure4_<dataset>_<timestamp>/plots/):
-  - One combined stacked figure : emf_figure4_<dataset>.png / .pdf
-  - Six separate per-panel files: emf_<breakdown>_<dataset>_<full|zoom>.png / .pdf
+It writes into result/figure4_<dataset>_<timestamp>/plots/ one combined stacked
+figure (emf_figure4_<dataset>.png and .pdf) and six separate per-panel files
+(emf_<breakdown>_<dataset>_<full|zoom>.png and .pdf).
 
-Input data note
-----------------
 The processed CSVs in datasets/processed/ are already E-field values in V/m
 (per frequency), so no dBm to V/m conversion is done here. EMF_2023_university
-also ships the EMF_2G/3G/4G/5G + operator + EMF_Total columns precomputed; we
-use them when present and otherwise compute them on the fly via RSS combining.
+also ships the EMF_2G/3G/4G/5G, operator, and EMF_Total columns precomputed; we
+use them when present and otherwise compute them on the fly by RSS combining.
 """
 
 import datetime as dt
@@ -42,9 +40,7 @@ import matplotlib.dates as mdates
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
-# ---------------------------------------------------------------------------
-# CONFIG  -- edit this block
-# ---------------------------------------------------------------------------
+# Configuration (edit the values below).
 
 # Project root (multivariate/) anchored to this file, so the script works
 # regardless of the current working directory.
@@ -88,8 +84,8 @@ FREQ_CLIP_QUANTILE = 0.999
 FREQ_CLIP_FACTOR = 3.0
 
 # How to render the "all frequencies" panels:
-#   "colorbar" -> colour each line by its frequency + a Frequency (MHz) colorbar
-#   "legend"   -> a (crowded) multi-column legend listing every frequency
+#   "colorbar" colours each line by frequency and adds a Frequency (MHz) colorbar
+#   "legend" draws a (crowded) multi-column legend listing every frequency
 FREQ_LEGEND_MODE = "colorbar"
 
 # Line styling per panel kind.
@@ -116,11 +112,9 @@ ZOOM_MARKER_COLOR = "#1f3b5c"
 # Colormap for the all-frequencies panels.
 FREQ_CMAP = "turbo"
 
-# ---------------------------------------------------------------------------
-# Band maps -- only used as a fallback when a dataset lacks EMF_* columns
-# (the chosen EMF_2023_university CSV already has them). Same mapping as
+# Band maps, used as a fallback when a dataset lacks EMF_* columns (the chosen
+# EMF_2023_university CSV already has them). Same mapping as
 # parse_continuous_periods_window.py for the 2024 (decimal) frequency set.
-# ---------------------------------------------------------------------------
 TECH_BANDS = {
     "2G": [935.0, 945.0, 955.0],
     "3G": [2120.0, 2137.5, 2150.0, 2162.5],
@@ -142,13 +136,11 @@ mpl.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
 mpl.rcParams["font.size"] = 16
 
 
-# ---------------------------------------------------------------------------
-# Data loading / preparation
-# ---------------------------------------------------------------------------
+# Data loading and preparation
 def _parse_timestamps(series: pd.Series) -> pd.Series:
     """Parse timestamps, tolerating ISO and day-first (DD/MM/YYYY) formats."""
     parsed = pd.to_datetime(series, errors="coerce")
-    if parsed.isna().mean() > 0.5:  # mostly failed -> try day-first
+    if parsed.isna().mean() > 0.5:  # mostly failed, retry with day-first
         parsed = pd.to_datetime(series, errors="coerce", dayfirst=True)
     return parsed
 
@@ -262,9 +254,7 @@ def _clip_extreme_freq_spikes(df: pd.DataFrame, cols: list) -> pd.DataFrame:
     return out
 
 
-# ---------------------------------------------------------------------------
 # Plotting helpers
-# ---------------------------------------------------------------------------
 def _format_time_axis(ax, span: str):
     """Month ticks for the full period, 2-day ticks for the zoom."""
     if span == "full":
@@ -336,9 +326,8 @@ def plot_frequencies(ax, df, freq_cols, span, fig=None):
         cb.set_label("Frequency (MHz)", fontsize=13, fontweight="bold")
 
 
-# ---------------------------------------------------------------------------
-# Figure builders
-# ---------------------------------------------------------------------------
+# Figure builders.
+
 # Panel spec: (breakdown, span). Mirrors Fig. 4 (operator/tech, full+zoom)
 # plus an all-frequencies pair.
 PANELS = [
@@ -368,19 +357,19 @@ def build_combined_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_d
     print("Building combined figure...")
     fig, axes = plt.subplots(len(PANELS), 1, figsize=(15, 22))
     titles = {
-        ("operator", "full"):    "Operators - full period",
-        ("operator", "zoom"):    "Operators - 2-week zoom",
-        ("technology", "full"):  "Technologies - full period",
-        ("technology", "zoom"):  "Technologies - 2-week zoom",
-        ("frequency", "full"):   "All frequencies - full period",
-        ("frequency", "zoom"):   "All frequencies - 2-week zoom",
+        ("operator", "full"):    "Operators (full period)",
+        ("operator", "zoom"):    "Operators (2-week zoom)",
+        ("technology", "full"):  "Technologies (full period)",
+        ("technology", "zoom"):  "Technologies (2-week zoom)",
+        ("frequency", "full"):   "All frequencies (full period)",
+        ("frequency", "zoom"):   "All frequencies (2-week zoom)",
     }
     for ax, (breakdown, span) in zip(axes, PANELS):
         data = _panel_data(df_full, df_zoom, span)
         _draw_panel(ax, breakdown, span, data, freq_cols, tech_cols, op_cols, fig=fig)
         ax.set_title(titles[(breakdown, span)], fontsize=15, fontweight="bold")
 
-    fig.suptitle(f"EMF (V/m) time trends - {DATASET_LABEL}",
+    fig.suptitle(f"EMF (V/m) time trends for {DATASET_LABEL}",
                  fontsize=20, fontweight="bold", y=0.995)
     fig.tight_layout(rect=(0, 0, 1, 0.99))
     fig.subplots_adjust(hspace=0.5)
@@ -409,12 +398,8 @@ def build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_
         print(f"  saved {stem}.png / .pdf")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main():
     print("EMFusion Figure-4 style EMF time-trend plots")
-    print("=" * 70)
 
     if not DATASET_CSV.exists():
         print(f"Dataset not found: {DATASET_CSV.resolve()}")
