@@ -46,28 +46,50 @@ from matplotlib.colors import Normalize
 # regardless of the current working directory.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# Dataset to plot.
-DATASET_CSV = PROJECT_ROOT / "datasets/processed/EMF_2023_university_5_with_PTV.csv"
-
-# Short label used in titles / file names. Falls back to the CSV stem.
-DATASET_LABEL = "EMF_2023_university"
-
 # Name of the timestamp column in the CSV.
 TIMESTAMP_COL = "Timestamp"
 
-# Full continuous measurement period shown in the "full period" panels.
-# (Matches the longest continuous stretch used elsewhere in the project and
-#  the x-range of EMFusion Fig. 4.)
-FULL_PERIOD = {
-    "start": dt.datetime(2023, 7, 26, 16, 49, 2),
-    "end":   dt.datetime(2024, 3, 11, 5, 8, 28),
-}
+# Datasets to plot. Each entry is a dict:
+#   csv          path to a processed CSV
+#   label        short label used in titles / file names
+#   full_period  {"start", "end"} for the full-period panels, or None to use
+#                the dataset's own min/max timestamp
+#   zoom_window  {"start", "end"} for the 2-week zoom, or None to auto-pick the
+#                densest ~2-week window in the data
+# The 2023 university entry keeps its curated continuous window (the longest
+# continuous stretch, matching EMFusion Fig. 4); the UH/ED datasets auto-derive
+# their windows from their own date ranges.
+DATASETS = [
+    {
+        "csv": PROJECT_ROOT / "datasets/processed/EMF_2023_university_5_with_PTV.csv",
+        "label": "EMF_2023_university",
+        "full_period": {
+            "start": dt.datetime(2023, 7, 26, 16, 49, 2),
+            "end":   dt.datetime(2024, 3, 11, 5, 8, 28),
+        },
+        "zoom_window": {
+            "start": dt.datetime(2023, 11, 10, 0, 0, 0),
+            "end":   dt.datetime(2023, 11, 25, 0, 0, 0),
+        },
+    },
+    {"csv": PROJECT_ROOT / "datasets/processed/UH2022.csv", "label": "UH_2022",
+     "full_period": None, "zoom_window": None},
+    {"csv": PROJECT_ROOT / "datasets/processed/ED2022.csv", "label": "ED_2022",
+     "full_period": None, "zoom_window": None},
+    {"csv": PROJECT_ROOT / "datasets/processed/UH2024.csv", "label": "UH_2024",
+     "full_period": None, "zoom_window": None},
+    {"csv": PROJECT_ROOT / "datasets/processed/ED2024.csv", "label": "ED_2024",
+     "full_period": None, "zoom_window": None},
+]
 
-# ~2-week zoom window (matches EMFusion Fig. 4 zoom panels).
-ZOOM_WINDOW = {
-    "start": dt.datetime(2023, 11, 10, 0, 0, 0),
-    "end":   dt.datetime(2023, 11, 25, 0, 0, 0),
-}
+# Length of the auto-derived zoom window, in days.
+ZOOM_DAYS = 14
+
+# Set per dataset inside main(); the plotting helpers read these when drawing
+# the zoom markers and naming the output files.
+DATASET_LABEL = DATASETS[0]["label"]
+FULL_PERIOD = DATASETS[0]["full_period"]
+ZOOM_WINDOW = DATASETS[0]["zoom_window"]
 
 # Drop points outside +/- N std (per-series) before plotting. Fig. 4 shows the
 # raw spikes, so this is off by default; set to a number (e.g. 4) to clean up.
@@ -224,6 +246,40 @@ def load_dataset(csv_path: Path):
 
 def slice_period(df: pd.DataFrame, start: dt.datetime, end: dt.datetime) -> pd.DataFrame:
     return df[(df.index >= start) & (df.index <= end)]
+
+
+def auto_full_period(df: pd.DataFrame) -> dict:
+    """Full period spanning the dataset's own first and last timestamp."""
+    return {"start": df.index.min().to_pydatetime(),
+            "end":   df.index.max().to_pydatetime()}
+
+
+def auto_zoom_window(df: pd.DataFrame, days: int = ZOOM_DAYS) -> dict:
+    """Center a `days`-long zoom on the dataset's temporal midpoint.
+
+    The window is snapped to the nearest dense window only when the midpoint
+    falls in a data gap, so the zoom panel stays populated for every dataset.
+    """
+    idx = df.index
+    mid = pd.Timestamp(idx.min() + (idx.max() - idx.min()) / 2).normalize()
+    span = pd.Timedelta(days=days)
+    mid_start = mid - pd.Timedelta(days=days // 2)
+
+    daily = pd.Series(1, index=idx).resample("1D").sum()
+    roll = daily.rolling(f"{days}D").sum()
+    best = roll.max() if roll.notna().any() else 0
+    centered = ((idx >= mid_start) & (idx < mid_start + span)).sum()
+
+    if best and centered < 0.6 * best:
+        # Midpoint sits in a gap: snap to the densest window nearest the middle.
+        dense_ends = roll[roll >= 0.95 * best].index
+        end_day = min(dense_ends, key=lambda d: abs(d - (mid_start + span)))
+        start = pd.Timestamp(end_day).normalize() - pd.Timedelta(days=days - 1)
+    else:
+        start = mid_start
+
+    return {"start": start.to_pydatetime(),
+            "end":   (start + span).to_pydatetime()}
 
 
 def _drop_outliers(df: pd.DataFrame, cols: list, n_std) -> pd.DataFrame:
@@ -404,15 +460,24 @@ def build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_
         print(f"  saved {stem}.png / .pdf")
 
 
-def main():
-    print("EMFusion Figure-4 style EMF time-trend plots")
+def plot_dataset(ds: dict):
+    """Build all Figure-4 style plots for a single dataset entry."""
+    global DATASET_LABEL, FULL_PERIOD, ZOOM_WINDOW
 
-    if not DATASET_CSV.exists():
-        print(f"Dataset not found: {DATASET_CSV.resolve()}")
-        print("  (run this script from the multivariate/ project root)")
+    csv = ds["csv"]
+    if not csv.exists():
+        print(f"Dataset not found: {csv.resolve()}")
         return
 
-    df, freq_cols, tech_cols, op_cols = load_dataset(DATASET_CSV)
+    DATASET_LABEL = ds["label"]
+    print(f"\n=== {DATASET_LABEL} ===")
+    df, freq_cols, tech_cols, op_cols = load_dataset(csv)
+    if df.empty:
+        print("  no rows after timestamp parsing; skipping")
+        return
+
+    FULL_PERIOD = ds.get("full_period") or auto_full_period(df)
+    ZOOM_WINDOW = ds.get("zoom_window") or auto_zoom_window(df)
 
     df_full = slice_period(df, FULL_PERIOD["start"], FULL_PERIOD["end"])
     df_zoom = slice_period(df, ZOOM_WINDOW["start"], ZOOM_WINDOW["end"])
@@ -422,23 +487,26 @@ def main():
           f"{ZOOM_WINDOW['end']:%Y-%m-%d}  ({len(df_zoom):,} pts)")
 
     if df_full.empty and df_zoom.empty:
-        print("No data in the configured periods; check FULL_PERIOD/ZOOM_WINDOW.")
+        print("  no data in the derived periods; skipping")
         return
 
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = PROJECT_ROOT / "src" / "result" / f"figure4_{DATASET_LABEL}_{timestamp}" / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Output: {out_dir}")
+    print(f"  output: {out_dir}")
 
-    print("Building combined figure (operators, technologies, frequencies)...")
     build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
                          PANELS, f"emf_figure4_{DATASET_LABEL}")
-    print("Building operators + technologies figure (no frequency panels)...")
     build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
                          OPERATOR_TECH_PANELS, f"emf_operators_technology_{DATASET_LABEL}")
     build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir)
 
-    print("\nDone. Files saved in:", out_dir.resolve())
+
+def main():
+    print("EMFusion Figure-4 style EMF time-trend plots")
+    for ds in DATASETS:
+        plot_dataset(ds)
+    print("\nDone.")
 
 
 if __name__ == "__main__":
