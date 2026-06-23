@@ -19,8 +19,8 @@ from pathlib import Path
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['Times New Roman']
 
-def create_single_heatmap(title, data, output_folder, trim_prefix=None):
-    """Create correlation heatmap for given data."""
+def create_single_heatmap(title, data, output_folder, filename, trim_prefix=None):
+    """Create correlation heatmap for given data, saved as filename in output_folder."""
     if data.empty or len(data.columns) < 2:
         print(f"   ⚠️  Skipping {title}: insufficient data ({len(data.columns)} columns)")
         return
@@ -71,13 +71,12 @@ def create_single_heatmap(title, data, output_folder, trim_prefix=None):
     plt.tight_layout()
     
     # Save heatmap
-    safe_title = title.replace(" ", "_").lower().replace("(", "").replace(")", "").replace("-", "_")
-    output_path_png = output_folder / f"heatmap_{safe_title}.png"
-    output_path_pdf = output_folder / f"heatmap_{safe_title}.pdf"
-    
+    output_path_png = output_folder / f"{filename}.png"
+    output_path_pdf = output_folder / f"{filename}.pdf"
+
     fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
     fig.savefig(output_path_pdf, dpi=300, bbox_inches="tight")
-    print(f"   ✅ Saved heatmap: {output_path_png.name}")
+    print(f"   Saved: {output_path_png.name}")
     plt.close(fig)
 
 def get_actual_frequency_columns(df):
@@ -103,61 +102,57 @@ def get_actual_frequency_columns(df):
     
     return freq_cols
 
-def generate_dataset_heatmaps(df, dataset_name, output_folder):
-    """Generate 3 types of heatmaps for a single dataset."""
-    
-    # Create heatmaps subfolder
-    heatmaps_folder = output_folder / "heatmaps"
-    heatmaps_folder.mkdir(exist_ok=True)
-    
-    print(f"   📊 Generating heatmaps for {dataset_name}...")
-    
-    # 0. Generate trio heatmap (Frequency | Technology | Operators with shared legend)
-    create_dataset_trio_heatmap(df, dataset_name, output_folder)
-    
-    # 1. Frequency correlation heatmap (using actual frequencies in dataset)
+def generate_dataset_heatmaps(df, dataset_name, dataset_folder):
+    """Generate the per-dataset heatmaps into dataset_folder."""
+    dataset_folder.mkdir(parents=True, exist_ok=True)
+
+    print(f"   Generating heatmaps for {dataset_name}...")
+
+    # 0. Combined trio heatmap (Frequency | Technology | Operators).
+    create_dataset_trio_heatmap(df, dataset_name, dataset_folder)
+
+    # 1. Frequency correlation heatmap (using actual frequencies in dataset).
     freq_cols = get_actual_frequency_columns(df)
     if len(freq_cols) >= 2:
         freq_data = df[freq_cols].ffill().bfill()
         if not freq_data.empty and freq_data.notna().sum().sum() > 0:
-            title = f"{dataset_name} - Frequency Bands"
-            create_single_heatmap(title, freq_data, heatmaps_folder)
+            create_single_heatmap(f"{dataset_name} - Frequency Bands", freq_data,
+                                  dataset_folder, "Frequency bands")
         else:
-            print(f"   ⚠️  No valid frequency data available for {dataset_name}")
+            print(f"   No valid frequency data for {dataset_name}")
     else:
-        print(f"   ⚠️  Insufficient frequency columns for {dataset_name} ({len(freq_cols)} found)")
-    
-    # 2. Technology aggregation heatmap
-    tech_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('EMF_') 
+        print(f"   Insufficient frequency columns for {dataset_name} ({len(freq_cols)} found)")
+
+    # 2. Technology aggregation heatmap.
+    tech_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('EMF_')
                  and any(tech in col for tech in ['2G', '3G', '4G', '5G'])]
     if len(tech_cols) >= 2:
         tech_data = df[tech_cols].ffill().bfill()
         if not tech_data.empty and tech_data.notna().sum().sum() > 0:
-            title = f"{dataset_name} - Technology Bands"
-            create_single_heatmap(title, tech_data, heatmaps_folder, "EMF_")
+            create_single_heatmap(f"{dataset_name} - Technology Bands", tech_data,
+                                  dataset_folder, "Technology bands", "EMF_")
         else:
-            print(f"   ⚠️  No valid technology data available for {dataset_name}")
+            print(f"   No valid technology data for {dataset_name}")
     else:
-        print(f"   ⚠️  Insufficient technology columns for {dataset_name} ({len(tech_cols)} found)")
-    
-    # 3. Operator aggregation heatmap
-    operator_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('EMF_') 
+        print(f"   Insufficient technology columns for {dataset_name} ({len(tech_cols)} found)")
+
+    # 3. Operator aggregation heatmap.
+    operator_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('EMF_')
                      and any(op in col for op in ['Iliad', 'TIM', 'VF', 'W3'])]
     if len(operator_cols) >= 2:
         operator_data = df[operator_cols].ffill().bfill()
         if not operator_data.empty and operator_data.notna().sum().sum() > 0:
-            title = f"{dataset_name} - Operators"
-            create_single_heatmap(title, operator_data, heatmaps_folder, "EMF_")
+            create_single_heatmap(f"{dataset_name} - Operators", operator_data,
+                                  dataset_folder, "Operators", "EMF_")
         else:
-            print(f"   ⚠️  No valid operator data available for {dataset_name}")
+            print(f"   No valid operator data for {dataset_name}")
     else:
-        print(f"   ⚠️  Insufficient operator columns for {dataset_name} ({len(operator_cols)} found)")
+        print(f"   Insufficient operator columns for {dataset_name} ({len(operator_cols)} found)")
 
-def create_dataset_trio_heatmap(df, dataset_name, output_folder):
-    """Create a 1x3 heatmap (Frequency, Technology, Operator) with common legend on the right."""
-    heatmaps_folder = output_folder / "heatmaps"
-    heatmaps_folder.mkdir(exist_ok=True)
-    
+def create_dataset_trio_heatmap(df, dataset_name, dataset_folder):
+    """Create a 1x3 heatmap (Frequency, Technology, Operator) with a shared legend."""
+    dataset_folder.mkdir(parents=True, exist_ok=True)
+
     # Get data for each type
     freq_cols = get_actual_frequency_columns(df)
     tech_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('EMF_') 
@@ -248,23 +243,19 @@ def create_dataset_trio_heatmap(df, dataset_name, output_folder):
     # Reduce spacing between subplots
     plt.subplots_adjust(left=0.05, right=0.90, top=0.95, bottom=0.15, wspace=0.2)
     
-    # Save the trio plot
-    safe_name = dataset_name.replace(" ", "_").replace("-", "_").lower()
-    output_path_png = heatmaps_folder / f"heatmap_trio_{safe_name}.png"
-    output_path_pdf = heatmaps_folder / f"heatmap_trio_{safe_name}.pdf"
-    
-    fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
-    fig.savefig(output_path_pdf, dpi=300, bbox_inches="tight")
-    print(f"   ✅ Saved trio heatmap: {output_path_png.name}")
+    # Save the combined trio plot.
+    name = "Combined (frequency, technology, operators)"
+    fig.savefig(dataset_folder / f"{name}.png", dpi=300, bbox_inches="tight")
+    fig.savefig(dataset_folder / f"{name}.pdf", dpi=300, bbox_inches="tight")
+    print(f"   Saved: {name}.png")
     plt.close(fig)
 
-def create_all_datasets_comparison_heatmap(datasets_info, output_folder):
-    """Create a comprehensive comparison heatmap showing all datasets in one view."""
-    heatmaps_folder = output_folder / "heatmaps"
-    heatmaps_folder.mkdir(exist_ok=True)
-    
+def create_all_datasets_comparison_heatmap(datasets_info, output_root):
+    """Create a comparison heatmap showing all datasets in one view."""
+    output_root.mkdir(parents=True, exist_ok=True)
+
     if len(datasets_info) < 2:
-        print("   ⚠️  Need at least 2 datasets for comparison heatmap")
+        print("   Need at least 2 datasets for comparison heatmap")
         return
     
     # Create 3 x len(datasets) subplot
@@ -276,7 +267,7 @@ def create_all_datasets_comparison_heatmap(datasets_info, output_folder):
     fig.suptitle('EMF Data Correlation Analysis: All Datasets Comparison', 
                  fontsize=20, fontweight='bold', y=0.98)
     
-    for row, (df, dataset_name) in enumerate(datasets_info):
+    for row, (df, dataset_name, _folder) in enumerate(datasets_info):
         # Get data for each type
         freq_cols = get_actual_frequency_columns(df)
         tech_cols = [col for col in df.columns if isinstance(col, str) and col.startswith('EMF_') 
@@ -356,30 +347,25 @@ def create_all_datasets_comparison_heatmap(datasets_info, output_folder):
     
     plt.tight_layout()
     
-    # Save the combined plot
-    output_path_png = heatmaps_folder / "heatmap_all_datasets_comparison.png"
-    output_path_pdf = heatmaps_folder / "heatmap_all_datasets_comparison.pdf"
-    
-    fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
-    fig.savefig(output_path_pdf, dpi=300, bbox_inches="tight")
-    print(f"   ✅ Saved comparison heatmap: {output_path_png.name}")
+    # Save the comparison grid at the Heatmaps root.
+    name = "All datasets comparison"
+    fig.savefig(output_root / f"{name}.png", dpi=300, bbox_inches="tight")
+    fig.savefig(output_root / f"{name}.pdf", dpi=300, bbox_inches="tight")
+    print(f"   Saved: {name}.png")
     plt.close(fig)
 
-def generate_all_heatmaps(datasets_info, output_folder):
-    """
-    Generate all heatmaps for the given datasets.
-    
+def generate_all_heatmaps(datasets_info, output_root):
+    """Generate all heatmaps for the given datasets.
+
     Args:
-        datasets_info: List of tuples (dataframe, dataset_name)
-        output_folder: Path object for output folder
+        datasets_info: list of (dataframe, dataset_name, folder_name) tuples
+        output_root: Path of the Heatmaps root folder
     """
-    print("📊 Generating correlation heatmaps...")
-    
-    # Generate individual heatmaps for each dataset (3 per dataset)
-    for df, dataset_name in datasets_info:
-        generate_dataset_heatmaps(df, dataset_name, output_folder)
-    
-    # Generate comparison heatmap showing all datasets
-    create_all_datasets_comparison_heatmap(datasets_info, output_folder)
-    
-    print(f"✅ All heatmaps saved in: {output_folder}/heatmaps/")
+    print("Generating correlation heatmaps...")
+
+    for df, dataset_name, folder in datasets_info:
+        generate_dataset_heatmaps(df, dataset_name, output_root / folder)
+
+    create_all_datasets_comparison_heatmap(datasets_info, output_root)
+
+    print(f"All heatmaps saved in: {output_root}")
