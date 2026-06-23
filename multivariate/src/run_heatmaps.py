@@ -25,10 +25,15 @@ from heatmap_generator import generate_all_heatmaps, get_actual_frequency_column
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# (csv path, short label) pairs. Add more rows to also get the comparison grid.
+# (csv path, short label) pairs. With more than one row a comparison grid across
+# all datasets is also produced.
 DATASETS = [
     (PROJECT_ROOT / "datasets/processed/EMF_2023_university_5_with_PTV.csv",
      "EMF_2023_university"),
+    (PROJECT_ROOT / "datasets/processed/UH2022.csv", "UH_2022"),
+    (PROJECT_ROOT / "datasets/processed/ED2022.csv", "ED_2022"),
+    (PROJECT_ROOT / "datasets/processed/UH2024.csv", "UH_2024"),
+    (PROJECT_ROOT / "datasets/processed/ED2024.csv", "ED_2024"),
 ]
 
 # Per-frequency extreme-spike removal, mirroring plot_emf_figure4.py. Some raw
