@@ -51,11 +51,12 @@ TIMESTAMP_COL = "Timestamp"
 
 # Datasets to plot. Each entry is a dict:
 #   csv          path to a processed CSV
-#   label        short label used in titles / file names
+#   label        short label used in the plot titles / log output
+#   folder       output sub-folder under result/EMF levels/
 #   full_period  {"start", "end"} for the full-period panels, or None to use
 #                the dataset's own min/max timestamp
-#   zoom_window  {"start", "end"} for the 2-week zoom, or None to auto-pick the
-#                densest ~2-week window in the data
+#   zoom_window  {"start", "end"} for the 2-week zoom, or None to centre it on
+#                the dataset's temporal midpoint
 # The 2023 university entry keeps its curated continuous window (the longest
 # continuous stretch, matching EMFusion Fig. 4); the UH/ED datasets auto-derive
 # their windows from their own date ranges.
@@ -63,6 +64,7 @@ DATASETS = [
     {
         "csv": PROJECT_ROOT / "datasets/processed/EMF_2023_university_5_with_PTV.csv",
         "label": "EMF_2023_university",
+        "folder": "EMF2023",
         "full_period": {
             "start": dt.datetime(2023, 7, 26, 16, 49, 2),
             "end":   dt.datetime(2024, 3, 11, 5, 8, 28),
@@ -73,13 +75,13 @@ DATASETS = [
         },
     },
     {"csv": PROJECT_ROOT / "datasets/processed/UH2022.csv", "label": "UH_2022",
-     "full_period": None, "zoom_window": None},
+     "folder": "UH2022", "full_period": None, "zoom_window": None},
     {"csv": PROJECT_ROOT / "datasets/processed/ED2022.csv", "label": "ED_2022",
-     "full_period": None, "zoom_window": None},
+     "folder": "ED2022", "full_period": None, "zoom_window": None},
     {"csv": PROJECT_ROOT / "datasets/processed/UH2024.csv", "label": "UH_2024",
-     "full_period": None, "zoom_window": None},
+     "folder": "UH2024", "full_period": None, "zoom_window": None},
     {"csv": PROJECT_ROOT / "datasets/processed/ED2024.csv", "label": "ED_2024",
-     "full_period": None, "zoom_window": None},
+     "folder": "ED2024", "full_period": None, "zoom_window": None},
 ]
 
 # Length of the auto-derived zoom window, in days.
@@ -398,6 +400,17 @@ OPERATOR_TECH_PANELS = [
     ("technology", "full"), ("technology", "zoom"),
 ]
 
+# Output file name (the view) for each standalone panel. The dataset and the
+# figure type are conveyed by the containing folder, not the file name.
+PANEL_FILENAMES = {
+    ("operator", "full"):    "Operators (full period)",
+    ("operator", "zoom"):    "Operators (2 week zoom)",
+    ("technology", "full"):  "Technologies (full period)",
+    ("technology", "zoom"):  "Technologies (2 week zoom)",
+    ("frequency", "full"):   "All frequencies (full period)",
+    ("frequency", "zoom"):   "All frequencies (2 week zoom)",
+}
+
 
 def _panel_data(df_full, df_zoom, span):
     return df_full if span == "full" else df_zoom
@@ -453,7 +466,7 @@ def build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_
         _draw_panel(ax, breakdown, span, data, freq_cols, tech_cols, op_cols, fig=fig)
         fig.tight_layout()
 
-        stem = f"emf_{breakdown}_{DATASET_LABEL}_{span}"
+        stem = PANEL_FILENAMES[(breakdown, span)]
         fig.savefig(out_dir / f"{stem}.png", dpi=300, bbox_inches="tight")
         fig.savefig(out_dir / f"{stem}.pdf", format="pdf", bbox_inches="tight")
         plt.close(fig)
@@ -490,15 +503,14 @@ def plot_dataset(ds: dict):
         print("  no data in the derived periods; skipping")
         return
 
-    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = PROJECT_ROOT / "src" / "result" / f"figure4_{DATASET_LABEL}_{timestamp}" / "plots"
+    out_dir = PROJECT_ROOT / "src" / "result" / "EMF levels" / ds["folder"]
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"  output: {out_dir}")
 
     build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
-                         PANELS, f"emf_figure4_{DATASET_LABEL}")
+                         PANELS, "Combined (operators, technologies, frequencies)")
     build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
-                         OPERATOR_TECH_PANELS, f"emf_operators_technology_{DATASET_LABEL}")
+                         OPERATOR_TECH_PANELS, "Combined (operators, technologies)")
     build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir)
 
 
