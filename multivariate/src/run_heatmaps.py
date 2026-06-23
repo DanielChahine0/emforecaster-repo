@@ -16,7 +16,6 @@ Outputs (into src/result/heatmaps_<dataset>_<timestamp>/heatmaps/):
   - heatmap_all_datasets_comparison.*          (only when >= 2 datasets are listed)
 """
 
-import datetime as dt
 from pathlib import Path
 
 import pandas as pd
@@ -25,15 +24,16 @@ from heatmap_generator import generate_all_heatmaps, get_actual_frequency_column
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# (csv path, short label) pairs. With more than one row a comparison grid across
-# all datasets is also produced.
+# (csv path, label, output folder) tuples. The label is shown in the figure
+# titles; the folder is the sub-folder under result/Heatmaps/. With more than one
+# dataset a comparison grid across all of them is also produced.
 DATASETS = [
     (PROJECT_ROOT / "datasets/processed/EMF_2023_university_5_with_PTV.csv",
-     "EMF_2023_university"),
-    (PROJECT_ROOT / "datasets/processed/UH2022.csv", "UH_2022"),
-    (PROJECT_ROOT / "datasets/processed/ED2022.csv", "ED_2022"),
-    (PROJECT_ROOT / "datasets/processed/UH2024.csv", "UH_2024"),
-    (PROJECT_ROOT / "datasets/processed/ED2024.csv", "ED_2024"),
+     "EMF_2023_university", "EMF2023"),
+    (PROJECT_ROOT / "datasets/processed/UH2022.csv", "UH_2022", "UH2022"),
+    (PROJECT_ROOT / "datasets/processed/ED2022.csv", "ED_2022", "ED2022"),
+    (PROJECT_ROOT / "datasets/processed/UH2024.csv", "UH_2024", "UH2024"),
+    (PROJECT_ROOT / "datasets/processed/ED2024.csv", "ED_2024", "ED2024"),
 ]
 
 # Per-frequency extreme-spike removal, mirroring plot_emf_figure4.py. Some raw
@@ -64,10 +64,9 @@ def clip_frequency_artifacts(df):
 
 def main():
     print("Heatmap generation")
-    print("=" * 70)
 
     datasets_info = []
-    for csv_path, label in DATASETS:
+    for csv_path, label, folder in DATASETS:
         if not csv_path.exists():
             print(f"Dataset not found: {csv_path.resolve()}")
             continue
@@ -78,19 +77,17 @@ def main():
             print(f"  clipped {n_clipped} per-frequency spike(s) "
                   f"(> {FREQ_CLIP_FACTOR}x the {FREQ_CLIP_QUANTILE:g} quantile) "
                   f"in MHz: {', '.join(clipped_cols)}")
-        datasets_info.append((df, label))
+        datasets_info.append((df, label, folder))
 
     if not datasets_info:
         print("No datasets loaded; nothing to do.")
         return
 
-    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    label = datasets_info[0][1] if len(datasets_info) == 1 else "all"
-    out_dir = PROJECT_ROOT / "src" / "result" / f"heatmaps_{label}_{timestamp}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_root = PROJECT_ROOT / "src" / "result" / "Heatmaps"
+    out_root.mkdir(parents=True, exist_ok=True)
 
-    generate_all_heatmaps(datasets_info, out_dir)
-    print("\nDone. Files saved in:", (out_dir / "heatmaps").resolve())
+    generate_all_heatmaps(datasets_info, out_root)
+    print("\nDone. Files saved in:", out_root.resolve())
 
 
 if __name__ == "__main__":
