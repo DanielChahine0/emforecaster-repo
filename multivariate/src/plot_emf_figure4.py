@@ -133,6 +133,12 @@ SERIES_COLORS = {
 # Colour for the dashed vertical lines marking the zoom window on full panels.
 ZOOM_MARKER_COLOR = "#1f3b5c"
 
+# Fraction of the axes height the dashed zoom markers span (0-1, in axes
+# coordinates). Kept below 1.0 so the lines stop short of the top legend
+# instead of striking through the operator/technology labels, matching
+# EMFusion Fig. 4.
+ZOOM_MARKER_YMAX = 0.75
+
 # Colormap for the all-frequencies panels.
 FREQ_CMAP = "turbo"
 
@@ -338,7 +344,8 @@ def plot_discrete(ax, df, cols, order, span, draw_zoom_markers):
 
     if draw_zoom_markers:
         for x in (ZOOM_WINDOW["start"], ZOOM_WINDOW["end"]):
-            ax.axvline(x, color=ZOOM_MARKER_COLOR, ls="--", lw=2.5, alpha=0.9)
+            ax.axvline(x, color=ZOOM_MARKER_COLOR, ls="--", lw=2.5, alpha=0.9,
+                       ymax=ZOOM_MARKER_YMAX)
 
     ax.set_xlabel("Timestamp", fontsize=16, fontweight="bold")
     ax.set_ylabel("EMF (V/m)", fontsize=16, fontweight="bold")
@@ -365,7 +372,8 @@ def plot_frequencies(ax, df, freq_cols, span, fig=None):
 
     if span == "full":
         for x in (ZOOM_WINDOW["start"], ZOOM_WINDOW["end"]):
-            ax.axvline(x, color=ZOOM_MARKER_COLOR, ls="--", lw=2.5, alpha=0.9)
+            ax.axvline(x, color=ZOOM_MARKER_COLOR, ls="--", lw=2.5, alpha=0.9,
+                       ymax=ZOOM_MARKER_YMAX)
 
     ax.set_xlabel("Timestamp", fontsize=16, fontweight="bold")
     ax.set_ylabel("EMF (V/m)", fontsize=16, fontweight="bold")
