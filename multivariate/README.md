@@ -1,15 +1,12 @@
 # Multivariate EMF Analysis
 
 Analysis and visualization of frequency-selective RF-EMF time-series data.
-`src/emf_multivariate.py` is the command line tool for generating the EMF level plots, correlation heatmaps, and window analyses from the measurement datasets.
+`src/emf_multivariate.py` is the command line tool for generating the EMF level plots and correlation heatmaps from the measurement datasets.
 
 ## Requirements
 
 Use the repository virtual environment (Python 3.12); it already has the dependencies (pandas, numpy, matplotlib).
 It lives at the repository root, so from `multivariate/src/` it is `../../venv/bin/python`.
-
-The `window-analysis` command additionally needs an Excel engine (`openpyxl`) to read the antenna-factor `.xlsx`.
-If it is not installed, the command still runs and falls back to a default antenna factor.
 
 ## Datasets
 
@@ -64,11 +61,6 @@ List the commands, or show the options for a single command:
 
 # Rebuild the processed CSVs in place
 ../../venv/bin/python emf_multivariate.py normalize
-
-# Window analysis from a raw measurement file
-../../venv/bin/python emf_multivariate.py window-analysis \
-    --input /path/to/fileCP_2024_UNIVERSITY_HOSPITAL.txt \
-    --antenna-factors /path/to/9018-18835.xlsx
 ```
 
 ## Commands
@@ -118,56 +110,25 @@ The 2023 reference file is left untouched.
 |--------|---------|---------|
 | `--files NAME [NAME ...]` | UH2022.csv ED2022.csv UH2024.csv ED2024.csv | CSV file names under `data/multivariate/processed/` to normalize. |
 
-### `window-analysis`
-
-Operates on a raw fileCP `.txt` (dBm per frequency) rather than the processed CSVs.
-It filters to the longest continuous measurement period, converts dBm to E-field (V/m) using antenna-factor calibration, adds the technology/operator/total aggregations, and produces zoom-in plots for the 1, 3, 7, and 14-day windows centred on the middle of that period.
-Output goes to `src/result/window_analysis_<timestamp>/`.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `--input PATH` | fileCP_2024_UNIVERSITY_HOSPITAL.txt | Raw fileCP `.txt` in dBm (relative to your working directory). |
-| `--antenna-factors PATH` | 9018-18835.xlsx | Antenna-factor `.xlsx` used to convert dBm to V/m. |
-
 ## Outputs
 
 Everything is written under `src/result/` (created automatically):
 
 ```
 result/EMF levels/<folder>/                       from emf-levels
-    Combined (operators, technologies, frequencies).png/.pdf
-    Combined (operators, technologies).png/.pdf
-    Operators (full period).png/.pdf
-    Operators (2 week zoom).png/.pdf
-    Technologies (full period).png/.pdf
-    Technologies (2 week zoom).png/.pdf
-    All frequencies (full period).png/.pdf
-    All frequencies (2 week zoom).png/.pdf
+    Combined (operators, technologies, frequencies).png
+    Combined (operators, technologies).png
+    Operators (full period).png
+    Operators (2 week zoom).png
+    Technologies (full period).png
+    Technologies (2 week zoom).png
+    All frequencies (full period).png
+    All frequencies (2 week zoom).png
 
 result/Heatmaps/<folder>/                          from heatmaps
-    Combined (frequency, technology, operators).png/.pdf
-    Frequency bands.png/.pdf
-    Technology bands.png/.pdf
-    Operators.png/.pdf
-result/Heatmaps/All datasets comparison.png/.pdf   (when 2+ datasets are processed)
-
-result/window_analysis_<timestamp>/plots/          from window-analysis
-    emf_technology_<label>_<window>_window.png/.pdf
-    emf_operator_<label>_<window>_window.png/.pdf
-    emf_<label>_all_windows_summary.png/.pdf
-result/window_analysis_<timestamp>/window_analysis_summary.txt
+    Combined (frequency, technology, operators).png
+    Frequency bands.png
+    Technology bands.png
+    Operators.png
+result/Heatmaps/All datasets comparison.png        (when 2+ datasets are processed)
 ```
-
-Every figure is saved as both `.png` (300 dpi) and `.pdf`, with a serif font (Times New Roman).
-
-## Notes
-
-Per-frequency spike clipping.
-Some per-frequency columns contain isolated corrupted samples (for example a single ~119 V/m reading at 1835 MHz) that would otherwise dominate a correlation or flatten a time-trend panel.
-By default any value above `--freq-clip-factor` times the `--freq-clip-quantile` of a frequency's data is treated as an artifact and dropped.
-The `EMF_*` aggregation columns are never clipped, so the technology and operator outputs are unaffected.
-`emf-levels` clips against a single global threshold over all plotted frequencies; `heatmaps` clips per frequency column.
-Pass `--no-freq-clip` to see the raw data.
-
-Aggregation columns.
-`EMF_2023_university` ships the `EMF_*` aggregations precomputed; for the other datasets they are reused when present and otherwise computed on the fly by root-sum-square (RSS) combining of the relevant frequencies.
