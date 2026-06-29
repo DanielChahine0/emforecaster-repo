@@ -1,0 +1,53 @@
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF"
+  model_id: "RF_EMF_CNN"
+  learning_type: "sl"
+  seed_list: [69421, 69422]
+  seed: 69421
+  mae: True
+  neptune: True
+  mps: True
+  gpu_id: 2
+
+data:
+  seq_load: True
+  dataset: "rf_emf_ptv2"
+  univariate: True
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 336
+  pred_len: 96
+  train_split: 0.7
+  val_split: 0.1
+  num_channels: 1
+  num_workers: 8
+  scale: True
+
+ddp:
+  ddp: False
+  master_port: "12358"
+
+sl:
+  dataset_class: "univariate_forecasting"
+  criterion: "MSE"
+  num_kernels: 32
+  epochs: 100
+  batch_size: 512
+  lr: 1e-4
+  early_stopping: True
+  weight_decay: 1e-4
+  scheduler: "onecycle"
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False
