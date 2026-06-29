@@ -25,6 +25,11 @@ emforecaster/hpc/logs/
 # dataset/
 # *.csv
 
+# docs
+EMForecaster.md
+EMFusion.md
+docs/assets/
+
 
 checkpoint/
 **/.neptune
