@@ -86,7 +86,7 @@ def load_forecasting(
     root_dir = os.path.dirname(os.path.dirname(current_dir))
 
     if dataset_name == "rf_emf":
-        data = loadmat(os.path.join(root_dir, "data/forecasting/rf_emf/LongTerm17.mat"))
+        data = loadmat(os.path.join(root_dir, "data/univariate/LongTerm17.mat"))
         data = data["York_LongTerm17"].T
         data = (
             time_window_average(data=data, m=24) if average_turkey else data
@@ -99,7 +99,7 @@ def load_forecasting(
             else "DET_Monitoring2.csv"
         )  # DET1 = 2022, DET2 = 2023
         data = pd.read_csv(
-            os.path.join(root_dir, "data/forecasting/rf_emf2", file_name)
+            os.path.join(root_dir, "data/univariate", file_name)
         ).to_numpy()
         data[:, 1] = clip_and_interpolate(data[:, 1], thresh) if clip else data[:, 1]
         data = data[:, 1].reshape(-1, 1) if not date else data
@@ -111,7 +111,7 @@ def load_forecasting(
             else "PTV_Monitoring2.csv"
         )  # PTV1 = 2022, PTV2 = 2023
         data = pd.read_csv(
-            os.path.join(root_dir, "data/forecasting/rf_emf2", file_name)
+            os.path.join(root_dir, "data/univariate", file_name)
         ).to_numpy()
 
         cutoff = (
@@ -132,7 +132,7 @@ def load_forecasting(
             dataset_name
         ]  # Turin1 = poli (polytechnic), Turin2 = Porta Nova (train station), Nov = Novara
         data = pd.read_csv(
-            os.path.join(root_dir, "data/forecasting/rf_emf2", file_name), sep=";"
+            os.path.join(root_dir, "data/univariate", file_name), sep=";"
         )
 
         # Drop 'Data' and 'Ora' columns and reorder remaining columns
@@ -145,7 +145,7 @@ def load_forecasting(
 
     else:
         data = pd.read_csv(
-            os.path.join(root_dir, "data/forecasting", f"{dataset_name}.csv")
+            os.path.join(root_dir, "data/univariate", f"{dataset_name}.csv")
         )
         data = data.drop(columns=["date"]).values if not date else data
 
