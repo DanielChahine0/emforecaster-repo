@@ -11,7 +11,7 @@ Sub-commands:
   normalize        rebuild the UH/ED processed CSVs in place
 
 Data is read from data/multivariate/processed/ at the repo root.
-Figures are written under multivariate/src/result/.
+Figures are written under results/multivariate/ at the repo root.
 Run `python emf_multivariate.py <command> --help` for a command's options.
 """
 
@@ -37,7 +37,7 @@ from matplotlib.colors import Normalize
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = REPO_ROOT / "data" / "multivariate" / "processed"  # input CSVs
-RESULT_DIR = PROJECT_ROOT / "src" / "result"                       # output figures
+RESULT_DIR = REPO_ROOT / "results" / "multivariate"                # output figures
 
 # Timestamp column name in the CSVs.
 TIMESTAMP_COL = "Timestamp"
@@ -295,7 +295,7 @@ def run_normalize(files=None):
 #   2. technologies (2G, 3G, 4G, 5G)
 #   3. every individual frequency, coloured by frequency
 # It writes one combined figure, one operators+technologies figure, and six
-# single-panel figures into result/EMF levels/<folder>/.
+# single-panel figures into results/multivariate/EMF levels/<folder>/.
 
 # Length of the auto zoom window, in days.
 ZOOM_DAYS = 14
@@ -670,7 +670,7 @@ def run_emf_levels(datasets=None):
 #   2. technologies (2G/3G/4G/5G)
 #   3. operators (Iliad/TIM/VF/W3)
 # Writes a combined trio plus the three single heatmaps into
-# result/Heatmaps/<folder>/, and an all-datasets grid when 2+ datasets are run.
+# results/multivariate/Heatmaps/<folder>/, and an all-datasets grid when 2+ datasets are run.
 
 
 def clip_frequency_artifacts(df):

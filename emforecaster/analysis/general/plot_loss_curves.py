@@ -138,7 +138,7 @@ def main():
     p.add_argument("--datasets", nargs="+", default=None, help="only runs trained on these datasets")
     p.add_argument("--latest", action="store_true", help="only the most recent run per model")
     p.add_argument("--metric", choices=["loss", "mae", "both"], default="loss")
-    p.add_argument("--out", default="comparison")
+    p.add_argument("--out", default="results/univariate/comparison")
     p.add_argument("--combined", action="store_true",
                    help="one figure per (dataset, L, O) with a subplot per model")
     p.add_argument("--logy", action="store_true")

@@ -74,7 +74,7 @@ It accepts every `emf-levels` option, and the clipping settings also apply to th
 
 EMF level (V/m) time-trend plots.
 For each dataset it plots the operators (W3, Iliad, TIM, VF), the technologies (2G, 3G, 4G, 5G), and every individual frequency, each over the full measurement period and over a roughly 2-week zoom.
-It writes one combined stacked figure, one operators-and-technologies figure, and six per-panel figures into `src/result/EMF levels/<folder>/`.
+It writes one combined stacked figure, one operators-and-technologies figure, and six per-panel figures into `results/multivariate/EMF levels/<folder>/`.
 
 | Option | Default | Meaning |
 |--------|---------|---------|
@@ -90,7 +90,7 @@ It writes one combined stacked figure, one operators-and-technologies figure, an
 ### `heatmaps`
 
 Correlation heatmaps per dataset: frequency bands, technology aggregations (2G/3G/4G/5G), and operator aggregations (Iliad/TIM/VF/W3).
-For each dataset it writes a combined trio plus the three individual heatmaps into `src/result/Heatmaps/<folder>/`, and an all-datasets comparison grid at the `Heatmaps` root when two or more datasets are processed.
+For each dataset it writes a combined trio plus the three individual heatmaps into `results/multivariate/Heatmaps/<folder>/`, and an all-datasets comparison grid at the `Heatmaps` root when two or more datasets are processed.
 
 | Option | Default | Meaning |
 |--------|---------|---------|
@@ -112,10 +112,10 @@ The 2023 reference file is left untouched.
 
 ## Outputs
 
-Everything is written under `src/result/` (created automatically):
+Everything is written under `results/multivariate/` at the repo root (created automatically):
 
 ```
-result/EMF levels/<folder>/                       from emf-levels
+results/multivariate/EMF levels/<folder>/         from emf-levels
     Combined (operators, technologies, frequencies).png
     Combined (operators, technologies).png
     Operators (full period).png
@@ -125,10 +125,10 @@ result/EMF levels/<folder>/                       from emf-levels
     All frequencies (full period).png
     All frequencies (2 week zoom).png
 
-result/Heatmaps/<folder>/                          from heatmaps
+results/multivariate/Heatmaps/<folder>/            from heatmaps
     Combined (frequency, technology, operators).png
     Frequency bands.png
     Technology bands.png
     Operators.png
-result/Heatmaps/All datasets comparison.png        (when 2+ datasets are processed)
+results/multivariate/Heatmaps/All datasets comparison.png   (when 2+ datasets are processed)
 ```
