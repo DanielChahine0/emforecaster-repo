@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-emf_multivariate.py - command line tool for the multivariate EMF analysis.
+emf_multivariate.py command line tool for the multivariate EMF analysis.
 
 Sub-commands:
   all              run emf-levels then heatmaps
