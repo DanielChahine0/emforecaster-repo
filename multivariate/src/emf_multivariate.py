@@ -9,7 +9,6 @@ Sub-commands:
   emf-levels       EMF level (V/m) time-trend plots
   heatmaps         correlation heatmaps (frequency / technology / operator)
   normalize        rebuild the UH/ED processed CSVs in place
-  window-analysis  window plots from a raw fileCP .txt
 
 Data is read from data/multivariate/processed/ at the repo root.
 Figures are written under multivariate/src/result/.
@@ -18,8 +17,6 @@ Run `python emf_multivariate.py <command> --help` for a command's options.
 
 import argparse
 import datetime as dt
-import math
-import re
 import sys
 from pathlib import Path
 
@@ -594,11 +591,9 @@ def build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols,
     fig.subplots_adjust(hspace=0.5)
 
     png = out_dir / f"{stem}.png"
-    pdf = out_dir / f"{stem}.pdf"
     fig.savefig(png, dpi=300, bbox_inches="tight")
-    fig.savefig(pdf, format="pdf", bbox_inches="tight")
     plt.close(fig)
-    print(f"  saved {png.name} / {pdf.name}")
+    print(f"  saved {png.name}")
 
 
 def build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir):
@@ -612,9 +607,8 @@ def build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_
 
         stem = PANEL_FILENAMES[(breakdown, span)]
         fig.savefig(out_dir / f"{stem}.png", dpi=300, bbox_inches="tight")
-        fig.savefig(out_dir / f"{stem}.pdf", format="pdf", bbox_inches="tight")
         plt.close(fig)
-        print(f"  saved {stem}.png / .pdf")
+        print(f"  saved {stem}.png")
 
 
 def plot_dataset(ds: dict):
@@ -748,9 +742,7 @@ def create_single_heatmap(title, data, output_folder, filename, trim_prefix=None
     plt.tight_layout()
 
     output_path_png = output_folder / f"{filename}.png"
-    output_path_pdf = output_folder / f"{filename}.pdf"
     fig.savefig(output_path_png, dpi=300, bbox_inches="tight")
-    fig.savefig(output_path_pdf, dpi=300, bbox_inches="tight")
     print(f"   Saved: {output_path_png.name}")
     plt.close(fig)
 
@@ -890,7 +882,6 @@ def create_dataset_trio_heatmap(df, dataset_name, dataset_folder):
 
     name = "Combined (frequency, technology, operators)"
     fig.savefig(dataset_folder / f"{name}.png", dpi=300, bbox_inches="tight")
-    fig.savefig(dataset_folder / f"{name}.pdf", dpi=300, bbox_inches="tight")
     print(f"   Saved: {name}.png")
     plt.close(fig)
 
@@ -987,7 +978,6 @@ def create_all_datasets_comparison_heatmap(datasets_info, output_root):
 
     name = "All datasets comparison"
     fig.savefig(output_root / f"{name}.png", dpi=300, bbox_inches="tight")
-    fig.savefig(output_root / f"{name}.pdf", dpi=300, bbox_inches="tight")
     print(f"   Saved: {name}.png")
     plt.close(fig)
 
@@ -1631,9 +1621,7 @@ def build_parser():
                "  python emf_multivariate.py all\n"
                "  python emf_multivariate.py emf-levels --datasets UH_2022 ED_2022\n"
                "  python emf_multivariate.py heatmaps --no-freq-clip\n"
-               "  python emf_multivariate.py normalize\n"
-               "  python emf_multivariate.py window-analysis --input file.txt "
-               "--antenna-factors 9018-18835.xlsx\n",
+               "  python emf_multivariate.py normalize\n",
     )
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
@@ -1694,15 +1682,6 @@ def build_parser():
                         help=f"CSV file names under data/multivariate/processed/ "
                              f"to normalize (default: {', '.join(NORM_FILES)}).")
 
-    # window-analysis
-    p_win = sub.add_parser("window-analysis",
-                           help="Window analysis from a raw fileCP .txt.",
-                           formatter_class=argparse.RawDescriptionHelpFormatter)
-    p_win.add_argument("--input", default=None,
-                       help=f"Raw fileCP .txt in dBm (default: {WIN_TARGET_DATASET}).")
-    p_win.add_argument("--antenna-factors", default=None,
-                       help=f"Antenna-factor .xlsx (default: {WIN_AF_FILE}).")
-
     return parser
 
 
@@ -1733,8 +1712,6 @@ def main(argv=None):
         run_heatmaps(datasets)
     elif args.command == "normalize":
         run_normalize(args.files)
-    elif args.command == "window-analysis":
-        run_window_analysis(input_path=args.input, antenna_factors=args.antenna_factors)
 
 
 if __name__ == "__main__":
