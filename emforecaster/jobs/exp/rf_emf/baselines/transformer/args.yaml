@@ -2,7 +2,7 @@ exp:
   project_name: "rf-emf-forecasting/RF-EMF"
   model_id: "RF_EMF_Transformer"
   learning_type: "sl"
-  id: "rf_emf_det_L192_O336_cp"
+  id: "rf_emf_ptv2_L336_O336_pf"
   best_model_path: "checkpoint/rf_emf_baseline"
   seed_list: [69421, 69422]
   seed: 69421
@@ -13,11 +13,11 @@ exp:
 
 data:
   seq_load: True
-  dataset: "rf_emf_det"
+  dataset: "rf_emf_ptv2"
   univariate: True
   window_stride: 1
   dtype: "float32"
-  seq_len: 192
+  seq_len: 336
   pred_len: 336
   train_split: 0.7
   val_split: 0.1
@@ -33,7 +33,7 @@ ddp:
 sl:
   dataset_class: "univariate_forecasting"
   criterion: "MSE"
-  d_model: 2
+  d_model: 64
   num_heads: 2
   num_enc_layers: 2
   epochs: 100
@@ -48,10 +48,10 @@ scheduler:
   lradj: "type3"
 
 early_stopping:
-  patience: 10
+  patience: 20
 
 conf:
-  conf: True
+  conf: False
   alpha: 0.01
   corrected: False
   intervals: True

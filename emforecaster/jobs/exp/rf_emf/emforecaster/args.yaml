@@ -4,7 +4,7 @@ exp:
   patch_model_id: "TSMixer"
   backbone_id: "Linear"
   learning_type: "sl"
-  id: "rf_emf_det_L192_O336_cp"
+  id: "rf_emf_ptv2_L336_O336_cp"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
@@ -18,11 +18,11 @@ data:
   patch_dim: 8
   patch_stride: -1
   seq_load: True
-  dataset: "rf_emf_det"
+  dataset: "rf_emf_ptv2"
   univariate: True
   window_stride: 1
   dtype: "float32"
-  seq_len: 192
+  seq_len: 336
   pred_len: 336
   train_split: 0.7
   val_split: 0.1
@@ -80,7 +80,7 @@ early_stopping:
 
 conf:
   conf: True
-  alpha: 0.01
+  alpha: 0.1
   corrected: False
   intervals: True
   validation_eval: False
