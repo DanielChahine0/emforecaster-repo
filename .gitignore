@@ -1,8 +1,10 @@
+# Python
 __pycache__/
-.pytest_cache/
-emforecaster.egg-info/
-.eggs/
 *.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+.eggs/
+emforecaster.egg-info/
 
 # Virtual environments (no trailing slash so the venv -> venv.nosync symlink matches too)
 venv
@@ -11,43 +13,49 @@ env/
 venv.nosync/
 venv_broken_backup/
 .venv.nosync/
+
 # iCloud-excluded folders (any name ending in .nosync)
 *.nosync/
 
-# Editor/IDE
+# Editor/IDE/OS
 .vscode/
 .idea/
+.ropeproject/
 .DS_Store
+
+# Node.js / PM2 (for job scheduling and email notifications)
+node_modules/
+package.json
+package-lock.json
+ecosystem.config.js
+notify-completion.js
+
+# Logs
+logs/
+old_logs/
 emforecaster/hpc/logs/
+
+# Experiment tracking / checkpoints
+checkpoint/
+**/.neptune
+
+# Generated figures
+figures/
+emforecaster/data_analysis/figures/
+
+# Scratch / test files
+test.py
+test.ipynb
+
+# Generated/transcribed docs
+EMForecaster.md
+EMFusion.md
+docs/assets/
+
+# Personal
+.personal/
 
 # Data
 # data/
 # dataset/
 # *.csv
-
-# docs
-EMForecaster.md
-EMFusion.md
-docs/assets/
-
-
-checkpoint/
-**/.neptune
-test.py
-test.ipynb
-emforecaster/data_analysis/figures/
-
-# PM2 (for job scheduling and email notifications)
-ecosystem.config.js
-notify-completion.js
-package-lock.json
-package.json
-node_modules/
-
-# Temporary files
-logs/
-old_logs/
-figures/
-.ropeproject/
-
-.personal/
