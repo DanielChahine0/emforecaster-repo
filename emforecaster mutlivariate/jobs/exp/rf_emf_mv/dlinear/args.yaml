@@ -1,0 +1,72 @@
+# Multivariate (multi-channel) DLinear forecasting on the Italy EMF datasets.
+# Hyperparameters are copied verbatim from rf_emf/dlinear/args.yaml; only the
+# multivariate switches differ (univariate=False, dataset_class=forecasting,
+# conf.conf=True, eval_test_per_epoch=True). data.dataset / seq_len / pred_len /
+# exp.id are set per run by .personal/shell/task_multivariate.sh, and
+# data.num_channels is auto-inferred from the CSV at load time (27 or 29).
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF-MV"
+  model_id: "DLinear"
+  learning_type: "sl"
+  id: "mv_ed2022_L336_O336_cp"
+  seed_list: [69421, 69422]
+  seed: 69421
+  mae: True
+  rank_verbose: False
+  task: "forecasting"
+  neptune: False
+  mps: True
+  gpu_id: 2
+  eval_test_per_epoch: True
+
+data:
+  seq_load: True
+  dataset: "ED2022"
+  univariate: False
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 336
+  pred_len: 336
+  train_split: 0.7
+  val_split: 0.1
+  num_channels: 27
+  num_workers: 4
+  scale: True
+
+dlinear:
+  moving_avg: 3
+
+ddp:
+  ddp: False
+  master_port: "11759"
+  find_unused_parameters: True
+
+sl:
+  optimizer: "adam"
+  dataset_class: "forecasting"
+  criterion: "MSE"
+  scheduler: "onecycle"
+  dropout: 0.3
+  epochs: 100
+  batch_size: 512
+  lr: 1e-5
+  early_stopping: True
+  weight_decay: 1e-5
+  return_head: True
+  revin: True
+  revin_affine: True
+  revout: True
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False

@@ -1,0 +1,79 @@
+# Multivariate (multi-channel) TimesNet forecasting on the Italy EMF datasets.
+# No univariate TimesNet config exists, so this is authored from the TimesNet
+# pydantic defaults plus the shared forecasting settings used by the other models.
+# data.dataset / seq_len / pred_len / exp.id are set per run by
+# .personal/shell/task_multivariate.sh; data.num_channels is auto-inferred from the
+# CSV (27 or 29), and the TimesNet head emits c_out = num_channels automatically
+# (set in utils/models.py), so every band is forecast jointly.
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF-MV"
+  model_id: "TimesNet"
+  learning_type: "sl"
+  id: "mv_ed2022_L336_O336_cp"
+  seed_list: [69421, 69422]
+  seed: 69421
+  mae: True
+  rank_verbose: False
+  task: "forecasting"
+  gpu_id: 2
+  neptune: False
+  mps: True
+  eval_test_per_epoch: True
+
+data:
+  seq_load: True
+  dataset: "ED2022"
+  univariate: False
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 336
+  pred_len: 336
+  train_split: 0.7
+  val_split: 0.1
+  num_channels: 27
+  num_workers: 4
+  scale: True
+
+timesnet:
+  d_model: 16
+  d_ff: 32
+  num_kernels: 6
+  c_out: 27
+  top_k: 3
+
+ddp:
+  ddp: False
+  master_port: "11760"
+  find_unused_parameters: True
+
+sl:
+  optimizer: "adam"
+  dataset_class: "forecasting"
+  criterion: "MSE"
+  scheduler: "onecycle"
+  num_enc_layers: 2
+  dropout: 0.1
+  epochs: 100
+  batch_size: 512
+  lr: 1e-4
+  early_stopping: True
+  weight_decay: 1e-4
+  return_head: True
+  revin: True
+  revin_affine: True
+  revout: True
+  eps_revin: 1e-5
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False
