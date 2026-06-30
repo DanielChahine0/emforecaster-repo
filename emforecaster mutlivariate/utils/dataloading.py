@@ -143,6 +143,42 @@ def load_forecasting(
         data[:, 1] = clip_and_interpolate(data[:, 1], thresh) if clip else data[:, 1]
         data = data[:, 1].reshape(-1, 1) if not date else data
 
+    elif dataset_name in {
+        "ED2022",
+        "ED2024",
+        "UH2022",
+        "UH2024",
+        "EMF_2023_university_5_with_PTV",
+    }:
+        # Italy multivariate EMF datasets. Feed all per-band channels jointly:
+        # keep only the numeric frequency-band columns and drop the Timestamp, the
+        # EMF_* operator/technology/total aggregates (root-sum-square of bands), and
+        # the broadband PTV column. Including any aggregate would sum channels
+        # together and leak the target, so they are excluded.
+        df = pd.read_csv(
+            os.path.join(root_dir, "data/multivariate/processed", f"{dataset_name}.csv")
+        )
+        drop_cols = [
+            c
+            for c in df.columns
+            if c == "Timestamp" or c.startswith("EMF_") or c == "PTV"
+        ]
+        df = df.drop(columns=drop_cols)
+
+        # Coerce every band to numeric and repair missing values (some bands in the
+        # 2023 university file have empty cells). Linear interpolation in time, then
+        # forward/back fill for any leading or trailing gaps.
+        df = df.apply(pd.to_numeric, errors="coerce")
+        df = df.interpolate(method="linear", limit_direction="both").ffill().bfill()
+
+        data = df.to_numpy().astype(np.float64)
+
+        # Optional per-channel clipping of noisy peaks (off by default to match the
+        # univariate hyperparameters; clips each band independently if enabled).
+        if clip:
+            for j in range(data.shape[1]):
+                data[:, j] = clip_and_interpolate(data[:, j], thresh)
+
     else:
         data = pd.read_csv(
             os.path.join(root_dir, "data/univariate", f"{dataset_name}.csv")
@@ -973,6 +1009,11 @@ def get_loaders(
         "rf_emf_ptv",
         "rf_emf_ptv2",
         "rf_emf_tur",
+        "ED2022",
+        "ED2024",
+        "UH2022",
+        "UH2024",
+        "EMF_2023_university_5_with_PTV",
     }:
         train_data, val_data, test_data = load_forecasting(
             dataset_name=args.data.dataset,
@@ -994,6 +1035,13 @@ def get_loaders(
             datetime_features=args.data.datetime_features,
             average_italy=args.data.average_italy,
         )
+
+        # For multivariate forecasting the channel count is authoritative from the
+        # loaded data (transposed to (num_channels, time)). This sets it for the
+        # model build without per-dataset config edits, handling the 27-vs-29 band
+        # difference across the Italy datasets automatically.
+        if not args.data.univariate:
+            args.data.num_channels = int(train_data.shape[0])
     else:
         raise ValueError(f"Invalid dataset name: {args.data.dataset}")
 
