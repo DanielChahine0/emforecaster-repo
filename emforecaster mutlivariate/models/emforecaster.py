@@ -47,7 +47,10 @@ class EMForecaster(nn.Module):
 
         """
 
-        Patched-based forecasting model (univariate only).
+        Patch-based forecasting model. Multivariate via channel independence: the
+        channels are folded into the batch dimension and forecast jointly in one
+        pass, returning (batch, num_channels, pred_len). For num_channels == 1 this
+        is identical to the original univariate model.
 
         Args:
             seq_len (int): Length of input sequence.
@@ -141,24 +144,32 @@ class EMForecaster(nn.Module):
 
     def forward(self, x):
 
+        B = C = None
         if self.patching_on:
-            # RevIN
-            B = x.size(0)
+            # x: (B, C, L). Normalize each channel, then fold the channels into the
+            # batch dimension so the patch backbone forecasts every channel jointly
+            # in a single pass (channel-independent multivariate I/O, the same
+            # strategy PatchTST uses). For C == 1 this reduces to the original
+            # univariate behaviour exactly.
+            B, C, L = x.shape
             if self._revin:
-                x = self.revin(x, mode="norm")
+                x = self.revin(x, mode="norm")  # per-channel RevIN over (B, C, L)
+
+            x = x.reshape(B * C, 1, L)
+            BC = B * C
 
             # Patch embedding
-            x = self.patcher(x).squeeze()  # (B, num_patches, patch_dim)
+            x = self.patcher(x).squeeze(1)  # (B*C, num_patches, patch_dim)
         else:
-            pass
+            BC = x.size(0)
 
         if self.independent_patching:
-            x = x.view(B * self.num_patches, 1, self.patch_dim)
+            x = x.view(BC * self.num_patches, 1, self.patch_dim)
             x = self.patch_model(x).view(
-                B, self.num_patches, self.patch_embed_dim
-            )  # (B, num_patches, patch_embed_dim)
+                BC, self.num_patches, self.patch_embed_dim
+            )  # (B*C, num_patches, patch_embed_dim)
         else:
-            x = self.patch_model(x)  # (B, patch_embed_dim, num_patches)
+            x = self.patch_model(x)  # (B*C, patch_embed_dim, num_patches)
 
         # Activation function (optional)
         x = self.patch_act(x)
@@ -170,14 +181,18 @@ class EMForecaster(nn.Module):
 
             # Flatten
             x = x.view(
-                B, 1, self.num_patches * self.patch_embed_dim
-            )  # (B, 1, num_patches * patch_embed_dim)
+                BC, 1, self.num_patches * self.patch_embed_dim
+            )  # (B*C, 1, num_patches * patch_embed_dim)
 
             # # Project + Positional Encoding
-            x = x + self.pos_enc  # (B, 1, num_patches * patch_embed_dim)
+            x = x + self.pos_enc  # (B*C, 1, num_patches * patch_embed_dim)
 
             # Base Model + Linear Head
-            x = self.base_model(x)  # (B, 1, pred_len)
+            x = self.base_model(x)  # (B*C, 1, pred_len)
+
+            # Unfold the channels back out before the per-channel RevIN denorm
+            if self.patching_on:
+                x = x.reshape(B, C, self.pred_len)  # (B, C, pred_len)
 
             # RevOUT
             if self.revout:
