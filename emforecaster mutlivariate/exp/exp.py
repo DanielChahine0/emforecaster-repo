@@ -363,6 +363,7 @@ class Experiment:
         early_stopping=False,
         ch_acc=False,
         conformal=False,
+        test_loader=None,
     ):
         """
             Trains a model.
@@ -395,6 +396,7 @@ class Experiment:
         # Synchronize before training starts
 
         self.best_val_metric = float("inf")
+        train_start_time = time.time()
 
         # <--------------- Training --------------->
         for epoch in range(eval(f"self.args.{flag}.epochs")):
@@ -403,6 +405,7 @@ class Experiment:
             running_loss = torch.tensor(0.0, device=self.device)
             running_num_examples = torch.tensor(0.0, device=self.device)
             start_time = time.time()
+            epoch_start_time = time.time()
 
             for i, batch in enumerate(train_loader):
                 optimizer.zero_grad()
@@ -449,8 +452,12 @@ class Experiment:
                     scheduler.step()
 
             epoch_loss = total_loss.item() / num_examples
-            self.print_master(f"Epoch {epoch}. Training loss: {epoch_loss:.6f}.")
+            epoch_time = time.time() - epoch_start_time
+            self.print_master(
+                f"Epoch {epoch}. Training loss: {epoch_loss:.6f}. Time: {epoch_time:.2f}s."
+            )
             epoch_logger(self.args, self.logger, f"{flag}_train/loss", epoch_loss)
+            epoch_logger(self.args, self.logger, f"{flag}_train/epoch_time", epoch_time)
 
             # <--------------- Validation --------------->
             if val_loader:
@@ -501,7 +508,26 @@ class Experiment:
                     ch_acc,
                 )
 
-
+            # <--------------- Per-epoch test loss --------------->
+            # Logged for the train/val/test loss curve. Model selection still uses
+            # the validation loss only, so this never feeds into best-model choice.
+            if test_loader is not None:
+                test_stats = self.evaluate(
+                    model=model,
+                    model_id=model_id,
+                    loader=test_loader,
+                    criterion=criterion,
+                    flag=flag,
+                    mae=False,
+                    acc=False,
+                    ch_acc=False,
+                    conformal_calibrate=False,
+                    coverage=False,
+                )
+                self.print_master(f"Epoch {epoch}. Test loss: {test_stats['loss']:.6f}.")
+                epoch_logger(
+                    self.args, self.logger, f"{flag}_test/loss", test_stats["loss"]
+                )
 
             # Early stopping
             if early_stopping:
@@ -533,6 +559,17 @@ class Experiment:
                 self.logger["parameters/running_time"] = format_time_dynamic(
                     run_time
                 )
+
+        # <--------------- Total training time --------------->
+        # Logged to whichever backend is active (not only the offline branch).
+        total_training_time = time.time() - train_start_time
+        self.logger["parameters/total_training_time"] = format_time_dynamic(
+            total_training_time
+        )
+        self.logger["parameters/total_training_seconds"] = total_training_time
+        self.print_master(
+            f"Total training time: {format_time_dynamic(total_training_time)}."
+        )
 
 
     def validate(
@@ -628,10 +665,14 @@ class Experiment:
         Train the model in supervised mode.
         """
 
-        # Load train + val loaders only. The test loader is built once in test()
-        # (loader_type="all" here would build it eagerly and then test() discards
-        # and rebuilds it via free_memory + seq_load).
-        self.init_dataloaders(loader_type="train", learning_type="sl")
+        # Load train + val loaders. When per-epoch test logging is enabled, build the
+        # test loader up front too so the test loss can be tracked each epoch; the
+        # final test() still reloads and evaluates it on the best (val-selected)
+        # model. Otherwise the test loader is built once in test().
+        if self.args.exp.eval_test_per_epoch:
+            self.init_dataloaders(loader_type="all", learning_type="sl")
+        else:
+            self.init_dataloaders(loader_type="train", learning_type="sl")
 
 
         # Initialize Model and Optimizer
@@ -673,6 +714,9 @@ class Experiment:
             early_stopping=self.args.sl.early_stopping,
             ch_acc=self.args.exp.ch_acc,
             conformal=self.args.conf.conf,
+            test_loader=(
+                self.test_loader if self.args.exp.eval_test_per_epoch else None
+            ),
         )
 
         # Upload best model to Neptune
@@ -840,6 +884,15 @@ class Experiment:
         # Loss
         stats["loss"] = total_loss.item() / num_examples
 
+        # Per-channel MSE (forecasting): compute MSE per channel, then average across
+        # channels for the reported value. For equal-length channels this equals the
+        # flattened loss above; the per-channel vector is logged so per-band
+        # performance stays visible. preds/targets are (n_samples, num_channels, O).
+        if self.args.exp.task == "forecasting" and preds.dim() == 3:
+            per_channel_mse = ((preds - targets) ** 2).mean(dim=(0, 2))
+            stats["mse"] = per_channel_mse.mean().item()
+            stats["mse_per_channel"] = [round(float(v), 10) for v in per_channel_mse]
+
         self.print_master(
             f"Evaluation loss after all_reduce: {total_loss.item()}."
         )
@@ -934,11 +987,20 @@ class Experiment:
         preds = preds.detach().cpu()
         targets = targets.detach().cpu()
 
+        # The conformal stack expects (n_samples, pred_len, num_channels). The models
+        # emit (n_samples, num_channels, pred_len), so move the channel axis last; a
+        # bare 2D (n_samples, pred_len) tensor just gains a singleton channel. This
+        # makes the critical scores, coverage, and Bonferroni correction per
+        # horizon-step and per channel.
         if preds.dim() == 2:
             preds = preds.unsqueeze(-1)
+        elif preds.dim() == 3:
+            preds = preds.transpose(1, 2).contiguous()
 
         if targets.dim() == 2:
             targets = targets.unsqueeze(-1)
+        elif targets.dim() == 3:
+            targets = targets.transpose(1, 2).contiguous()
 
         if mode == "calibrate":
             self.print_master("Calibrating conformal prediction model...")
@@ -1017,6 +1079,18 @@ class Experiment:
         loss = stats["loss"]
         self.print_master(f"Model {Mode} Loss: {loss:.6f}")
         epoch_logger(self.args, self.logger, f"{flag}_{mode}/loss", loss)
+
+        # Channel-averaged MSE (MSE per channel, then averaged across channels). The
+        # per-channel vector is stored once at test time for per-band inspection.
+        if "mse" in stats:
+            self.print_master(f"Model {Mode} MSE (channel-averaged): {stats['mse']:.6f}")
+            epoch_logger(self.args, self.logger, f"{flag}_{mode}/mse", stats["mse"])
+            if (
+                mode == "test"
+                and "mse_per_channel" in stats
+                and not self.args.exp.neptune
+            ):
+                self.logger[f"{flag}_{mode}/mse_per_channel"] = stats["mse_per_channel"]
 
         if mae:
             mae_value = stats["mae"]
