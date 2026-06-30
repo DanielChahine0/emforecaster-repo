@@ -76,6 +76,10 @@ class Experiment(BaseModel):
     mae: bool = Field(
         default=False, description="Evaluate mean absolute error or not for forecasting"
     )
+    eval_test_per_epoch: bool = Field(
+        default=False,
+        description="For forecasting: evaluate the test loader every epoch and log the test loss, producing a per-epoch test-loss curve. Model selection still uses the validation loss only (no leakage); the final reported test metric is the best (validation-selected) model.",
+    )
     other_metrics: bool = Field(
         default=False,
         description="Whether to use other metrics for classification evaluation (e.g., F1-score",
