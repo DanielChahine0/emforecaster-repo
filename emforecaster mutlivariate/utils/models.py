@@ -153,7 +153,9 @@ def get_model(args, generator=torch.Generator()):
             d_ff=args.timesnet.d_ff,
             num_enc_layers=args.sl.num_enc_layers,
             num_kernels=args.timesnet.num_kernels,
-            c_out=args.timesnet.c_out,
+            # Forecast every channel: the head emits c_out channels, so for full
+            # multivariate output this must equal the number of input channels.
+            c_out=args.data.num_channels,
             top_k=args.timesnet.top_k,
             dropout=args.sl.dropout,
             task=args.exp.task,
@@ -365,6 +367,12 @@ def forward_pass(args, model, batch, model_id, device):
 
 
 def prepare_output_and_target(output, target, args, device):
+    # Forecasting keeps the full (batch, num_channels, pred_len) layout. Squeezing
+    # (as the classification path does) would drop the batch dim on a size-1 final
+    # batch and break the multivariate MSE, so handle forecasting explicitly.
+    if args.exp.task == "forecasting":
+        return output.to(device), target.to(device).float()
+
     out = output.to(
         device
     ).squeeze()  # (batch_size, 1, 1) -> (batch_size,) for binary task
