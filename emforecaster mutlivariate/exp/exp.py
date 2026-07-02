@@ -757,6 +757,10 @@ class Experiment:
             pass
         elif self.args.exp.calibrate:
             self.init_dataloaders(loader_type="all", learning_type="sl")
+        elif self.args.conf.conf and not self.args.conf.validation_eval:
+            # Conformal recalibration below needs the val set. seq_load frees any
+            # existing loaders, so build train/val/test together to keep val_loader.
+            self.init_dataloaders(loader_type="all", learning_type="sl")
         else:
             self.init_dataloaders(loader_type="test", learning_type="sl")
 
@@ -779,6 +783,30 @@ class Experiment:
 
         model_weights = torch.load(best_model_path)
         model.load_state_dict(model_weights)
+
+        # <---Conformal recalibration on the best (val-selected) model--->
+        # Split conformal requires the calibration residuals and the test residuals to
+        # come from the same fixed predictor. During training (validation_eval=False)
+        # the scores were calibrated on the live last/early-stop-epoch model, but the
+        # weights just loaded are the best checkpoint; whenever the best epoch is not
+        # the final/trigger epoch these differ and the coverage guarantee is void.
+        # Recalibrate on the val set with the best model so both predictors match.
+        # The validation_eval=True path already persists/reloads scores tied to the
+        # best checkpoint, so it is left untouched.
+        if self.args.conf.conf and not self.args.conf.validation_eval:
+            self.evaluate(
+                model=model,
+                model_id=model_id,
+                loader=self.val_loader,
+                criterion=criterion,
+                flag=flag,
+                mae=mae,
+                acc=acc,
+                ch_acc=ch_acc,
+                conformal_calibrate=True,
+                coverage=False,
+            )
+
         # Test set evaluation
 
         stats = self.evaluate(
