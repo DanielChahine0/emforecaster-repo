@@ -61,6 +61,9 @@ python main.py rf_emf/emforecaster
 
 # Multivariate EMForecaster (dispatches to forecasting.multivariate)
 python main.py rf_emf_mv/emforecaster
+
+# Multivariate smoke test (EMForecaster, 5 epochs, ED2022, 27 channels)
+python main.py rf_emf_mv/test --quick
 ```
 
 ## Outputs
