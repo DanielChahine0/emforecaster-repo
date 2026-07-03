@@ -7,6 +7,9 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/xmootoo/emforecaster"
 keywords = ["forecasting", "machine learning"]
+# The importable package is `forecasting`, holding the univariate and
+# multivariate setups as subpackages.
+packages = [{ include = "forecasting" }]
 
 [tool.poetry.dependencies]
 # Numba 0.61.x does not support Python 3.14, so cap the upper bound.
