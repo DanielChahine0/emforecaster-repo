@@ -62,16 +62,23 @@ def main(job_name="test", ablation=None, ablation_id=1, quick=False):
     load_dotenv()
     console = Console()
 
-    # Select the code package from the job name. Multivariate jobs (rf_emf_mv/*)
-    # live in the emforecaster_mv package; everything else in emforecaster. Both
-    # packages coexist and are chosen per run, replacing the old manual folder swap.
-    package = "emforecaster_mv" if job_name.startswith("rf_emf_mv") else "emforecaster"
+    # Select the setup from the job name. Multivariate jobs (rf_emf_mv/*) live in
+    # the forecasting.multivariate package; everything else in forecasting.univariate.
+    # Both setups coexist under forecasting/ and are chosen per run.
+    package = (
+        "forecasting.multivariate"
+        if job_name.startswith("rf_emf_mv")
+        else "forecasting.univariate"
+    )
     load_config = importlib.import_module(f"{package}.config.config").load_config
     Experiment = importlib.import_module(f"{package}.exp.exp").Experiment
 
-    # Load experimental configuration
+    # Load experimental configuration. Split the dotted package into path parts so
+    # the config dir resolves to forecasting/<setup>/jobs/exp/... on disk.
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    args_path = os.path.join(base_dir, package, "jobs", "exp", job_name, "args.yaml")
+    args_path = os.path.join(
+        base_dir, *package.split("."), "jobs", "exp", job_name, "args.yaml"
+    )
     args = load_config(args_path)
     if ablation is not None:
         args = update_global_config(ablation, args, ablation_id)
