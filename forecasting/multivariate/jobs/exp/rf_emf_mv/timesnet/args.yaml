@@ -2,14 +2,14 @@
 # No univariate TimesNet config exists, so this is authored from the TimesNet
 # pydantic defaults plus the shared forecasting settings used by the other models.
 # data.dataset / seq_len / pred_len / exp.id are set per run by
-# .personal/shell/task_multivariate.sh; data.num_channels is auto-inferred from the
+# .personal/scripts/multivariate/conformal-prediction-grid.sh; data.num_channels is auto-inferred from the
 # CSV (27 or 29), and the TimesNet head emits c_out = num_channels automatically
 # (set in utils/models.py), so every band is forecast jointly.
 exp:
   project_name: "rf-emf-forecasting/RF-EMF-MV"
   model_id: "TimesNet"
   learning_type: "sl"
-  id: "mv_ed2022_L336_O336_cp"
+  id: "mv_ed2022_L192_O96_cp"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
@@ -26,8 +26,8 @@ data:
   univariate: False
   window_stride: 1
   dtype: "float32"
-  seq_len: 336
-  pred_len: 336
+  seq_len: 192
+  pred_len: 96
   train_split: 0.7
   val_split: 0.1
   num_channels: 27

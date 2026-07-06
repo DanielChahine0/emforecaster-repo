@@ -892,9 +892,13 @@ class Experiment:
                 total_loss += loss * num_batch_examples
 
                 # MAE
+                # output and target are both (B, num_channels, pred_len) for
+                # forecasting. Do NOT squeeze: squeeze(1) would collapse a size-1
+                # channel axis (univariate, C=1) to (B, pred_len) and silently
+                # broadcast against the (B, 1, pred_len) target, corrupting the MAE.
                 if mae:
                     total_mae += (
-                        mae_loss(output.squeeze(1), batch[1].to(self.device)) * num_batch_examples
+                        mae_loss(output, batch[1].to(self.device)) * num_batch_examples
                     )
 
         preds = torch.cat(all_logits)

@@ -76,9 +76,11 @@ def get_all_critical_scores(preds, targets, alpha):
 
     """
     n_samples, pred_len, _ = preds.size()  # (n_samples, pred_len, num_channels)
+    # .permute(2, 1, 0) (not .T, which is deprecated on >2D tensors and will error
+    # in a future PyTorch) reverses the axes to (num_channels, pred_len, n_samples).
     calibration_scores = nonconformity(
         preds, targets
-    ).T  # (num_channels, pred_len, n_samples)
+    ).permute(2, 1, 0)  # (num_channels, pred_len, n_samples)
 
     # Uncorrected critical calibration scores
     q = min((n_samples + 1.0) * (1 - alpha) / n_samples, 1)

@@ -374,6 +374,17 @@ class SL(BaseModel):
         default="linear",
         description="Head type for supervised learning: 'linear' or 'mlp'",
     )  # CyclicalEMForecaster (usable)
+    channel_independent: bool = Field(
+        default=True,
+        description=(
+            "PatchTST prediction head. True = canonical channel-independent shared "
+            "head Linear(num_patches*d_model -> pred_len) applied per channel "
+            "(~tens of thousands of params). False = joint head that flattens across "
+            "all channels Linear(C*num_patches*d_model -> C*pred_len) (hundreds of "
+            "millions of params for many channels; mixes channels and is not standard "
+            "PatchTST)."
+        ),
+    )
     num_kernels: int = Field(default=32, description="Number of convolutional kernels.")
     return_head: bool = Field(
         default=False, description="Whether to return the head of the model."

@@ -60,6 +60,7 @@ def get_model(args, generator=torch.Generator()):
             patch_dim=args.data.patch_dim,
             stride=args.data.patch_stride,
             head_type=args.sl.head_type,
+            channel_independent=args.sl.channel_independent,
         )
     elif args.exp.model_id == "RecurrentModel":
         model = RecurrentModel(

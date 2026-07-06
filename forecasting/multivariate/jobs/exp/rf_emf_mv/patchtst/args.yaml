@@ -2,13 +2,13 @@
 # Hyperparameters are copied verbatim from rf_emf/patchtst/args.yaml; only the
 # multivariate switches differ (univariate=False, dataset_class=forecasting,
 # conf.conf=True, eval_test_per_epoch=True). data.dataset / seq_len / pred_len /
-# exp.id are set per run by .personal/shell/task_multivariate.sh, and
+# exp.id are set per run by .personal/scripts/multivariate/conformal-prediction-grid.sh, and
 # data.num_channels is auto-inferred from the CSV at load time (27 or 29).
 exp:
   project_name: "rf-emf-forecasting/RF-EMF-MV"
   model_id: "PatchTST"
   learning_type: "sl"
-  id: "mv_ed2022_L336_O336_cp"
+  id: "mv_ed2022_L192_O96_cp"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
@@ -25,8 +25,8 @@ data:
   univariate: False
   window_stride: 1
   dtype: "float32"
-  seq_len: 336
-  pred_len: 336
+  seq_len: 192
+  pred_len: 96
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
@@ -57,6 +57,10 @@ sl:
   ff_dropout: 0.3
   attn_dropout: 0.0
   pred_dropout: 0.0
+  # Canonical PatchTST: channel-independent shared head (~44K params). Set False
+  # only for a deliberate channel-mixing variant (flatten-across-channels head,
+  # ~27M params at 27 channels; do not use as the standard PatchTST baseline).
+  channel_independent: True
 
 scheduler:
   pct_start: 0.3

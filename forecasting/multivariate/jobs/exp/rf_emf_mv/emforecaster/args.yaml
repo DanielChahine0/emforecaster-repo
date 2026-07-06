@@ -2,7 +2,7 @@
 # Hyperparameters are copied verbatim from rf_emf/emforecaster/args.yaml; only the
 # multivariate switches differ (univariate=False, dataset_class=forecasting,
 # eval_test_per_epoch=True; conf.conf was already True). data.dataset / seq_len /
-# pred_len / exp.id are set per run by .personal/shell/task_multivariate.sh, and
+# pred_len / exp.id are set per run by .personal/scripts/multivariate/conformal-prediction-grid.sh, and
 # data.num_channels is auto-inferred from the CSV at load time (27 or 29).
 # EMForecaster is multivariate via channel independence: it folds the channels
 # into the batch, forecasts them jointly in one pass, and returns (B, C, O).
@@ -14,7 +14,7 @@ exp:
   patch_model_id: "TSMixer"
   backbone_id: "Linear"
   learning_type: "sl"
-  id: "mv_ed2022_L336_O336_cp"
+  id: "mv_ed2022_L192_O96_cp"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
@@ -33,8 +33,8 @@ data:
   univariate: False
   window_stride: 1
   dtype: "float32"
-  seq_len: 336
-  pred_len: 336
+  seq_len: 192
+  pred_len: 96
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
