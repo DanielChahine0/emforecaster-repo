@@ -11,6 +11,14 @@
 # column (the on-disk univariate config's d_model: 64 is stale and does not run).
 # RF_EMF_Transformer has no built-in RevIN, so revin/revout are off here.
 #
+# batch_size is reduced 512 -> 128 (the one deviation from the univariate
+# hyperparameters). The channel-independent fold makes the effective batch
+# batch_size * num_channels (512 * 27 = 13824 sequences), and unlike
+# PatchTST/EMForecaster (which patch the sequence) this model runs full-length
+# self-attention, so 512 OOMs MPS (>20 GiB). 128 fits with headroom and trains
+# end-to-end; 256 risks OOM on the backward pass. Footnote this in the results
+# table alongside the model's numbers.
+#
 # data.dataset / seq_len / pred_len / exp.id are set per run by
 # .personal/scripts/multivariate/conformal-prediction-grid.sh; data.num_channels
 # is auto-inferred from the CSV at load time (27 or 29).
@@ -56,7 +64,7 @@ sl:
   num_heads: 2
   num_enc_layers: 2
   epochs: 100
-  batch_size: 512
+  batch_size: 128
   lr: 1e-4
   early_stopping: True
   weight_decay: 1e-4
