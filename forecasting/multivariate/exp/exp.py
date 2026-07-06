@@ -191,6 +191,10 @@ class Experiment:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif torch.backends.mps.is_available():
+            # MPS has its own caching allocator; cuda.empty_cache() is a no-op here,
+            # so freed loader memory was never returned between phases on the 16GB box.
+            torch.mps.empty_cache()
 
     def init_model(self):
         """
@@ -344,7 +348,10 @@ class Experiment:
 
         # Clear all tensors before returning stats
         del single_metrics
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
     def train(
         self,
@@ -415,7 +422,7 @@ class Experiment:
                 )
 
                 # Metrics
-                num_batch_examples = torch.tensor(batch[0].shape[0], device=self.device)
+                num_batch_examples = batch[0].shape[0]  # perf: plain int; int * device-tensor stays on-device and skips a per-step host->device copy
                 total_loss += loss * num_batch_examples
                 running_loss += loss * num_batch_examples
                 running_num_examples += num_batch_examples
@@ -888,7 +895,7 @@ class Experiment:
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
                 )
-                num_batch_examples = torch.tensor(batch[0].shape[0], device=self.device)
+                num_batch_examples = batch[0].shape[0]  # perf: plain int (see train loop)
                 total_loss += loss * num_batch_examples
 
                 # MAE
