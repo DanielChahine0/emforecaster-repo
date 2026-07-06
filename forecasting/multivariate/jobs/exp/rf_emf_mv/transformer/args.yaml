@@ -1,0 +1,78 @@
+# Multivariate (multi-channel) Transformer baseline on the Italy EMF datasets.
+# This is the same "Transformer (2017)" baseline used in the univariate table
+# (model_id RF_EMF_Transformer, models/rf_emf_baselines.py::Transformer), run
+# channel-independently: its forward folds (B, C, L) -> (B*C, 1, L) and unfolds
+# back to (B, C, pred_len), so every band is forecast by the same per-channel
+# model (the scheme EMForecaster/PatchTST use).
+#
+# d_model MUST be 2: the arch's conv1 (kernel_size=2) collapses the feature dim
+# 2 -> 1 before the final Linear(seq_len, pred_len); any other d_model mis-shapes
+# and crashes. This matches the value that produced the univariate Transformer
+# column (the on-disk univariate config's d_model: 64 is stale and does not run).
+# RF_EMF_Transformer has no built-in RevIN, so revin/revout are off here.
+#
+# data.dataset / seq_len / pred_len / exp.id are set per run by
+# .personal/scripts/multivariate/conformal-prediction-grid.sh; data.num_channels
+# is auto-inferred from the CSV at load time (27 or 29).
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF-MV"
+  model_id: "RF_EMF_Transformer"
+  learning_type: "sl"
+  id: "mv_ed2022_L192_O96_cp"
+  seed_list: [69421, 69422]
+  seed: 69421
+  mae: True
+  task: "forecasting"
+  gpu_id: 2
+  neptune: False
+  mps: True
+  eval_test_per_epoch: True
+
+data:
+  seq_load: True
+  dataset: "ED2022"
+  univariate: False
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 192
+  pred_len: 96
+  train_split: 0.7
+  val_split: 0.1
+  num_channels: 27
+  num_workers: 4
+  scale: True
+
+ddp:
+  ddp: False
+  master_port: "11761"
+  find_unused_parameters: True
+
+sl:
+  optimizer: "adam"
+  dataset_class: "forecasting"
+  criterion: "MSE"
+  scheduler: "onecycle"
+  d_model: 2
+  num_heads: 2
+  num_enc_layers: 2
+  epochs: 100
+  batch_size: 512
+  lr: 1e-4
+  early_stopping: True
+  weight_decay: 1e-4
+  revin: False
+  revout: False
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False
