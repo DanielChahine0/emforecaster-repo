@@ -26,7 +26,7 @@ exp:
   project_name: "rf-emf-forecasting/RF-EMF-MV"
   model_id: "RF_EMF_Transformer"
   learning_type: "sl"
-  id: "mv_ed2022_L192_O336_cp"
+  id: "mv_ed2022_L192_O96_cp"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
@@ -34,6 +34,7 @@ exp:
   gpu_id: 2
   neptune: False
   mps: True
+  compile: True  # perf(2026-07-08): torch.compile the forward pass. ~1.5x on MPS for the full-attention backbone; numerically equivalent to eager (~1e-5 rel). Forward-only handle; checkpoints stay eager-keyed.
   eval_test_per_epoch: False  # perf(2026-07-06): diagnostic-only test eval; no effect on metrics
 
 data:
@@ -43,7 +44,7 @@ data:
   window_stride: 1
   dtype: "float32"
   seq_len: 192
-  pred_len: 336
+  pred_len: 96
   train_split: 0.7
   val_split: 0.1
   num_channels: 27

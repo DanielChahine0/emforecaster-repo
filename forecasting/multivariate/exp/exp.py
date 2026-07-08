@@ -208,6 +208,20 @@ class Experiment:
             return
         else:
             self.model.to(self.device)
+
+        # Optional torch.compile. self.model stays the eager module for every
+        # checkpoint save/load and the optimizer wiring (so state_dict keys keep
+        # their clean, prefix-free names and compiled/eager runs are
+        # checkpoint-compatible). self.model_fwd is the handle used for the
+        # forward pass only; it wraps the same module, so it shares parameters
+        # with the optimizer and picks up load_state_dict updates in place.
+        # Numerically equivalent to eager (float32-rounding-level differences).
+        if getattr(self.args.exp, "compile", False):
+            self.model_fwd = torch.compile(self.model)
+            self.print_master("torch.compile enabled for the forward pass.")
+        else:
+            self.model_fwd = self.model
+
         num_params = self.count_parameters()
         self.logger["parameters/sl/num_params"] = num_params
         self.print_master(
@@ -416,7 +430,7 @@ class Experiment:
 
             for i, batch in enumerate(train_loader):
                 optimizer.zero_grad()
-                output = forward_pass(self.args, model, batch, model_id, self.device)
+                output = forward_pass(self.args, self.model_fwd, batch, model_id, self.device)
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
                 )
@@ -884,7 +898,7 @@ class Experiment:
             ) if plot_results else []
 
             for i, batch in enumerate(loader):
-                output = forward_pass(self.args, model, batch, model_id, self.device)
+                output = forward_pass(self.args, self.model_fwd, batch, model_id, self.device)
                 y_hat, y, ch_ids, u = self.parse_output(output, batch)
                 all_logits.append(y_hat)
                 all_labels.append(y)
