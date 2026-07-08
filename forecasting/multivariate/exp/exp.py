@@ -6,6 +6,7 @@ import json
 import warnings
 import shutil
 import random
+import contextlib
 import matplotlib.pyplot as plt
 
 warnings.filterwarnings(
@@ -117,7 +118,25 @@ class Experiment:
         else:
             self.device = torch.device(f"cuda:{self.args.exp.gpu_id}")
 
+        # GPU throughput knobs (CUDA only). Both are opt-in and no-ops elsewhere,
+        # so non-CUDA / other machines are unaffected.
+        on_cuda = self.device.type == "cuda"
+        self.amp_enabled = bool(getattr(self.args.exp, "amp", False)) and on_cuda
+        if on_cuda and getattr(self.args.exp, "tf32", False):
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+            self.console.log("TF32 matmul enabled.")
+        if self.amp_enabled:
+            self.console.log("AMP (bfloat16 autocast) enabled for training.")
+
         self.console.log(f"Device initialized to: {self.device}")
+
+    def amp_ctx(self):
+        """bfloat16 autocast when exp.amp is on and we are on CUDA; else a no-op."""
+        if getattr(self, "amp_enabled", False):
+            return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        return contextlib.nullcontext()
 
     def init_dataloaders(self, learning_type="sl", loader_type="train"):
         """
@@ -208,6 +227,9 @@ class Experiment:
             return
         else:
             self.model.to(self.device)
+            if getattr(self.args.exp, "compile", False):
+                self.model = torch.compile(self.model)
+                self.console.log("torch.compile enabled.")
         num_params = self.count_parameters()
         self.logger["parameters/sl/num_params"] = num_params
         self.print_master(
@@ -416,10 +438,14 @@ class Experiment:
 
             for i, batch in enumerate(train_loader):
                 optimizer.zero_grad()
-                output = forward_pass(self.args, model, batch, model_id, self.device)
-                loss = compute_loss(
-                    output, batch, criterion, model_id, self.args, self.device
-                )
+                # Mixed precision (if exp.amp) covers only forward+loss; the backward
+                # in model_update() runs outside autocast, per the standard AMP recipe.
+                # bfloat16 needs no GradScaler (same exponent range as fp32).
+                with self.amp_ctx():
+                    output = forward_pass(self.args, model, batch, model_id, self.device)
+                    loss = compute_loss(
+                        output, batch, criterion, model_id, self.args, self.device
+                    )
 
                 # Metrics
                 num_batch_examples = batch[0].shape[0]  # perf: plain int; int * device-tensor stays on-device and skips a per-step host->device copy

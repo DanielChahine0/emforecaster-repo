@@ -100,6 +100,18 @@ class Experiment(BaseModel):
         default=False,
         description="Whether to use MPS for Apple silicon hardware acceleration",
     )
+    tf32: bool = Field(
+        default=False,
+        description="CUDA only: allow TF32 matmul/cudnn kernels for a large throughput gain on Ampere+ GPUs (RTX 5070 is Blackwell). Slightly reduces fp32 matmul precision, so it is opt-in; no effect on non-CUDA devices.",
+    )
+    amp: bool = Field(
+        default=False,
+        description="CUDA only: run the TRAINING forward+loss under bfloat16 autocast (mixed precision) for speed and lower VRAM. Eval/validation stay full fp32 so reported metrics and model selection are unaffected. No-op on non-CUDA devices.",
+    )
+    compile: bool = Field(
+        default=False,
+        description="Wrap the model in torch.compile. Off by default: Triton on Windows is unreliable and first-run compile is slow, which is not worth it for these small models. Enable only to experiment.",
+    )
     rank_verbose: bool = Field(
         default=False,
         description="Verbose logging in the console for each rank, e.g., prints the loss for each rank before reduction.",

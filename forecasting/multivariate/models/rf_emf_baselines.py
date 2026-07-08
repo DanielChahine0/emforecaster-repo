@@ -1,6 +1,7 @@
 import unittest
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 from forecasting.multivariate.layers.patchtst.enc_block import _MultiheadAttention
 
 
@@ -101,17 +102,24 @@ class Transformer(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=2)
         self.conv2 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=1)
 
-    def forward(self, x):
-        # Channel-independent multivariate I/O: fold the channel dim into the
-        # batch so the univariate backbone below runs once per channel, then
-        # unfold back to (B, C, pred_len). Mirrors the strategy EMForecaster and
-        # PatchTST use; for C == 1 this reduces to the original univariate path.
-        B, C, L = x.shape
-        x = x.reshape(B * C, L)  # (B, C, seq_len) -> (B*C, seq_len)
-        x = x.unsqueeze(-1)  # (B*C, seq_len) -> (B*C, seq_len, 1)
-        x = self.fc1(
-            x
-        )  # (B*C, seq_len, 1) -> (B*C, seq_len, d_model)
+        # Memory cap for the folded-batch attention. This backbone runs full-length
+        # self-attention, which materializes a (rows, num_heads, seq_len, seq_len)
+        # score tensor whose size grows with seq_len**2. In the multivariate grid
+        # the folded batch is rows = B*C (e.g. 128*27 = 3456), so the long-context
+        # cells (seq_len=336) need ~15 GB and silently spill to system RAM over
+        # PCIe on a 12 GB GPU (~8x slower). We therefore process the folded batch
+        # in row-chunks no larger than (attn_row_budget / seq_len**2) rows. The
+        # backbone is channel-independent (no op mixes rows: attention/FF/LayerNorm/
+        # conv all act within a single row, dropout is 0), so chunking is
+        # numerically identical to a single pass -- results are unchanged; only the
+        # peak memory is bounded. The budget keeps the common seq_len<=192 cells a
+        # single chunk (unchanged path) and splits only the oversized ones.
+        self.attn_row_budget = 128 * 1024 * 1024  # ~5 GB peak/chunk at ~40 B per row*L^2
+
+    def _backbone(self, x):
+        # x: (rows, seq_len, 1) -> (rows, pred_len). Exactly the original per-row
+        # compute; factored out so it can be run per chunk and gradient-checkpointed.
+        x = self.fc1(x)  # (rows, seq_len, 1) -> (rows, seq_len, d_model)
 
         # Transformer
         for enc_layer in self.enc:
@@ -121,10 +129,45 @@ class Transformer(nn.Module):
         x = self.conv1(x)
         x = self.act(x)
         x = self.conv2(x)
-        x = self.act(x)  # (B*C, seq_len, 1) for d_model == 2
+        x = self.act(x)  # (rows, seq_len, 1) for d_model == 2
 
-        x = self.fc2(x.squeeze(-1))  # (B*C, seq_len) -> (B*C, pred_len)
-        return x.reshape(B, C, -1)  # (B*C, pred_len) -> (B, C, pred_len)
+        return self.fc2(x.squeeze(-1))  # (rows, seq_len) -> (rows, pred_len)
+
+    def forward(self, x):
+        # Channel-independent multivariate I/O: fold the channel dim into the
+        # batch so the univariate backbone below runs once per channel, then
+        # unfold back to (B, C, pred_len). Mirrors the strategy EMForecaster and
+        # PatchTST use; for C == 1 this reduces to the original univariate path.
+        B, C, L = x.shape
+        x = x.reshape(B * C, L)  # (B, C, seq_len) -> (B*C, seq_len)
+        x = x.unsqueeze(-1)  # (B*C, seq_len) -> (B*C, seq_len, 1)
+
+        # Row-chunk the folded batch so the (rows, heads, L, L) attention scores fit
+        # in VRAM. When the whole folded batch already fits (rows <= chunk, e.g. the
+        # seq_len<=192 cells) we take the ORIGINAL single-pass path -- no chunking,
+        # no checkpoint -- so those runs are byte-for-byte and speed-for-speed
+        # unchanged. Only oversized cells (seq_len=336) split into equal passes.
+        rows = x.shape[0]
+        chunk = max(1, self.attn_row_budget // (L * L))
+        if rows <= chunk:
+            out = self._backbone(x)  # (B*C, pred_len) -- unchanged path
+        else:
+            # Gradient-checkpoint each chunk during training so the large attention
+            # activations are recomputed in backward rather than all held at once
+            # (that is what bounds the training peak). No dropout here, so outputs
+            # are bit-identical and gradients match to fp summation order.
+            use_ckpt = self.training and torch.is_grad_enabled()
+            outs = []
+            for s in range(0, rows, chunk):
+                xc = x[s : s + chunk]
+                outs.append(
+                    checkpoint(self._backbone, xc, use_reentrant=False)
+                    if use_ckpt
+                    else self._backbone(xc)
+                )
+            out = torch.cat(outs, dim=0)
+
+        return out.reshape(B, C, -1)  # (B*C, pred_len) -> (B, C, pred_len)
 
 
 if __name__ == "__main__":

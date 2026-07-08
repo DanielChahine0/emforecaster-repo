@@ -14,14 +14,16 @@ exp:
   patch_model_id: "TSMixer"
   backbone_id: "Linear"
   learning_type: "sl"
-  id: "mv_ed2022_L192_O336_cp"
+  id: "mv_emf2023_L336_O96_cp"
   seed_list: [69421, 69422]
   seed: 69421
   mae: True
   rank_verbose: False
   task: "forecasting"
   neptune: False
-  mps: True
+  mps: False  # CUDA box (RTX 5070); MPS is Apple-only and would fall back to CPU
+  tf32: True  # TF32 matmul kernels: big speedup on Blackwell, slight fp32 precision trade
+  amp: True  # bfloat16 autocast for TRAINING only (eval stays fp32 for exact reported metrics)
   gpu_id: 0
   eval_test_per_epoch: False  # perf(2026-07-06): diagnostic-only test eval; no effect on metrics
 
@@ -29,17 +31,17 @@ data:
   patch_dim: 8
   patch_stride: -1
   seq_load: True
-  dataset: "ED2022"
+  dataset: "EMF_2023_university_5_with_PTV"
   univariate: False
   window_stride: 1
   dtype: "float32"
-  seq_len: 192
-  pred_len: 336
+  seq_len: 336
+  pred_len: 96
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
-  num_workers: 0  # perf: in-RAM tensor dataset; MPS workers add only IPC/RAM overhead
-  pin_memory: False  # perf: no-op on MPS unified memory (CUDA-only)
+  num_workers: 0  # perf: in-RAM tensor dataset; on Windows, DataLoader workers spawn+copy the whole tensor, so 0 is fastest
+  pin_memory: True  # perf: pins host batches for faster async host->device copy to the CUDA GPU
   scale: True
 
 tsmixer:
@@ -65,7 +67,7 @@ sl:
   scheduler: "onecycle"
   dropout: 0.3
   epochs: 100
-  batch_size: 512
+  batch_size: 1536  # perf(2026-07-07): 512->1536 to use more of the 12GB GPU (was ~2.6GB/22% at 512); raised while DLinear+PatchTST run at 512, safe because grid set_window never rewrites batch_size. Lower if CUDA OOMs.
   lr: 1e-4
   early_stopping: True
   weight_decay: 1e-5
