@@ -36,6 +36,58 @@ from scipy.io import loadmat
 from scipy import interpolate
 
 
+# Longest run of consecutive missing steps that is still safe to bridge with
+# linear interpolation. At the Italy datasets' ~6-7 min cadence this is ~1 day.
+# Gaps longer than this are flat-filled instead (see _repair_missing_values).
+MAX_INTERP_GAP = 240
+
+
+def _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP):
+    """Fill missing values without linearly interpolating across long outages.
+
+    Gaps up to ``max_interp_gap`` consecutive missing steps are linearly
+    interpolated in time. Longer gaps are left for flat forward/back fill instead
+    of being bridged with a ramp. This prevents a single corrupt reading sitting
+    at the edge of a multi-week sensor outage from anchoring an interpolation ramp
+    that smears the artifact across thousands of steps.
+
+    This exact failure occurred on the 1835 MHz band of the 2023 university file:
+    a lone 119.6 spike (~160x the band's normal range) sat immediately before a
+    ~10k-step whole-station outage, so linear interpolation ramped it down across
+    the entire gap. Because that block lands in the test split and the scaler is
+    fit on train only, the smeared values reached z-scores in the thousands and
+    inflated EMF2023 MSE by orders of magnitude. Capping the interpolation gap
+    makes such corruption impossible to smear, regardless of the source data.
+
+    Args:
+        df (pd.DataFrame): Numeric frame indexed in time order (rows = timesteps).
+        max_interp_gap (int): Longest NaN run to fill by interpolation.
+
+    Returns:
+        pd.DataFrame: Frame with all missing values filled.
+    """
+    interpolated = df.interpolate(method="linear", limit_direction="both")
+    for col in df.columns:
+        isna = df[col].isna().to_numpy()
+        if not isna.any():
+            continue
+        # Undo interpolation inside any NaN run longer than max_interp_gap, leaving
+        # those positions NaN for the flat ffill/bfill below.
+        n = len(isna)
+        i = 0
+        while i < n:
+            if not isna[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and isna[j]:
+                j += 1
+            if j - i > max_interp_gap:
+                interpolated.iloc[i:j, interpolated.columns.get_loc(col)] = np.nan
+            i = j
+    return interpolated.ffill().bfill()
+
+
 # <-----------------Forecasting------------------------>
 def load_forecasting(
     dataset_name="ETTh1",
@@ -168,10 +220,11 @@ def load_forecasting(
         df = df.drop(columns=drop_cols)
 
         # Coerce every band to numeric and repair missing values (some bands in the
-        # 2023 university file have empty cells). Linear interpolation in time, then
-        # forward/back fill for any leading or trailing gaps.
+        # 2023 university file have empty cells). Short dropouts are linearly
+        # interpolated; long outages are flat-filled rather than bridged with a
+        # ramp (see _repair_missing_values for why).
         df = df.apply(pd.to_numeric, errors="coerce")
-        df = df.interpolate(method="linear", limit_direction="both").ffill().bfill()
+        df = _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP)
 
         data = df.to_numpy().astype(np.float64)
 
