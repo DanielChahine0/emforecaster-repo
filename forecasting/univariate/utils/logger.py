@@ -1,5 +1,6 @@
 import os
 import json
+import glob
 import shutil
 import neptune
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict
 import yaml
 from forecasting.univariate.config.config import Global
+from forecasting.run_path import relative_run_path
 
 
 def offline_to_neptune():
@@ -16,37 +18,21 @@ def offline_to_neptune():
     log_dir = "logs"
     os.makedirs(log_dir, exist_ok=True)
 
-    if not os.listdir(log_dir):
+    # A run's log.json lives in each <seed>/ leaf; upload every leaf, then
+    # archive the ones that uploaded cleanly.
+    seed_dirs = sorted(os.path.dirname(p)
+                       for p in glob.glob(os.path.join(log_dir, "**", "log.json"),
+                                          recursive=True))
+    if not seed_dirs:
         console.log("[bold red]No logs to upload[/bold red]")
         return
 
-    for exp in os.listdir(log_dir):
-        exp_dir = os.path.join(log_dir, exp)
-        if not os.path.isdir(exp_dir):
-            console.log(f"[yellow]Skipping {exp_dir} as it's not a directory[/yellow]")
-            continue
-
-        exp_contents = os.listdir(exp_dir)
-        if not exp_contents:
-            console.log(f"[yellow]No contents found in {exp_dir}. Skipping...[/yellow]")
-            continue
-
-        processed_successfully = False
-        if any(os.path.isfile(os.path.join(exp_dir, item)) for item in exp_contents):
-            processed_successfully = process_experiment(exp_dir, console)
-        else:
-            processed_successfully = True
-            for run in exp_contents:
-                run_dir = os.path.join(exp_dir, run)
-                if os.path.isdir(run_dir):
-                    if not process_experiment(run_dir, console):
-                        processed_successfully = False
-
-        if processed_successfully:
-            move_to_old_logs(exp_dir, console)
+    for directory in seed_dirs:
+        if process_experiment(directory, console):
+            move_to_old_logs(directory, console)
         else:
             console.log(
-                f"[yellow]Skipping move of {exp} due to processing errors[/yellow]"
+                f"[yellow]Skipping move of {directory} due to processing errors[/yellow]"
             )
 
 
@@ -142,31 +128,16 @@ def log_metrics_and_parameters(logs, neptune_logger, console):
 
 
 def move_to_old_logs(source_dir, console):
-    destination_dir = "old_logs"
-    destination_path = os.path.join(destination_dir, os.path.basename(source_dir))
-    os.makedirs(destination_dir, exist_ok=True)
-    console.log(
-        f"Attempting to move run folder from {source_dir} to {destination_path}"
-    )
-    try:
-        shutil.move(source_dir, destination_path)
-        console.log(
-            f"[green]Successfully moved {source_dir} to {destination_dir}[/green]"
-        )
-    except Exception as e:
-        console.log(f"[bold red]Error moving {source_dir}: {str(e)}[/bold red]")
-
-    if os.path.exists(destination_path):
-        if not os.path.exists(source_dir):
-            console.log(f"[green]Verified: {source_dir} was moved successfully[/green]")
-        else:
-            console.log(
-                f"[yellow]Warning: {source_dir} exists in both source and destination[/yellow]"
-            )
-    else:
-        console.log(
-            f"[bold red]Error: {source_dir} was not moved to the destination[/bold red]"
-        )
+    # Mirror the run's position under old_logs/ so runs from different
+    # models/datasets/windows never collide.
+    rel = relative_run_path(source_dir, "logs")
+    destination = os.path.join("old_logs", rel)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    if os.path.exists(destination):
+        console.log(f"[yellow]{destination} already exists; leaving {source_dir} in place[/yellow]")
+        return
+    shutil.move(source_dir, destination)
+    console.log(f"[green]Moved {source_dir} -> {destination}[/green]")
 
 
 def epoch_logger(args, logger, key, value):
