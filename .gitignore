@@ -31,7 +31,7 @@ ecosystem.config.js
 notify-completion.js
 
 # Logs
-logs/
+logs.bak/
 old_logs/
 emforecaster/hpc/logs/
 
