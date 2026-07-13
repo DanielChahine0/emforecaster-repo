@@ -48,6 +48,7 @@ from forecasting.univariate.utils.classification import (
     get_metrics,
 )
 from forecasting.univariate.conformal.coverage import get_all_critical_scores, get_coverage
+from forecasting.run_path import build_run_dir
 
 # Logger
 import neptune
@@ -224,8 +225,16 @@ class Experiment:
 
         # Create log directory
         self.log_dir = os.path.join(
-            "logs",
-            f"{self.args.exp.ablation_id}_{self.args.exp.model_id}_{self.args.exp.id}",
+            build_run_dir(
+                setup="univariate",
+                model_id=self.args.exp.model_id,
+                dataset=self.args.data.dataset,
+                seq_len=self.args.data.seq_len,
+                pred_len=self.args.data.pred_len,
+                conf_on=self.args.conf.conf,
+                ablation_id=self.args.exp.ablation_id,
+                tag=self.args.exp.id,
+            ),
             str(self.args.exp.seed),
         )
         if os.path.exists(self.log_dir):
