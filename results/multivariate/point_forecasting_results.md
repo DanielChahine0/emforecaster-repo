@@ -6,7 +6,7 @@
 
 | Dataset | $L$ | $O$ | EMForecaster (2025) | DLinear (2023) | TSMixer (2023) | PatchTST (2023) | Transformer (2017) |
 |---|---|---|---|---|---|---|---|
-| ED2022  | 192 | 96  |  | **0.5964** | 0.7914 | 0.8927 |  |
+| ED2022  | 192 | 96  |  | **0.5964** | 0.7914 | 0.8927 | 0.8358 |
 | ED2022  | 192 | 336 |  | **0.6520** | 0.7043 | 0.7833 |  |
 | ED2022  | 336 | 96  |  | 0.5917 | 0.7747 | **0.5808** |  |
 | ED2022  | 336 | 336 |  | **0.6381** | 0.7374 | 0.8604 |  |
@@ -14,16 +14,16 @@
 | UH2022  | 192 | 336 |  | **1.2676** | 1.4570 | 1.3975 |  |
 | UH2022  | 336 | 96  |  | 1.2167 | 1.6732 | **1.2105** |  |
 | UH2022  | 336 | 336 |  | **1.2511** | 1.4763 | 1.4084 |  |
-| EMF2023 † | 192 | 96  |  | 1602.9438 | 604.6522 | 662.3720 |  |
-| EMF2023 † | 192 | 336 |  | 2757.5765 | 1081.9735 | 1107.8334 |  |
-| EMF2023 † | 336 | 96  |  | 2324.1234 | 587.7122 | 702.9989 |  |
-| EMF2023 † | 336 | 336 |  | 3300.0893 | 1169.7057 | 1309.4972 |  |
+| EMF2023 † | 192 | 96  |  | 0.6725 |  | 0.5789 |  |
+| EMF2023 † | 192 | 336 |  | 0.5484 |  | 0.4104 |  |
+| EMF2023 † | 336 | 96  |  | 0.7178 |  | 0.5722 |  |
+| EMF2023 † | 336 | 336 |  | 0.5817 |  |  |  |
 
 ## Table B | MAE
 
 | Dataset | $L$ | $O$ | EMForecaster (2025) | DLinear (2023) | TSMixer (2023) | PatchTST (2023) | Transformer (2017) |
 |---|---|---|---|---|---|---|---|
-| ED2022  | 192 | 96  |  | **0.4295** | 0.4919 | 0.5785 |  |
+| ED2022  | 192 | 96  |  | **0.4295** | 0.4919 | 0.5785 | 0.5584 |
 | ED2022  | 192 | 336 |  | **0.4536** | 0.4588 | 0.5133 |  |
 | ED2022  | 336 | 96  |  | 0.4229 | 0.4966 | **0.4165** |  |
 | ED2022  | 336 | 336 |  | **0.4392** | 0.4782 | 0.5592 |  |
@@ -31,12 +31,16 @@
 | UH2022  | 192 | 336 |  | **0.5352** | 0.5655 | 0.5940 |  |
 | UH2022  | 336 | 96  |  | 0.5114 | 0.6221 | **0.5057** |  |
 | UH2022  | 336 | 336 |  | **0.5232** | 0.5787 | 0.5990 |  |
-| EMF2023 † | 192 | 96  |  | 4.5244 | 1.2046 | 1.2975 |  |
-| EMF2023 † | 192 | 336 |  | 6.1506 | 1.8783 | 1.9093 |  |
-| EMF2023 † | 336 | 96  |  | 5.7932 | 1.3747 | 1.4748 |  |
-| EMF2023 † | 336 | 336 |  | 6.8740 | 2.1401 | 2.3428 |  |
+| EMF2023 † | 192 | 96  |  | 0.3571 |  | 0.1872 |  |
+| EMF2023 † | 192 | 336 |  | 0.4171 |  | 0.2034 |  |
+| EMF2023 † | 336 | 96  |  | 0.4029 |  | 0.1848 |  |
+| EMF2023 † | 336 | 336 |  | 0.4427 |  |  |  |
 
-## Table A′ | EMF2023 MSE, 1835 MHz channel excluded
+> **† EMF2023 (refreshed 2026-07-13):** these are fresh, all-channel, **single-seed (69421)** runs on the post-fix data (after "Cap interpolation across long gaps"). The 1835 MHz spike no longer dominates - max per-channel MSE is now ~5.6 (previously ~41,578) - so these values (~0.4-0.7) **supersede the earlier spike-dominated figures (~1600-3300)**. Coverage is still incomplete: **TSMixer not yet run**, **PatchTST 336/336 pending**, and only seed 69421 so far (ED2022/UH2022 remain 2-seed means). EMForecaster has no multivariate runs; Transformer has only ED2022 L192/O96 completed. Rows are left unbolded until coverage is complete.
+
+## Table A′ | EMF2023 MSE, 1835 MHz channel excluded (superseded)
+
+> **Superseded** by the refreshed all-channel EMF2023 numbers in Tables A/B above: with the 2026-07-13 gap-interpolation fix the 1835 MHz spike no longer dominates, so this channel-exclusion workaround is retained for historical reference only.
 
 | Dataset | $L$ | $O$ | DLinear | TSMixer | PatchTST | All-channel MSE (ref, spike-dominated) |
 |---|---|---|---|---|---|---|
