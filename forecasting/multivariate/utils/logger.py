@@ -29,7 +29,12 @@ def offline_to_neptune():
 
     for directory in seed_dirs:
         if process_experiment(directory, console):
-            move_to_old_logs(directory, console)
+            try:
+                move_to_old_logs(directory, console)
+            except OSError as e:
+                console.log(
+                    f"[bold red]Failed to archive {directory}: {e}[/bold red]"
+                )
         else:
             console.log(
                 f"[yellow]Skipping move of {directory} due to processing errors[/yellow]"
@@ -129,13 +134,16 @@ def log_metrics_and_parameters(logs, neptune_logger, console):
 
 def move_to_old_logs(source_dir, console):
     # Mirror the run's position under old_logs/ so runs from different
-    # models/datasets/windows never collide.
+    # models/datasets/windows never collide. If the destination already exists
+    # (a re-run of the same cell), disambiguate rather than leaving the source
+    # behind - otherwise it would be re-uploaded on every subsequent sync.
     rel = relative_run_path(source_dir, "logs")
     destination = os.path.join("old_logs", rel)
+    i = 1
+    while os.path.exists(destination):
+        i += 1
+        destination = os.path.join("old_logs", f"{rel}.dup{i}")
     os.makedirs(os.path.dirname(destination), exist_ok=True)
-    if os.path.exists(destination):
-        console.log(f"[yellow]{destination} already exists; leaving {source_dir} in place[/yellow]")
-        return
     shutil.move(source_dir, destination)
     console.log(f"[green]Moved {source_dir} -> {destination}[/green]")
 

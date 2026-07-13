@@ -49,11 +49,15 @@ def build_run_dir(setup, model_id, dataset, seq_len, pred_len, conf_on,
 
 
 def iter_run_dirs(logs_dir="logs"):
-    """Every run dir under logs_dir, deduped and sorted oldest-to-newest by mtime."""
+    """Every run dir under logs_dir, deduped and sorted oldest-to-newest by mtime.
+
+    A run's sort key is its newest seed's log.json mtime, so multi-seed runs
+    order deterministically regardless of glob order.
+    """
     run_dirs = {}
     for log_path in glob.glob(os.path.join(logs_dir, "**", "log.json"), recursive=True):
         run = os.path.dirname(os.path.dirname(log_path))
-        run_dirs[run] = os.path.getmtime(log_path)
+        run_dirs[run] = max(run_dirs.get(run, 0.0), os.path.getmtime(log_path))
     return sorted(run_dirs, key=run_dirs.get)
 
 

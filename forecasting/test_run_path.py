@@ -49,3 +49,25 @@ def test_iter_run_dirs_finds_parents_of_seed_logs(tmp_path):
             (d / "log.json").write_text("{}")
     found = {os.path.relpath(p, str(logs)) for p in iter_run_dirs(str(logs))}
     assert found == set(runs)
+
+
+def test_build_run_dir_ablation_and_tag_together():
+    # Both optional levels present: ablation before tag, in that order.
+    assert build_run_dir("multivariate", "DLinear", "ED2022", 192, 96, True,
+                         ablation_id=2, tag="foo") == \
+        os.path.join("logs", "multivariate", "DLinear", "ed2022",
+                     "L192_O96_cp", "ablation_2", "foo")
+
+
+def test_iter_run_dirs_sorted_oldest_to_newest(tmp_path):
+    logs = tmp_path / "logs"
+    older = logs / "multivariate" / "DLinear" / "ed2022" / "L192_O96_cp" / "69421"
+    newer = logs / "multivariate" / "DLinear" / "ed2022" / "L336_O96_cp" / "69421"
+    for d in (older, newer):
+        d.mkdir(parents=True)
+        (d / "log.json").write_text("{}")
+    os.utime(older / "log.json", (1000, 1000))
+    os.utime(newer / "log.json", (2000, 2000))
+    rels = [os.path.relpath(p, str(logs)) for p in iter_run_dirs(str(logs))]
+    assert rels == [os.path.join("multivariate", "DLinear", "ed2022", "L192_O96_cp"),
+                    os.path.join("multivariate", "DLinear", "ed2022", "L336_O96_cp")]
