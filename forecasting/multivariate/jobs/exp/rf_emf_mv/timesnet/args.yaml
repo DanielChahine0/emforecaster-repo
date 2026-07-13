@@ -9,7 +9,7 @@ exp:
   project_name: "rf-emf-forecasting/RF-EMF-MV"
   model_id: "TimesNet"
   learning_type: "sl"
-  id: "mv_ed2022_L192_O96_cp"
+  id: ""
   seed_list: [69421, 69422]
   seed: 69421
   mae: True

@@ -29,7 +29,7 @@ exp:
   patch_model_id: "TSMixer"
   backbone_id: "Linear"
   learning_type: "sl"
-  id: "mv_smoke_test_L20_O30"
+  id: ""
   seed_list: [69421, 69422, 69423, 69424, 69425]
   seed: 69421
   mae: True

@@ -4,7 +4,7 @@ exp:
   patch_model_id: "TSMixer"
   backbone_id: "Linear"
   learning_type: "sl"
-  id: "rf_emf_ptv2_L336_O336_cp"
+  id: ""
   seed_list: [69421, 69422]
   seed: 69421
   mae: True

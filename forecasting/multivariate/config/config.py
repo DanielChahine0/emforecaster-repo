@@ -43,8 +43,10 @@ class Experiment(BaseModel):
         default="sl", description="Type of learning: 'sl', 'ssl'"
     )
     id: str = Field(
-        default_factory=generate_random_id,
-        description="Experiment ID, randomly generated 10-character string",
+        default="",
+        description="Optional free-form tag. When non-empty it adds one folder "
+        "level under the run dir (logs/.../L.._O.._<protocol>/<tag>/<seed>) to "
+        "isolate ad-hoc runs; leave empty for the plain structured path.",
     )
     neptune: bool = Field(
         default=False,
