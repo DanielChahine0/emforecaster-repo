@@ -1,5 +1,6 @@
 """Plot train/val loss-vs-epoch curves with the final test loss overlaid,
-reading the ``log.json`` files under ``logs/{ablation}_{Model}_{id}/{seed}/``.
+reading the ``log.json`` files under
+``logs/{setup}/{model}/{dataset}/L{L}_O{O}_{protocol}/{seed}/``.
 
 Curves are averaged across seeds (mean with a +/-1 std band, NaN-aware so
 early-stopped seeds can end at different epochs). Test loss is a single scalar
@@ -12,7 +13,6 @@ import argparse
 import glob
 import json
 import os
-import re
 
 import numpy as np
 import yaml
@@ -20,6 +20,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+from forecasting.run_path import iter_run_dirs
 
 # metric -> (per-epoch train key, per-epoch val key, test scalar key, axis label)
 METRICS = {
@@ -31,14 +33,12 @@ METRICS = {
 def find_run_dirs(logs_dir, model, run_dir=None, latest=False, exclude=()):
     if run_dir is not None:
         return [run_dir] if os.path.isdir(run_dir) else []
-    # Deep models are logged as "<n>_<Model>_<id>", but the LSTM/Transformer
-    # baselines come through as "<n>_RF_EMF_<Model>_<dataset>_L..._O...", so we
-    # allow an optional RF_EMF_ prefix and still display the clean model name.
-    pattern = re.compile(rf"^\d+_(?:RF_EMF_)?{re.escape(model)}_\w+$")
-    dirs = [d for d in glob.glob(os.path.join(logs_dir, "*"))
-            if os.path.isdir(d) and pattern.match(os.path.basename(d))
-            and not any(x in os.path.basename(d) for x in exclude)]
-    dirs.sort(key=os.path.getmtime)
+    # `model` is a directory level in the tree; baselines are logged under
+    # RF_EMF_<Model>, so accept either the bare name or the RF_EMF_ prefix.
+    names = {model, f"RF_EMF_{model}"}
+    dirs = [d for d in iter_run_dirs(logs_dir)
+            if names & set(d.split(os.sep))
+            and not any(x in d for x in exclude)]
     return dirs[-1:] if latest else dirs
 
 
