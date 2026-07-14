@@ -85,7 +85,7 @@ exp:
   eval_test_per_epoch: false
   gpu_id: 2
   grid_search: false
-  id: mv_emf2023_L336_O336_cp
+  id: ''
   learning_type: sl
   mae: true
   model_id: PatchTST
@@ -104,7 +104,7 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-07-13_06-25-00
+  time: 2026-07-13_23-47-43
   tuning_metric: loss
   u_weight: false
   va_inductive: true
