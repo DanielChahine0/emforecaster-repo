@@ -44,3 +44,33 @@ def test_cpu_profile_is_conservative():
     assert p.device == "cpu" and p.mps is False
     assert p.pin_memory is False and p.compile is False
     assert p.batch_size == 64
+
+
+import types
+
+from forecasting import hardware as hw
+
+
+def _fake_args():
+    exp = types.SimpleNamespace(model_id="EMForecaster", mps=False, gpu_id=7, compile=True)
+    data = types.SimpleNamespace(num_workers=99, pin_memory=True)
+    sl = types.SimpleNamespace(batch_size=512)
+    return types.SimpleNamespace(exp=exp, data=data, sl=sl)
+
+
+def test_normalize_config_applies_mps_profile():
+    args = _fake_args()
+    profile = hw.normalize_config(args, backend="mps")
+    assert profile.backend == "mps"
+    assert args.exp.mps is True and args.exp.gpu_id == 0
+    assert args.exp.compile is False  # EMForecaster on MPS
+    assert args.data.num_workers == 0 and args.data.pin_memory is False
+    assert args.sl.batch_size == 128
+
+
+def test_normalize_config_keeps_yaml_batch_on_cuda():
+    args = _fake_args()
+    args.sl.batch_size = 512
+    hw.normalize_config(args, backend="cuda")
+    assert args.sl.batch_size == 512  # batch_size is None on cuda -> unchanged
+    assert args.data.num_workers == 4 and args.data.pin_memory is True

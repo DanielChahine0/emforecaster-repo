@@ -78,3 +78,22 @@ def build_profile(backend, model_id):
         )
     else:
         raise ValueError(f"unknown backend: {backend!r}")
+
+
+def normalize_config(args, backend=None):
+    """Override the hardware-dependent fields of a loaded Global config in place.
+
+    Reads args.exp.model_id to choose per-model batch/compile. Returns the
+    HardwareProfile that was applied.
+    """
+    backend = backend or resolve_backend()
+    profile = build_profile(backend, args.exp.model_id)
+    args.exp.mps = profile.mps
+    args.exp.gpu_id = profile.gpu_id
+    if hasattr(args.exp, "compile"):
+        args.exp.compile = profile.compile
+    args.data.num_workers = profile.num_workers
+    args.data.pin_memory = profile.pin_memory
+    if profile.batch_size is not None:
+        args.sl.batch_size = profile.batch_size
+    return profile
