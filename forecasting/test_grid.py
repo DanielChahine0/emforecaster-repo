@@ -53,3 +53,9 @@ def test_model_tuples_are_label_id_job():
     assert mv["Transformer"] == ("RF_EMF_Transformer", "rf_emf_mv/transformer")
     uni = dict((label, (model_id, job)) for label, model_id, job in grids.GRIDS["univariate"]["models"])
     assert uni["Transformer"] == ("RF_EMF_Transformer", "rf_emf/baselines/transformer")
+
+
+def test_run_grid_dry_run_lists_all_cells(tmp_path):
+    # dry_run must not train; it should visit all 60 cells and report them.
+    failed = grid.run_grid("multivariate", dry_run=True, logs_dir=str(tmp_path))
+    assert failed == []

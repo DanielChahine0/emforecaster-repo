@@ -53,3 +53,73 @@ def cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(SEED,),
         if MARKER not in data:
             return False
     return True
+
+
+def _cleanup():
+    # In-process hygiene the subprocess model got for free: close figures, drop
+    # references, and bound the Inductor cache when compile is on.
+    plt.close("all")
+    gc.collect()
+    try:
+        torch._dynamo.reset()
+    except Exception:
+        pass
+
+
+def run_grid(setup, dry_run=False, logs_dir="logs"):
+    """Run every cell of the grid for one setup. Returns the list of failed cells."""
+    console = Console()
+    grid_def = GRIDS[setup]
+    load_config, Experiment = setup_modules(setup)
+    passed, skipped, failed = [], [], []
+    cells = [(m, d, w)
+             for m in grid_def["models"]
+             for d in grid_def["datasets"]
+             for w in grid_def["windows"]]
+    total = len(cells)
+
+    for n, ((label, model_id, job), dataset, (seq_len, pred_len)) in enumerate(cells, 1):
+        tag = f"[{n:2d}/{total}] {label:<12} {dataset}/L{seq_len}/O{pred_len}"
+
+        if cell_done(setup, model_id, dataset, seq_len, pred_len, logs_dir=logs_dir):
+            console.log(f"[SKIP] {tag}")
+            skipped.append(tag)
+            continue
+
+        if dry_run:
+            console.log(f"[DRY ] {tag} -> {job} dataset={dataset} L={seq_len} O={pred_len}")
+            passed.append(tag)
+            continue
+
+        try:
+            args = load_config(args_path(setup, job))
+            hardware.normalize_config(args)
+            args.data.dataset = dataset
+            args.data.seq_len = seq_len
+            args.data.pred_len = pred_len
+            args.conf.conf = True
+            args.conf.alpha = grid_def["alpha"]
+            args.exp.neptune = False
+            args.exp.id = ""
+            args.exp.ablation_id = 1
+            args.exp.seed_list = [SEED]
+            args.exp.seed = SEED
+            args.exp.time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            console.log(f"[RUN ] {tag}")
+            Experiment(args).run()
+            console.log(f"[ OK ] {tag}")
+            passed.append(tag)
+        except Exception as exc:  # keep the grid alive on a bad cell
+            console.log(f"[FAIL] {tag} ({type(exc).__name__}: {exc})")
+            failed.append(tag)
+        finally:
+            _cleanup()
+
+    console.log("")
+    console.log(f"===== {setup} CP grid summary =====")
+    console.log(f"  passed:  {len(passed)}")
+    console.log(f"  skipped: {len(skipped)} (already complete)")
+    console.log(f"  failed:  {len(failed)}")
+    for c in failed:
+        console.log(f"    - {c}")
+    return failed
