@@ -80,6 +80,10 @@ def main(job_name="test", ablation=None, ablation_id=1, quick=False):
         base_dir, *package.split("."), "jobs", "exp", job_name, "args.yaml"
     )
     args = load_config(args_path)
+    # Auto-adapt device / dataloader / compile / batch_size to this machine so
+    # the same YAML runs on CUDA, MPS, or CPU without per-machine edits.
+    from forecasting import hardware
+    hardware.normalize_config(args)
     if ablation is not None:
         args = update_global_config(ablation, args, ablation_id)
     console.print("Pydantic Configuration Loaded Successfully:", style="bold green")
