@@ -1,3 +1,5 @@
+import pytest
+
 from forecasting import hardware
 
 
@@ -27,6 +29,14 @@ def test_mps_profile_uses_tuned_batch_sizes():
     assert p.device == "mps" and p.mps is True
     assert p.num_workers == 0 and p.pin_memory is False
     assert p.compile is True  # MEMORY.md: keep compile on for the MV transformer
+    # PatchTST compiles on CUDA but must NOT compile on MPS; guards the
+    # divergence between _COMPILE_MODELS and _MPS_COMPILE_MODELS.
+    assert hardware.build_profile("mps", "PatchTST").compile is False
+
+
+def test_build_profile_raises_on_unknown_backend():
+    with pytest.raises(ValueError):
+        hardware.build_profile("rocm", "EMForecaster")
 
 
 def test_cpu_profile_is_conservative():

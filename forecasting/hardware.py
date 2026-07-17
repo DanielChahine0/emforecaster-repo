@@ -2,8 +2,9 @@
 
 resolve_backend() picks cuda -> mps -> cpu by availability. build_profile()
 turns a backend + model_id into concrete knobs (device, dataloader settings,
-compile, batch size). normalize_config() writes those knobs onto a loaded
-Global config so the same YAML runs on any machine.
+compile, batch size). A later task adds normalize_config() here, which will
+write those knobs onto a loaded Global config so the same YAML runs on any
+machine.
 """
 import dataclasses
 from typing import Optional
@@ -24,6 +25,11 @@ _CPU_DEFAULT_BATCH = 64
 # datasets here mean other models compile slower than they run.
 _COMPILE_MODELS = {"RF_EMF_Transformer", "PatchTST"}
 
+# MPS compile eligibility is deliberately narrower than _COMPILE_MODELS above:
+# per MEMORY.md, torch.compile is a net win for the MV transformer on MPS
+# (~1.5x) but not worth it for the other models on this backend.
+_MPS_COMPILE_MODELS = {"RF_EMF_Transformer"}
+
 
 @dataclasses.dataclass
 class HardwareProfile:
@@ -38,6 +44,7 @@ class HardwareProfile:
 
 
 def resolve_backend():
+    """Pick the best available backend: cuda, then mps, then cpu."""
     if torch.cuda.is_available():
         return "cuda"
     if torch.backends.mps.is_available():
@@ -46,6 +53,7 @@ def resolve_backend():
 
 
 def build_profile(backend, model_id):
+    """Build the concrete HardwareProfile for a given backend and model."""
     if backend == "cuda":
         return HardwareProfile(
             backend="cuda", device="cuda:0", mps=False, gpu_id=0,
@@ -53,15 +61,20 @@ def build_profile(backend, model_id):
             compile=model_id in _COMPILE_MODELS,
             batch_size=None,  # keep the YAML value; 512 fits 32 GB VRAM
         )
-    if backend == "mps":
+    elif backend == "mps":
         return HardwareProfile(
             backend="mps", device="mps", mps=True, gpu_id=0,
+            # Datasets are already in-RAM tensors, so MPS worker processes
+            # add only IPC/RAM overhead with no load-time benefit.
             num_workers=0, pin_memory=False,
-            compile=(model_id == "RF_EMF_Transformer"),
+            compile=model_id in _MPS_COMPILE_MODELS,
             batch_size=_MPS_BATCH.get(model_id, _MPS_DEFAULT_BATCH),
         )
-    return HardwareProfile(
-        backend="cpu", device="cpu", mps=False, gpu_id=0,
-        num_workers=2, pin_memory=False, compile=False,
-        batch_size=_CPU_DEFAULT_BATCH,
-    )
+    elif backend == "cpu":
+        return HardwareProfile(
+            backend="cpu", device="cpu", mps=False, gpu_id=0,
+            num_workers=2, pin_memory=False, compile=False,
+            batch_size=_CPU_DEFAULT_BATCH,
+        )
+    else:
+        raise ValueError(f"unknown backend: {backend!r}")
