@@ -67,7 +67,11 @@ def _cleanup():
 
 
 def run_grid(setup, dry_run=False, logs_dir="logs"):
-    """Run every cell of the grid for one setup. Returns the list of failed cells."""
+    """Run every cell of the grid for one setup. Returns the list of failed cells.
+
+    logs_dir only affects the resume check; Experiment.run() always writes under
+    the default logs/ tree, so pass a custom logs_dir for dry-run/testing only.
+    """
     console = Console()
     grid_def = GRIDS[setup]
     load_config, Experiment = setup_modules(setup)
@@ -111,6 +115,7 @@ def run_grid(setup, dry_run=False, logs_dir="logs"):
             passed.append(tag)
         except Exception as exc:  # keep the grid alive on a bad cell
             console.log(f"[FAIL] {tag} ({type(exc).__name__}: {exc})")
+            console.print_exception()
             failed.append(tag)
         finally:
             _cleanup()

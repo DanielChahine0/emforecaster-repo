@@ -59,3 +59,27 @@ def test_run_grid_dry_run_lists_all_cells(tmp_path):
     # dry_run must not train; it should visit all 60 cells and report them.
     failed = grid.run_grid("multivariate", dry_run=True, logs_dir=str(tmp_path))
     assert failed == []
+
+
+def test_run_grid_records_failures_and_continues(tmp_path, monkeypatch):
+    import types as _t
+
+    def fake_load_config(path):
+        exp = _t.SimpleNamespace(model_id="DLinear", mps=False, gpu_id=0, compile=False,
+                                 neptune=True, id="x", ablation_id=1, seed_list=[], seed=0, time="")
+        data = _t.SimpleNamespace(dataset="", seq_len=0, pred_len=0, num_workers=0, pin_memory=False)
+        conf = _t.SimpleNamespace(conf=False, alpha=0.0)
+        sl = _t.SimpleNamespace(batch_size=0)
+        return _t.SimpleNamespace(exp=exp, data=data, conf=conf, sl=sl)
+
+    class FakeExperiment:
+        def __init__(self, args):
+            self.args = args
+
+        def run(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(grid, "setup_modules", lambda setup: (fake_load_config, FakeExperiment))
+    failed = grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path))
+    # Every cell raised, but the grid kept going and recorded all 60 as failed.
+    assert len(failed) == 60
