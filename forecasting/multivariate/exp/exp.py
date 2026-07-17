@@ -117,6 +117,12 @@ class Experiment:
             self.console.log("CUDA not available. Running on CPU.")
         else:
             self.device = torch.device(f"cuda:{self.args.exp.gpu_id}")
+            # perf: TF32 tensor-core matmuls + cuDNN autotune. Safe: run() seeds
+            # RNGs but never requests deterministic algorithms.
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cudnn.benchmark = True
 
         self.console.log(f"Device initialized to: {self.device}")
 
@@ -190,9 +196,10 @@ class Experiment:
                 delattr(self, f"{k}_loader")
 
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        elif torch.backends.mps.is_available():
+        # perf: no cuda.empty_cache() here — these datasets are tiny, the cache
+        # never needs flushing, and empty_cache() device-syncs then forces slow
+        # cudaMalloc re-allocation in the next phase.
+        if torch.backends.mps.is_available():
             # MPS has its own caching allocator; cuda.empty_cache() is a no-op here,
             # so freed loader memory was never returned between phases on the 16GB box.
             torch.mps.empty_cache()
@@ -928,7 +935,7 @@ class Experiment:
                 # broadcast against the (B, 1, pred_len) target, corrupting the MAE.
                 if mae:
                     total_mae += (
-                        mae_loss(output, batch[1].to(self.device)) * num_batch_examples
+                        mae_loss(output, batch[1].to(self.device, non_blocking=True)) * num_batch_examples
                     )
 
         preds = torch.cat(all_logits)
@@ -1124,7 +1131,7 @@ class Experiment:
     def parse_output(self, output, batch):
         ch_ids = torch.tensor(0, device=self.device).unsqueeze(-1)
         u = torch.tensor(0, device=self.device).unsqueeze(-1)
-        y_hat, y = (output, batch[1].to(self.device))
+        y_hat, y = (output, batch[1].to(self.device, non_blocking=True))
 
         if y_hat.dim() > 1 and y_hat.size(-1) == 1:
             y_hat = y_hat.unsqueeze(-1)
