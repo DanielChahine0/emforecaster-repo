@@ -51,7 +51,15 @@ set -o pipefail
 # Deliberately NOT `set -e`: run() handles per-cell failures itself so one bad
 # cell does not abort the grid. Also NOT `set -u`: macOS /bin/bash is 3.2, where
 # expanding an empty array under nounset ("${PY_FLAGS[@]}") is a fatal error.
-cd "$(dirname "$0")/../../.." || { echo "cannot cd to repo root" >&2; exit 1; }
+cd "$(dirname "$0")" || { echo "cannot cd to repo root" >&2; exit 1; }
+
+# sed -i is not portable: BSD/macOS sed needs `-i ''`, GNU/Linux sed needs `-i`.
+# sedi <sed args...> wraps the right variant for the current platform.
+if sed --version >/dev/null 2>&1; then
+    sedi() { sed -i -E "$@"; }        # GNU sed (Linux)
+else
+    sedi() { sed -i '' -E "$@"; }     # BSD sed (macOS)
+fi
 
 # --- knobs ------------------------------------------------------------------
 DRYRUN="${DRYRUN:-0}"
@@ -79,7 +87,7 @@ CFGS=(
 # a stale working tree cannot silently change the protocol. The indented `conf:`
 # is the on/off flag (the leading space keeps the column-0 `conf:` section
 # header untouched). seed_list stays two-seeded; --quick selects seed one.
-sed -i '' -E \
+sedi \
     -e 's/^([[:space:]]*)neptune: .*/\1neptune: False/' \
     -e 's/^([[:space:]]+)conf: .*/\1conf: True/' \
     -e 's/^([[:space:]]*)alpha: .*/\1alpha: 0.1/' \
@@ -99,7 +107,7 @@ FAILED=()
 set_window() {
     local dataset=$1 L=$2 O=$3
     CUR_DATASET="$dataset"; CUR_L="$L"; CUR_O="$O"
-    sed -i '' -E \
+    sedi \
         -e "s/^([[:space:]]*)dataset: .*/\1dataset: \"${dataset}\"/" \
         -e "s/^([[:space:]]*)seq_len: .*/\1seq_len: ${L}/" \
         -e "s/^([[:space:]]*)pred_len: .*/\1pred_len: ${O}/" \

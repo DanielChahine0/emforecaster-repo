@@ -22,11 +22,11 @@ exp:
 
 data:
   seq_load: True
-  dataset: "ED2022"
+  dataset: "EMF_2023_university_5_with_PTV"
   univariate: False
   window_stride: 1
   dtype: "float32"
-  seq_len: 336
+  seq_len: 192
   pred_len: 96
   train_split: 0.7
   val_split: 0.1
