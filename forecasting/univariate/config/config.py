@@ -98,6 +98,10 @@ class Experiment(BaseModel):
         default=False,
         description="Whether to use MPS for Apple silicon hardware acceleration",
     )
+    compile: bool = Field(
+        default=False,
+        description="Whether to wrap the model in torch.compile for the forward pass. Numerically equivalent to eager (differences at the float32-rounding level, ~1e-5 relative). Checkpoints are still saved/loaded on the eager module, so compiled and eager runs stay checkpoint-compatible. Biggest win on attention-heavy models (RF_EMF_Transformer, PatchTST); other models see little benefit.",
+    )
     rank_verbose: bool = Field(
         default=False,
         description="Verbose logging in the console for each rank, e.g., prints the loss for each rank before reduction.",

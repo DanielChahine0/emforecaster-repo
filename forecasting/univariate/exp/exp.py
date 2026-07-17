@@ -117,6 +117,12 @@ class Experiment:
             self.console.log("CUDA not available. Running on CPU.")
         else:
             self.device = torch.device(f"cuda:{self.args.exp.gpu_id}")
+            # perf: TF32 tensor-core matmuls + cuDNN autotune. Safe: run() seeds
+            # RNGs but never requests deterministic algorithms.
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cudnn.benchmark = True
 
         self.console.log(f"Device initialized to: {self.device}")
 
@@ -190,8 +196,9 @@ class Experiment:
                 delattr(self, f"{k}_loader")
 
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # perf: no cuda.empty_cache() here — these datasets are tiny, the cache
+        # never needs flushing, and empty_cache() device-syncs then forces slow
+        # cudaMalloc re-allocation in the next phase.
 
     def init_model(self):
         """
@@ -205,6 +212,20 @@ class Experiment:
             return
         else:
             self.model.to(self.device)
+
+        # Optional torch.compile. self.model stays the eager module for every
+        # checkpoint save/load and the optimizer wiring (so state_dict keys keep
+        # their clean, prefix-free names and compiled/eager runs are
+        # checkpoint-compatible). self.model_fwd is the handle used for the
+        # forward pass only; it wraps the same module, so it shares parameters
+        # with the optimizer and picks up load_state_dict updates in place.
+        # Numerically equivalent to eager (float32-rounding-level differences).
+        if getattr(self.args.exp, "compile", False):
+            self.model_fwd = torch.compile(self.model)
+            self.print_master("torch.compile enabled for the forward pass.")
+        else:
+            self.model_fwd = self.model
+
         num_params = self.count_parameters()
         self.logger["parameters/sl/num_params"] = num_params
         self.print_master(
@@ -415,13 +436,13 @@ class Experiment:
 
             for i, batch in enumerate(train_loader):
                 optimizer.zero_grad()
-                output = forward_pass(self.args, model, batch, model_id, self.device)
+                output = forward_pass(self.args, self.model_fwd, batch, model_id, self.device)
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
                 )
 
                 # Metrics
-                num_batch_examples = torch.tensor(batch[0].shape[0], device=self.device)
+                num_batch_examples = batch[0].shape[0]  # perf: plain int; int * device-tensor stays on-device and skips a per-step host->device copy
                 total_loss += loss * num_batch_examples
                 running_loss += loss * num_batch_examples
                 running_num_examples += num_batch_examples
@@ -814,7 +835,7 @@ class Experiment:
             ) if plot_results else []
 
             for i, batch in enumerate(loader):
-                output = forward_pass(self.args, model, batch, model_id, self.device)
+                output = forward_pass(self.args, self.model_fwd, batch, model_id, self.device)
                 y_hat, y, ch_ids, u = self.parse_output(output, batch)
                 all_logits.append(y_hat)
                 all_labels.append(y)
@@ -825,13 +846,13 @@ class Experiment:
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
                 )
-                num_batch_examples = torch.tensor(batch[0].shape[0], device=self.device)
+                num_batch_examples = batch[0].shape[0]  # perf: plain int; int * device-tensor stays on-device and skips a per-step host->device copy
                 total_loss += loss * num_batch_examples
 
                 # MAE
                 if mae:
                     total_mae += (
-                        mae_loss(output.squeeze(1), batch[1].to(self.device)) * num_batch_examples
+                        mae_loss(output.squeeze(1), batch[1].to(self.device, non_blocking=True)) * num_batch_examples
                     )
 
         preds = torch.cat(all_logits)
@@ -1009,7 +1030,7 @@ class Experiment:
     def parse_output(self, output, batch):
         ch_ids = torch.tensor(0, device=self.device).unsqueeze(-1)
         u = torch.tensor(0, device=self.device).unsqueeze(-1)
-        y_hat, y = (output, batch[1].to(self.device))
+        y_hat, y = (output, batch[1].to(self.device, non_blocking=True))
 
         if y_hat.dim() > 1 and y_hat.size(-1) == 1:
             y_hat = y_hat.unsqueeze(-1)
