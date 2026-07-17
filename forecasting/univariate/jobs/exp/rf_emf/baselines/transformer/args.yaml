@@ -8,8 +8,9 @@ exp:
   seed: 69421
   mae: True
   neptune: False
-  mps: True
-  gpu_id: 2
+  mps: False
+  compile: True  # perf: ~1.5-1.7x on attention-heavy models; numerically equivalent to eager
+  gpu_id: 0
 
 data:
   seq_load: True

@@ -7,9 +7,9 @@ exp:
   seed: 69421
   mae: True
   task: "forecasting"
-  gpu_id: 2
+  gpu_id: 0
   neptune: False
-  mps: True
+  mps: False
 
 data:
   seq_load: True

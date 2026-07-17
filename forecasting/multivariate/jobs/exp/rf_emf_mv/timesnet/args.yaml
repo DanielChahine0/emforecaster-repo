@@ -15,9 +15,9 @@ exp:
   mae: True
   rank_verbose: False
   task: "forecasting"
-  gpu_id: 2
+  gpu_id: 0
   neptune: False
-  mps: True
+  mps: False
   eval_test_per_epoch: True
 
 data:

@@ -21,7 +21,7 @@ exp:
   rank_verbose: False
   task: "forecasting"
   neptune: False
-  mps: True
+  mps: False
   gpu_id: 0
   eval_test_per_epoch: False  # perf(2026-07-06): diagnostic-only test eval; no effect on metrics
 
@@ -38,8 +38,8 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
-  num_workers: 0  # perf: in-RAM tensor dataset; MPS workers add only IPC/RAM overhead
-  pin_memory: False  # perf: no-op on MPS unified memory (CUDA-only)
+  num_workers: 4  # perf: 4 workers measured faster than 0 on 24-core CUDA box
+  pin_memory: True  # perf: pinned staging for non_blocking H2D copies on CUDA
   scale: True
 
 tsmixer:

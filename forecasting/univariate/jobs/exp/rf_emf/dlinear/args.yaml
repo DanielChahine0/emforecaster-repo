@@ -9,8 +9,8 @@ exp:
   rank_verbose: False
   task: "forecasting"
   neptune: False
-  mps: True
-  gpu_id: 2
+  mps: False
+  gpu_id: 0
 
 data:
   seq_load: True

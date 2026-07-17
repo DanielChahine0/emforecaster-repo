@@ -31,9 +31,9 @@ exp:
   seed: 69421
   mae: True
   task: "forecasting"
-  gpu_id: 2
+  gpu_id: 0
   neptune: False
-  mps: True
+  mps: False
   compile: True  # perf(2026-07-08): torch.compile the forward pass. ~1.5x on MPS for the full-attention backbone; numerically equivalent to eager (~1e-5 rel). Forward-only handle; checkpoints stay eager-keyed.
   eval_test_per_epoch: False  # perf(2026-07-06): diagnostic-only test eval; no effect on metrics
 
@@ -48,8 +48,8 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
-  num_workers: 0  # perf: in-RAM tensor dataset; MPS workers add only IPC/RAM overhead
-  pin_memory: False  # perf: no-op on MPS unified memory (CUDA-only)
+  num_workers: 4  # perf: 4 workers measured faster than 0 on 24-core CUDA box
+  pin_memory: True  # perf: pinned staging for non_blocking H2D copies on CUDA
   scale: True
 
 ddp:

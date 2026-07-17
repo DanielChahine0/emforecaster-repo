@@ -8,9 +8,10 @@ exp:
   mae: True
   rank_verbose: False
   task: "forecasting"
-  gpu_id: 2
+  gpu_id: 0
   neptune: False
-  mps: True
+  mps: False
+  compile: True  # perf: ~1.5-1.7x on attention-heavy models; numerically equivalent to eager
 
 data:
   seq_load: True

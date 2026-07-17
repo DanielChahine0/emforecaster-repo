@@ -8,8 +8,8 @@ exp:
   seed: 69421
   mae: True
   neptune: True
-  mps: True
-  gpu_id: 2
+  mps: False
+  gpu_id: 0
 
 data:
   seq_load: True
