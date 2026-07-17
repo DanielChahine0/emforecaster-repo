@@ -49,6 +49,7 @@ from forecasting.multivariate.utils.classification import (
 )
 from forecasting.multivariate.conformal.coverage import get_all_critical_scores, get_coverage
 from forecasting.run_path import build_run_dir
+from forecasting import hardware
 
 # Logger
 import neptune
@@ -935,7 +936,7 @@ class Experiment:
                 # broadcast against the (B, 1, pred_len) target, corrupting the MAE.
                 if mae:
                     total_mae += (
-                        mae_loss(output, batch[1].to(self.device, non_blocking=True)) * num_batch_examples
+                        mae_loss(output, hardware.to_device(batch[1], self.device)) * num_batch_examples
                     )
 
         preds = torch.cat(all_logits)
@@ -1131,7 +1132,7 @@ class Experiment:
     def parse_output(self, output, batch):
         ch_ids = torch.tensor(0, device=self.device).unsqueeze(-1)
         u = torch.tensor(0, device=self.device).unsqueeze(-1)
-        y_hat, y = (output, batch[1].to(self.device, non_blocking=True))
+        y_hat, y = (output, hardware.to_device(batch[1], self.device))
 
         if y_hat.dim() > 1 and y_hat.size(-1) == 1:
             y_hat = y_hat.unsqueeze(-1)

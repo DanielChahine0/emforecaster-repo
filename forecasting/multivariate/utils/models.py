@@ -36,6 +36,7 @@ from forecasting.multivariate.layers.patchtst.revin import RevIN
 from torch import optim
 from forecasting.multivariate.utils.schedulers import WarmupCosineSchedule, PatchTSTSchedule
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
+from forecasting import hardware
 
 
 def get_model(args, generator=torch.Generator()):
@@ -359,7 +360,7 @@ def forward_pass(args, model, batch, model_id, device):
     }:
 
         x = batch[0]
-        x = x.to(device, non_blocking=True)
+        x = hardware.to_device(x, device)
 
         if args.data.difference_input:
             x = x.diff(dim=1)
@@ -380,12 +381,12 @@ def prepare_output_and_target(output, target, args, device):
     # (as the classification path does) would drop the batch dim on a size-1 final
     # batch and break the multivariate MSE, so handle forecasting explicitly.
     if args.exp.task == "forecasting":
-        return output.to(device), target.to(device, non_blocking=True).float()
+        return output.to(device), hardware.to_device(target, device).float()
 
     out = output.to(
         device
     ).squeeze()  # (batch_size, 1, 1) -> (batch_size,) for binary task
-    target = target.to(device, non_blocking=True)
+    target = hardware.to_device(target, device)
 
     if args.open_neuro.task == "binary":
         if out.dim() == 0:  # scalar output for batch_size == 1

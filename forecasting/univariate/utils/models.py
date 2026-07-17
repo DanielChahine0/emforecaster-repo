@@ -36,6 +36,7 @@ from forecasting.univariate.layers.patchtst.revin import RevIN
 from torch import optim
 from forecasting.univariate.utils.schedulers import WarmupCosineSchedule, PatchTSTSchedule
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
+from forecasting import hardware
 
 
 def get_model(args, generator=torch.Generator()):
@@ -356,7 +357,7 @@ def forward_pass(args, model, batch, model_id, device):
     }:
 
         x = batch[0]
-        x = x.to(device, non_blocking=True)
+        x = hardware.to_device(x, device)
 
         if args.data.difference_input:
             x = x.diff(dim=1)
@@ -376,7 +377,7 @@ def prepare_output_and_target(output, target, args, device):
     out = output.to(
         device
     ).squeeze()  # (batch_size, 1, 1) -> (batch_size,) for binary task
-    target = target.to(device, non_blocking=True)
+    target = hardware.to_device(target, device)
 
     if args.open_neuro.task == "binary":
         if out.dim() == 0:  # scalar output for batch_size == 1

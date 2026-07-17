@@ -74,3 +74,19 @@ def test_normalize_config_keeps_yaml_batch_on_cuda():
     hw.normalize_config(args, backend="cuda")
     assert args.sl.batch_size == 512  # batch_size is None on cuda -> unchanged
     assert args.data.num_workers == 4 and args.data.pin_memory is True
+
+
+def test_cuda_non_blocking_only_true_for_cuda():
+    import torch
+    assert hardware.cuda_non_blocking(torch.device("cpu")) is False
+    assert hardware.cuda_non_blocking(torch.device("mps")) is False
+    assert hardware.cuda_non_blocking(types.SimpleNamespace(type="cuda")) is True
+    assert hardware.cuda_non_blocking(None) is False
+
+
+def test_to_device_moves_tensor_and_preserves_values():
+    import torch
+    t = torch.tensor([1.0, 2.0])
+    out = hardware.to_device(t, torch.device("cpu"))
+    assert out.device.type == "cpu"
+    assert torch.equal(out, t)

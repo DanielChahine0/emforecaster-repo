@@ -97,3 +97,19 @@ def normalize_config(args, backend=None):
     if profile.batch_size is not None:
         args.sl.batch_size = profile.batch_size
     return profile
+
+
+def cuda_non_blocking(device):
+    """Whether a non_blocking host->device copy is safe for `device`.
+
+    Only CUDA. On CUDA an async copy from pinned memory is faster and from
+    non-pinned memory falls back to synchronous (safe). On MPS an async copy can
+    be read before it completes and corrupt values (seen as nan loss), so it must
+    stay synchronous. Accepts a torch.device or anything with a `.type`.
+    """
+    return getattr(device, "type", None) == "cuda"
+
+
+def to_device(tensor, device):
+    """Move `tensor` to `device`, enabling non_blocking only where it is safe."""
+    return tensor.to(device, non_blocking=cuda_non_blocking(device))
