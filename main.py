@@ -113,11 +113,28 @@ def main(job_name="test", ablation=None, ablation_id=1, quick=False):
         console.log("Using single device")
         exp.run()
 
+def prompt_setup():
+    """Ask the user which grid to run. Returns 'univariate' or 'multivariate'."""
+    while True:
+        ans = input("Run [u]nivariate or [m]ultivariate grid? ").strip().lower()
+        if ans in ("u", "uni", "univariate"):
+            return "univariate"
+        if ans in ("m", "mv", "multi", "multivariate"):
+            return "multivariate"
+        print("Please enter 'u' or 'm'.")
+
 if __name__ == "__main__":
     # Non-hyperparameter tuning
     warnings.filterwarnings("ignore", message="h5py not installed, hdf5 features will not be supported.")
     parser = argparse.ArgumentParser(description="Run experiment")
-    parser.add_argument("job_name", type=str, default="test", help="Name of the job")
+    parser.add_argument("job_name", type=str, nargs="?", default=None,
+                        help="Name of a single job. Omit to run a full grid.")
+    parser.add_argument("--grid", action="store_true",
+                        help="Run a full model x dataset x window grid instead of one job.")
+    parser.add_argument("--setup", choices=["univariate", "multivariate"], default=None,
+                        help="Grid setup. If omitted in grid mode, you are prompted.")
+    parser.add_argument("--dry_run", action="store_true",
+                        help="Grid mode only: list cells and targets without training.")
     parser.add_argument("--venv_test", action="store_true", help="Flag for venv test")
     parser.add_argument("--ablation", type=str, default=None, help="Ablation study configuration")
     parser.add_argument("--ablation_id", type=int, default=1, help="Ablation study configuration")
@@ -128,6 +145,11 @@ if __name__ == "__main__":
     if args.venv_test:
         print("Running in venv test mode")
         # Add any venv test specific code here
+    elif args.grid or args.job_name is None:
+        from forecasting.grid import run_grid
+        setup = args.setup or prompt_setup()
+        failed = run_grid(setup, dry_run=args.dry_run)
+        sys.exit(1 if failed else 0)
     else:
         if args.ablation is not None:
             try:
