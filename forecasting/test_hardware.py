@@ -90,3 +90,19 @@ def test_to_device_moves_tensor_and_preserves_values():
     out = hardware.to_device(t, torch.device("cpu"))
     assert out.device.type == "cpu"
     assert torch.equal(out, t)
+
+
+def test_normalize_config_on_real_pydantic_config():
+    # Guard the real path: normalize_config must mutate a genuine pydantic Global
+    # (validate_assignment/coercion), not just the SimpleNamespace fakes above.
+    from forecasting import grid
+    load_config, _ = grid.setup_modules("multivariate")
+    args = load_config(grid.args_path("multivariate", "rf_emf_mv/dlinear"))
+    profile = hardware.normalize_config(args)  # detects this machine's backend
+    assert args.exp.mps == profile.mps
+    assert args.exp.gpu_id == profile.gpu_id
+    assert args.exp.compile == profile.compile
+    assert args.data.num_workers == profile.num_workers
+    assert args.data.pin_memory == profile.pin_memory
+    if profile.batch_size is not None:
+        assert args.sl.batch_size == profile.batch_size
