@@ -11,8 +11,6 @@ exp:
   rank_verbose: False
   task: "forecasting"
   neptune: False
-  mps: True
-  gpu_id: 0
 
 data:
   patch_dim: 8
@@ -27,7 +25,6 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 1
-  num_workers: 4
   scale: True
 
 tsmixer:

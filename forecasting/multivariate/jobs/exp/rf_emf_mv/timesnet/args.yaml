@@ -15,9 +15,7 @@ exp:
   mae: True
   rank_verbose: False
   task: "forecasting"
-  gpu_id: 2
   neptune: False
-  mps: True
   eval_test_per_epoch: True
 
 data:
@@ -31,7 +29,6 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
-  num_workers: 4
   scale: True
 
 timesnet:

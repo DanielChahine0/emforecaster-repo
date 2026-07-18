@@ -7,9 +7,7 @@ exp:
   seed: 69421
   mae: True
   task: "forecasting"
-  gpu_id: 2
   neptune: False
-  mps: True
 
 data:
   seq_load: True
@@ -22,7 +20,6 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 1
-  num_workers: 4
   scale: True
 
 ddp:

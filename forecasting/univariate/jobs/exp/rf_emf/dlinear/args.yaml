@@ -9,8 +9,6 @@ exp:
   rank_verbose: False
   task: "forecasting"
   neptune: False
-  mps: True
-  gpu_id: 2
 
 data:
   seq_load: True
@@ -23,7 +21,6 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 1
-  num_workers: 4
   scale: True
 
 dlinear:

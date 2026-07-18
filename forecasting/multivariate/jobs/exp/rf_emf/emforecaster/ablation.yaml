@@ -22,7 +22,6 @@ ablations:
   dlinear.final_moving_avg: [25]
   sl.independent_patching: [False]
   sl.batch_size: [512]
-  exp.gpu_id: [0]
 
   # Conformal prediction
   conf.conf: [True]

@@ -36,8 +36,6 @@ exp:
   rank_verbose: False
   task: "forecasting"
   neptune: False
-  mps: True
-  gpu_id: 0
   eval_test_per_epoch: True
 
 data:
@@ -53,7 +51,6 @@ data:
   train_split: 0.7
   val_split: 0.1
   num_channels: 27
-  num_workers: 0   # in-process loading: robust + deterministic for a smoke test
                    # (avoids the macOS multiprocessing DataLoader-worker crash)
   scale: True
 
