@@ -26,23 +26,47 @@ SEED = 69421
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Grid name -> the package owning its configs and Experiment class. Two grids do
+# not match their own name: univariate_series still runs the original
+# forecasting.univariate package (it was renamed when "univariate" became the
+# per-band grid), and the per-band grid reuses forecasting.multivariate, since it
+# is the same models and job configs run one band at a time.
+SETUP_PACKAGE = {
+    "multivariate": "multivariate",
+    "univariate": "multivariate",
+    "univariate_series": "univariate",
+}
+
+# Grid name -> the <setup> folder its runs land in under logs/. exp.init_logger
+# writes "univariate" both for the single-series package and for single-channel
+# runs, so the resume check must look there rather than under the grid's name.
+LOG_SETUP = {
+    "multivariate": "multivariate",
+    "univariate": "univariate",
+    "univariate_series": "univariate",
+}
+
+
+def _package(setup):
+    return SETUP_PACKAGE.get(setup, setup)
+
 
 def setup_modules(setup):
-    pkg = f"forecasting.{setup}"
+    pkg = f"forecasting.{_package(setup)}"
     load_config = importlib.import_module(f"{pkg}.config.config").load_config
     Experiment = importlib.import_module(f"{pkg}.exp.exp").Experiment
     return load_config, Experiment
 
 
 def args_path(setup, job):
-    return os.path.join(_REPO_ROOT, "forecasting", setup, "jobs", "exp",
+    return os.path.join(_REPO_ROOT, "forecasting", _package(setup), "jobs", "exp",
                         *job.split("/"), "args.yaml")
 
 
 def cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(SEED,),
               logs_dir="logs"):
-    run_dir = build_run_dir(setup, model_id, dataset, seq_len, pred_len,
-                            conf_on=True, logs_dir=logs_dir)
+    run_dir = build_run_dir(LOG_SETUP.get(setup, setup), model_id, dataset,
+                            seq_len, pred_len, conf_on=True, logs_dir=logs_dir)
     for seed in seeds:
         p = os.path.join(run_dir, str(seed), "log.json")
         try:
@@ -66,20 +90,32 @@ def _cleanup():
         pass
 
 
-def run_grid(setup, dry_run=False, logs_dir="logs"):
+def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
     """Run every cell of the grid for one setup. Returns the list of failed cells.
 
     logs_dir only affects the resume check; Experiment.run() always writes under
     the default logs/ tree, so pass a custom logs_dir for dry-run/testing only.
+    windows overrides the grid's window list (already validated by the caller);
+    None runs all of them.
     """
     console = Console()
     grid_def = GRIDS[setup]
+    windows = grid_def["windows"] if windows is None else windows
+    if grid_def.get("per_channel"):
+        # A per-band cell is many runs, not one, and needs the process pool in
+        # forecasting/perchannel.py. Fail loudly instead of silently training the
+        # joint model the caller did not ask for.
+        raise ValueError(
+            f"'{setup}' is a per-channel grid; run it via "
+            f"forecasting.perchannel.run_per_channel_grid "
+            f"(python main.py --grid --setup {setup})."
+        )
     load_config, Experiment = setup_modules(setup)
     passed, skipped, failed = [], [], []
     cells = [(m, d, w)
              for m in grid_def["models"]
              for d in grid_def["datasets"]
-             for w in grid_def["windows"]]
+             for w in windows]
     total = len(cells)
 
     for n, ((label, model_id, job), dataset, (seq_len, pred_len)) in enumerate(cells, 1):

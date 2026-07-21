@@ -56,6 +56,9 @@ class UnivariateForecastingDataset(Dataset):
 
     __getitem__ method: Returns the input and target data for a given index, where the target window follows
                         immediately after the input window in the time series.
+                        Both carry a singleton channel axis, so a batch is
+                        (batch, 1, seq_len) / (batch, 1, pred_len) -- the same
+                        (batch, num_channels, length) layout the models emit.
 
     """
 
@@ -72,6 +75,18 @@ class UnivariateForecastingDataset(Dataset):
             self.y = y.type(dtype)
 
             print(f"x: {self.x.shape}, y: {self.y.shape}")
+
+        # The models take (batch, num_channels, length) and return
+        # (batch, num_channels, pred_len), but univariate windows arrive here as
+        # (num_windows, length) with no channel axis. Add the singleton axis so a
+        # forecast and its target line up: without it a (B, 1, O) forecast meets a
+        # (B, O) target and broadcasts to (B, B, O), silently corrupting the loss,
+        # MAE and MSE -- and OOMing outright once the test split is large.
+        # Guarded on both being 2D: the datetime path already carries its own
+        # channel axis on x and must be left as-is.
+        if self.x.dim() == 2 and self.y.dim() == 2:
+            self.x = self.x.unsqueeze(1)
+            self.y = self.y.unsqueeze(1)
 
     def __len__(self):
         return self.x.shape[0]

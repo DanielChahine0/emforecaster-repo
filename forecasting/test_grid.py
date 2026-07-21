@@ -29,30 +29,113 @@ def test_cell_done_true_only_with_marker(tmp_path):
 def test_grid_model_ids_match_job_configs():
     # The grid's on-disk model_id must equal the job config's exp.model_id, or
     # the resume path won't match what exp.py writes.
-    for setup in ("multivariate", "univariate"):
+    for setup in ("multivariate", "univariate", "univariate_series"):
         load_config, _ = grid.setup_modules(setup)
         for label, model_id, job in grids.GRIDS[setup]["models"]:
             args = load_config(grid.args_path(setup, job))
             assert args.exp.model_id == model_id, f"{setup} {job}: {args.exp.model_id} != {model_id}"
 
 
-def test_both_grids_have_60_cells():
-    for setup in ("multivariate", "univariate"):
+def test_all_grids_have_60_cells():
+    for setup in ("multivariate", "univariate", "univariate_series"):
         g = grids.GRIDS[setup]
         n = len(g["models"]) * len(g["datasets"]) * len(g["windows"])
         assert n == 60, f"{setup} has {n} cells, expected 60"
 
 
 def test_grids_use_alpha_point_one():
-    assert grids.GRIDS["multivariate"]["alpha"] == 0.1
-    assert grids.GRIDS["univariate"]["alpha"] == 0.1
+    for setup in ("multivariate", "univariate", "univariate_series"):
+        assert grids.GRIDS[setup]["alpha"] == 0.1
 
 
 def test_model_tuples_are_label_id_job():
     mv = dict((label, (model_id, job)) for label, model_id, job in grids.GRIDS["multivariate"]["models"])
     assert mv["Transformer"] == ("RF_EMF_Transformer", "rf_emf_mv/transformer")
-    uni = dict((label, (model_id, job)) for label, model_id, job in grids.GRIDS["univariate"]["models"])
-    assert uni["Transformer"] == ("RF_EMF_Transformer", "rf_emf/baselines/transformer")
+    series = dict((label, (model_id, job)) for label, model_id, job in grids.GRIDS["univariate_series"]["models"])
+    assert series["Transformer"] == ("RF_EMF_Transformer", "rf_emf/baselines/transformer")
+
+
+def test_univariate_grid_mirrors_multivariate_cells():
+    # The per-band grid is only interpretable if its cells line up with the joint
+    # grid's, so it must share the same models, datasets and windows.
+    uni, mv = grids.GRIDS["univariate"], grids.GRIDS["multivariate"]
+    assert uni["models"] == mv["models"]
+    assert uni["datasets"] == mv["datasets"]
+    assert uni["windows"] == mv["windows"]
+    assert uni["per_channel"] is True
+    assert not mv.get("per_channel")
+
+
+def test_univariate_series_keeps_single_series_datasets():
+    assert grids.GRIDS["univariate_series"]["datasets"] == [
+        "rf_emf_det", "rf_emf_ptv", "rf_emf_ptv2"
+    ]
+
+
+def test_setup_package_and_log_setup_mapping():
+    # univariate_series runs the original forecasting.univariate package, and the
+    # per-band grid reuses forecasting.multivariate; both log under univariate/.
+    assert grid.SETUP_PACKAGE["univariate_series"] == "univariate"
+    assert grid.SETUP_PACKAGE["univariate"] == "multivariate"
+    assert grid.LOG_SETUP["univariate_series"] == "univariate"
+    assert grid.LOG_SETUP["multivariate"] == "multivariate"
+    assert grid.args_path("univariate_series", "rf_emf/dlinear").endswith(
+        os.path.join("forecasting", "univariate", "jobs", "exp", "rf_emf", "dlinear", "args.yaml")
+    )
+
+
+def test_parse_window_spec_accepts_both_forms():
+    assert grids.parse_window_spec("336x96") == [(336, 96)]
+    assert grids.parse_window_spec("L336_O96") == [(336, 96)]
+    assert grids.parse_window_spec("336_96") == [(336, 96)]
+    assert grids.parse_window_spec("336x96, 192x336") == [(336, 96), (192, 336)]
+
+
+def test_parse_window_spec_rejects_garbage():
+    for bad in ("", "336", "axb", "336x", "L336"):
+        try:
+            grids.parse_window_spec(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad!r} should be rejected")
+
+
+def test_select_windows_filters_and_keeps_grid_order():
+    windows = grids.GRIDS["univariate"]["windows"]
+    # None -> every window, unchanged.
+    assert grids.select_windows(None, windows) == list(windows)
+    assert grids.select_windows("336x96", windows) == [(336, 96)]
+    # Result follows grid order regardless of how the flag was typed.
+    assert grids.select_windows("336x336,192x96", windows) == [(192, 96), (336, 336)]
+
+
+def test_select_windows_rejects_window_not_in_grid():
+    windows = grids.GRIDS["univariate"]["windows"]
+    try:
+        grids.select_windows("500x500", windows)
+    except ValueError as exc:
+        assert "not in grid windows" in str(exc)
+    else:
+        raise AssertionError("a window outside the grid should be rejected")
+
+
+def test_run_grid_window_filter_limits_cells(tmp_path):
+    # One window instead of four -> 15 cells (5 models x 3 datasets x 1 window).
+    failed = grid.run_grid("multivariate", dry_run=True, logs_dir=str(tmp_path),
+                           windows=[(336, 96)])
+    assert failed == []
+
+
+def test_run_grid_refuses_per_channel_setup():
+    # Running the per-band grid through the joint driver would silently train the
+    # wrong thing, so it must raise instead.
+    try:
+        grid.run_grid("univariate", dry_run=True)
+    except ValueError as exc:
+        assert "per-channel" in str(exc)
+    else:
+        raise AssertionError("run_grid should refuse a per_channel grid")
 
 
 def test_run_grid_dry_run_lists_all_cells(tmp_path):

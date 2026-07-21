@@ -252,7 +252,12 @@ class Experiment:
         # Create log directory
         self.log_dir = os.path.join(
             build_run_dir(
-                setup="multivariate",
+                # This package serves both sweeps: the joint grid (all bands in
+                # one model) and the per-band grid, which runs these same configs
+                # one channel at a time. Split them into logs/multivariate/ and
+                # logs/univariate/ so a per-band sweep cannot be mistaken for, or
+                # collide with, the joint results.
+                setup="univariate" if self.args.data.single_channel else "multivariate",
                 model_id=self.args.exp.model_id,
                 dataset=self.args.data.dataset,
                 seq_len=self.args.data.seq_len,

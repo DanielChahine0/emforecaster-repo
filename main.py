@@ -114,14 +114,19 @@ def main(job_name="test", ablation=None, ablation_id=1, quick=False):
         exp.run()
 
 def prompt_setup():
-    """Ask the user which grid to run. Returns 'univariate' or 'multivariate'."""
+    """Ask the user which grid to run. Returns a key of forecasting.grids.GRIDS."""
     while True:
-        ans = input("Run [u]nivariate or [m]ultivariate grid? ").strip().lower()
+        ans = input(
+            "Run [u]nivariate (one model per band), [m]ultivariate (one model per "
+            "cell), or [s]eries (DET/PTV single-series) grid? "
+        ).strip().lower()
         if ans in ("u", "uni", "univariate"):
             return "univariate"
         if ans in ("m", "mv", "multi", "multivariate"):
             return "multivariate"
-        print("Please enter 'u' or 'm'.")
+        if ans in ("s", "series", "univariate_series"):
+            return "univariate_series"
+        print("Please enter 'u', 'm', or 's'.")
 
 if __name__ == "__main__":
     # Non-hyperparameter tuning
@@ -131,10 +136,24 @@ if __name__ == "__main__":
                         help="Name of a single job. Omit to run a full grid.")
     parser.add_argument("--grid", action="store_true",
                         help="Run a full model x dataset x window grid instead of one job.")
-    parser.add_argument("--setup", choices=["univariate", "multivariate"], default=None,
-                        help="Grid setup. If omitted in grid mode, you are prompted.")
+    parser.add_argument("--setup",
+                        choices=["univariate", "multivariate", "univariate_series"],
+                        default=None,
+                        help="Grid setup. 'univariate' trains one model per frequency "
+                             "band on the multivariate datasets and averages the bands; "
+                             "'multivariate' trains one model per cell over all bands; "
+                             "'univariate_series' is the DET/PTV single-series sweep. "
+                             "If omitted in grid mode, you are prompted.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Grid mode only: list cells and targets without training.")
+    parser.add_argument("--jobs", type=int, default=8,
+                        help="Per-channel grid only: how many band trainings run "
+                             "concurrently (default 8). Lower it if the GPU OOMs.")
+    parser.add_argument("--window", type=str, default=None,
+                        help="Grid mode only: restrict to specific window(s) "
+                             "instead of all four. Format 'LxO' (e.g. '336x96') "
+                             "or 'L336_O96'; comma-separate for several. Omit to "
+                             "run every window.")
     parser.add_argument("--venv_test", action="store_true", help="Flag for venv test")
     parser.add_argument("--ablation", type=str, default=None, help="Ablation study configuration")
     parser.add_argument("--ablation_id", type=int, default=1, help="Ablation study configuration")
@@ -146,9 +165,24 @@ if __name__ == "__main__":
         print("Running in venv test mode")
         # Add any venv test specific code here
     elif args.grid or args.job_name is None:
-        from forecasting.grid import run_grid
+        from forecasting.grids import GRIDS, select_windows
         setup = args.setup or prompt_setup()
-        failed = run_grid(setup, dry_run=args.dry_run)
+        # Validate --window against this grid up front so a typo is a clean error,
+        # not a mid-run traceback (or a silently empty sweep).
+        try:
+            windows = select_windows(args.window, GRIDS[setup]["windows"])
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(2)
+        # A per-channel grid fans each cell out into one run per band, so it needs
+        # the process-pool driver rather than the in-process cell loop.
+        if GRIDS[setup].get("per_channel"):
+            from forecasting.perchannel import run_per_channel_grid
+            failed = run_per_channel_grid(setup=setup, jobs=args.jobs,
+                                          dry_run=args.dry_run, windows=windows)
+        else:
+            from forecasting.grid import run_grid
+            failed = run_grid(setup, dry_run=args.dry_run, windows=windows)
         sys.exit(1 if failed else 0)
     else:
         if args.ablation is not None:
