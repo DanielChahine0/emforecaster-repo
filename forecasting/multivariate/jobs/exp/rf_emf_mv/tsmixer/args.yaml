@@ -2,7 +2,7 @@
 # Hyperparameters are copied verbatim from rf_emf/tsmixer/args.yaml; only the
 # multivariate switches differ (univariate=False, dataset_class=forecasting,
 # conf.conf=True, eval_test_per_epoch=False). data.dataset / seq_len / pred_len /
-# exp.id are set per run by .personal/scripts/multivariate/conformal-prediction-grid.sh, and
+# exp.id are set per run by forecasting/grid.py (python main.py --grid --setup multivariate), and
 # data.num_channels is auto-inferred from the CSV at load time (27 or 29).
 # TSMixer mixes across channels natively, so this forecasts all bands jointly.
 exp:

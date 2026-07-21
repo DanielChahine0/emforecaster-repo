@@ -2,7 +2,7 @@
 # No univariate TimesNet config exists, so this is authored from the TimesNet
 # pydantic defaults plus the shared forecasting settings used by the other models.
 # data.dataset / seq_len / pred_len / exp.id are set per run by
-# .personal/scripts/multivariate/conformal-prediction-grid.sh; data.num_channels is auto-inferred from the
+# forecasting/grid.py (python main.py --grid --setup multivariate); data.num_channels is auto-inferred from the
 # CSV (27 or 29), and the TimesNet head emits c_out = num_channels automatically
 # (set in utils/models.py), so every band is forecast jointly.
 exp:
