@@ -1,11 +1,11 @@
 [tool.poetry]
 name = "emforecaster"
 version = "0.1.0"
-description = "EMForecaster official repository."
-authors = ["Xavier Mootoo"]
+description = "Personal reproduction and multivariate extension of the EMForecaster paper. Not the official paper repository."
+authors = ["Daniel Chahine <chahinedaniel0@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/xmootoo/emforecaster"
+repository = "https://github.com/DanielChahine0/emforecaster-repo"
 keywords = ["forecasting", "machine learning"]
 # The importable package is `forecasting`, holding the univariate and
 # multivariate setups as subpackages.
@@ -13,7 +13,9 @@ packages = [{ include = "forecasting" }]
 
 [tool.poetry.dependencies]
 # Numba 0.61.x does not support Python 3.14, so cap the upper bound.
-python = ">=3.10,<3.14"
+# pandas 3.0.2 and pywavelets 1.9.0 both require >=3.11, which sets the floor;
+# with a 3.10 floor the dependency set has no solution and `poetry lock` fails.
+python = ">=3.11,<3.14"
 
 # Core ML / numerical
 torch = "2.11.0"

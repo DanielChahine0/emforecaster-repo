@@ -31,7 +31,7 @@ Model families available through `get_model`: PatchTST, recurrent models (LSTM/R
 ├── data/                   # Proprietary EMF measurement CSVs (see Data)
 ├── logs/                   # Offline training-run logs (per run, per seed)
 ├── results/                # Generated outputs (multivariate/ from the CLI, univariate/ from training analysis)
-├── pyproject.toml          # Poetry metadata, MIT license, Python >=3.10,<3.14
+├── pyproject.toml          # Poetry metadata, MIT license, Python >=3.11,<3.14
 ├── requirements.txt        # Fully pinned dependencies (Python 3.12 / macOS arm64)
 └── EMForecaster Paper.pdf  # Original paper (reference)
 ```
@@ -41,7 +41,7 @@ Note that "analysis" exists in two unrelated places: `forecasting/<univariate|mu
 
 ## Installation
 
-Requires Python `>=3.10,<3.14`.
+Requires Python `>=3.11,<3.14`.
 `requirements.txt` is fully pinned (all versions, including transitives) and targets Python 3.12 on macOS arm64.
 
 Using a virtual environment:
