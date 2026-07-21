@@ -17,6 +17,13 @@ hold log.json), regardless of how many grouping levels sit above it.
 import glob
 import os
 
+# Log-tree <setup> folder for the per-band grid. Its CLI name is "univariate"
+# (python main.py --grid --setup univariate), but its runs live under this
+# folder so they never mix with the single-series univariate package's results
+# under logs/univariate/. Single source of truth: exp.init_logger stamps it on
+# single_channel runs and forecasting/perchannel.py reads back the same tree.
+PER_CHANNEL_SETUP = "univariate (per channel)"
+
 # Canonical short folder names. Anything not listed falls back to a lowercased
 # copy of the raw dataset name, so a new dataset still gets a sane folder without
 # a code change; add an entry here only to shorten it.

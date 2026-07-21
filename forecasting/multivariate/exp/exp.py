@@ -48,7 +48,7 @@ from forecasting.multivariate.utils.classification import (
     get_metrics,
 )
 from forecasting.multivariate.conformal.coverage import get_all_critical_scores, get_coverage
-from forecasting.run_path import build_run_dir
+from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 from forecasting import hardware
 
 # Logger
@@ -255,9 +255,9 @@ class Experiment:
                 # This package serves both sweeps: the joint grid (all bands in
                 # one model) and the per-band grid, which runs these same configs
                 # one channel at a time. Split them into logs/multivariate/ and
-                # logs/univariate/ so a per-band sweep cannot be mistaken for, or
-                # collide with, the joint results.
-                setup="univariate" if self.args.data.single_channel else "multivariate",
+                # logs/univariate (per channel)/ so a per-band sweep cannot be
+                # mistaken for, or collide with, the joint results.
+                setup=PER_CHANNEL_SETUP if self.args.data.single_channel else "multivariate",
                 model_id=self.args.exp.model_id,
                 dataset=self.args.data.dataset,
                 seq_len=self.args.data.seq_len,

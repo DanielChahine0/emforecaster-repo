@@ -34,13 +34,14 @@ from rich.table import Table
 
 from forecasting.grid import MARKER, SEED
 from forecasting.grids import GRIDS, dataset_num_channels
-from forecasting.run_path import build_run_dir
+from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Per-band runs land here because exp.init_logger switches the <setup> folder on
-# data.single_channel. Keep the two in step.
-LOG_SETUP = "univariate"
+# data.single_channel to this same value. Both read PER_CHANNEL_SETUP so the
+# resume/aggregation paths and what exp.py writes can never drift apart.
+LOG_SETUP = PER_CHANNEL_SETUP
 
 # Test metrics averaged across bands to form a cell's headline numbers.
 CELL_METRICS = ("mse", "mae", "interval_width_mean", "ic", "jc")

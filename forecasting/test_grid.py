@@ -79,6 +79,8 @@ def test_setup_package_and_log_setup_mapping():
     assert grid.SETUP_PACKAGE["univariate"] == "multivariate"
     assert grid.LOG_SETUP["univariate_series"] == "univariate"
     assert grid.LOG_SETUP["multivariate"] == "multivariate"
+    # The per-band grid logs to its own tree, not the single-series "univariate".
+    assert grid.LOG_SETUP["univariate"] == "univariate (per channel)"
     assert grid.args_path("univariate_series", "rf_emf/dlinear").endswith(
         os.path.join("forecasting", "univariate", "jobs", "exp", "rf_emf", "dlinear", "args.yaml")
     )

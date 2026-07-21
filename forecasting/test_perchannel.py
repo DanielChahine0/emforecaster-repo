@@ -30,9 +30,14 @@ def test_channel_run_dirs_are_distinct_per_band():
     assert perchannel.channel_run_dir("DLinear", "ED2022", 192, 96, 5).endswith("ch5")
 
 
-def test_per_band_runs_log_under_univariate_tree():
+def test_per_band_runs_log_under_their_own_tree():
+    # Per-band runs go under "univariate (per channel)", never the plain
+    # "univariate" tree that the single-series package owns.
     run_dir = perchannel.channel_run_dir("DLinear", "ED2022", 192, 96, 0)
-    assert run_dir.startswith(os.path.join("logs", "univariate"))
+    assert run_dir.startswith(os.path.join("logs", "univariate (per channel)"))
+    assert perchannel.LOG_SETUP == "univariate (per channel)"
+    # A leading path component exactly "univariate" would be the wrong tree.
+    assert os.path.join("logs", "univariate", "DLinear") not in run_dir
 
 
 def test_ablation_pins_band_and_channel_count():

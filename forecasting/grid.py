@@ -17,7 +17,7 @@ from rich.console import Console
 
 from forecasting import hardware
 from forecasting.grids import GRIDS
-from forecasting.run_path import build_run_dir
+from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 
 # Last conformal metric written to log.json; its presence means train + test +
 # conformal recalibration all finished for a seed.
@@ -37,12 +37,14 @@ SETUP_PACKAGE = {
     "univariate_series": "univariate",
 }
 
-# Grid name -> the <setup> folder its runs land in under logs/. exp.init_logger
-# writes "univariate" both for the single-series package and for single-channel
-# runs, so the resume check must look there rather than under the grid's name.
+# Grid name -> the <setup> folder its runs land in under logs/. The names differ
+# from the grid keys: univariate_series is the single-series package, which
+# writes logs/univariate/, while the per-band "univariate" grid writes
+# logs/univariate (per channel)/ (that entry is only for completeness -- the
+# per-band grid runs through forecasting/perchannel.py, not run_grid).
 LOG_SETUP = {
     "multivariate": "multivariate",
-    "univariate": "univariate",
+    "univariate": PER_CHANNEL_SETUP,
     "univariate_series": "univariate",
 }
 
