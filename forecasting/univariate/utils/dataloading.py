@@ -944,10 +944,12 @@ def get_loader(
         num_workers=args.data.num_workers,
         pin_memory=args.data.pin_memory,
     )
-    # persistent_workers / prefetch_factor are only valid with worker processes.
-    # Passing them when num_workers == 0 raises a ValueError.
+    # prefetch_factor is only valid with worker processes; passing it when
+    # num_workers == 0 raises a ValueError. persistent_workers stays off: on
+    # torch 2.11 a persistent loader leaks its worker pipe FDs even after the
+    # loader is deleted and gc'd, which exhausts the shell's 1024-FD limit
+    # ~30 cells into a grid run (OSError: Errno 24, Too many open files).
     if args.data.num_workers > 0:
-        loader_kwargs["persistent_workers"] = True
         loader_kwargs["prefetch_factor"] = args.data.prefetch_factor
 
     return DataLoader(dataset, **loader_kwargs)

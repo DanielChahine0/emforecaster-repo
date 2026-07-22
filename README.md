@@ -91,10 +91,14 @@ The multivariate dataloader drops `Timestamp`, the `EMF_*` aggregates, and `PTV`
 
 ## Usage: running experiments
 
-Run from the repository root:
+Run from the repository root. `main.py` has two modes:
 
 ```bash
+# Single-job mode: run one job by name
 python main.py <job_name> [--quick] [--ablation '<json>'] [--ablation_id <int>]
+
+# Grid mode: run a full model x dataset x window sweep
+python main.py --grid [--setup <setup>] [--window <spec>] [--dry_run] [--jobs <int>]
 ```
 
 The setup is chosen automatically from the job name: any `job_name` starting with `rf_emf_mv` dispatches to `forecasting.multivariate`, everything else to `forecasting.univariate`.
@@ -120,15 +124,46 @@ Multivariate (`forecasting.multivariate`, `rf_emf_mv` prefix):
 - `rf_emf_mv/emforecaster`
 - `rf_emf_mv/patchtst`
 - `rf_emf_mv/timesnet`
+- `rf_emf_mv/transformer`
 - `rf_emf_mv/tsmixer`
 
 The `forecasting.multivariate` setup also mirrors the univariate `rf_emf/*` and `test` jobs, but because dispatch keys off the `rf_emf_mv` prefix, those still run through the `forecasting.univariate` setup.
 
-Flags:
+Single-job flags:
 
 - `--quick` runs a single seed (`seed_list[:1]`).
 - `--ablation '<json>'` takes a JSON string of dotted overrides (for example `{"sl.lr": 0.001}`) mapped onto the config; invalid JSON exits with an error.
 - `--ablation_id <int>` tags the run (default 1) and is used in output paths.
+
+### Grid mode
+
+Passing `--grid` (or omitting the job name entirely) runs a full sweep over every model x dataset x window cell of a grid defined in `forecasting/grids.py` instead of a single job.
+The exit code is non-zero if any cell failed.
+
+- `--setup {univariate,multivariate,univariate_series}` selects which grid to run:
+  - `multivariate` - one model per cell, forecasting all 27/29 frequency bands jointly. Sweeps DLinear, PatchTST, TSMixer, Transformer, and EMForecaster over the `ED2022`, `UH2022`, and `EMF_2023_university_5_with_PTV` datasets.
+  - `univariate` - the per-band counterpart of the multivariate grid: same models, datasets, and windows, but each cell trains one independent model per frequency band and averages the bands back into one number per cell, so its cells are directly comparable to the multivariate ones. Driven by `forecasting/perchannel.py`, which fans the band trainings out to a process pool.
+  - `univariate_series` - the original single-series sweep over the DET/PTV monitoring datasets (`rf_emf_det`, `rf_emf_ptv`, `rf_emf_ptv2`), with the same five model families.
+
+  If `--setup` is omitted in grid mode, you are prompted interactively to pick one (`u`/`m`/`s`).
+- `--window <spec>` restricts the sweep to specific lookback/horizon window(s) instead of all four. Every grid uses the same four `(seq_len, pred_len)` windows: `192x96`, `192x336`, `336x96`, `336x336`. Each window is written as `LxO` (e.g. `336x96`), `L_O` (`336_96`), or the `logs/` directory form `L336_O96`; comma-separate to select several (e.g. `--window 336x96,336x336`). The spec is validated against the grid up front, so a typo or a window not in the grid is a clean error rather than a mid-run failure. Omit to run every window.
+- `--dry_run` lists the cells and their target log directories without training anything. Useful to preview what a sweep will do.
+- `--jobs <int>` applies to the per-channel (`--setup univariate`) grid only: how many band trainings run concurrently (default 8). Lower it if the GPU runs out of memory.
+
+Examples:
+
+```bash
+# Full multivariate sweep, all four windows
+python main.py --grid --setup multivariate
+
+# Per-band grid, one window only, 4 concurrent band trainings
+python main.py --grid --setup univariate --window 336x96 --jobs 4
+
+# Preview the single-series sweep for two windows without training
+python main.py --grid --setup univariate_series --window 192x96,336x96 --dry_run
+```
+
+### Seeds and outputs
 
 By default `main.py` iterates over every seed in `args.exp.seed_list`, building a fresh `Experiment` per seed.
 With offline logging (`exp.neptune=False`), outputs land under `logs/<ablation_id>_<model_id>_<exp.id>/<seed>/`, containing the resolved `args.yaml`, `log.json` metrics, best weights `supervised.pth`, conformal calibration `scores` (when enabled), and 10 randomly-sampled forecast plots named `plot_<index>.png` (for example `plot_5320.png`), where `<index>` is a random position in the test set, not a sequential `plot_0.png … plot_9.png`.
