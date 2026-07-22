@@ -842,19 +842,16 @@ def create_windows(tensor, window_size, window_stride, resizing_mode="None"):
     if num_windows <= 0:
         raise ValueError("No windows can be formed with the given parameters")
 
+    # Inputs can be non-contiguous views -- the per-band path passes
+    # train_data.T[i], whose storage stride is num_channels. unfold follows the
+    # tensor's logical strides and stays a copy-free view; as_strided walks raw
+    # storage and would window the flattened multichannel array instead of the
+    # band.
+    windows = tensor.unfold(0, window_size, window_stride)
     if is_1d:
-        # Handle 1D case
-        return torch.as_strided(
-            tensor, size=(num_windows, window_size), stride=(window_stride, 1)
-        )
-    else:
-        # Handle 2D case
-        channel_stride = tensor.stride(-1)
-        return torch.as_strided(
-            tensor,
-            size=(num_windows, window_size, num_channels),
-            stride=(window_stride * num_channels, num_channels, channel_stride),
-        )
+        return windows
+    # unfold puts the window axis last: (num_windows, num_channels, window_size).
+    return windows.permute(0, 2, 1)
 
 
 # def create_windows(tensor, window_size, window_stride, resizing_mode="None"):
