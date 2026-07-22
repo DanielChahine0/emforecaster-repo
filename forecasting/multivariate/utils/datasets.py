@@ -18,13 +18,20 @@ class ForecastingDataset(Dataset):
         data (torch.Tensor): The time series data in a tensor of shape (num_channels, num_time_steps).
         seq_len (int): The length of the input window.
         pred_len (int): The length of the forecast window.
+        synthetic (np.ndarray, optional): Per-timestep bool flags (length
+            num_time_steps) marking values flat-filled across long sensor
+            outages. Windows whose input or target overlaps a flagged step are
+            excluded: their values are a repeated last reading, not
+            measurements, so training on them biases the model and scoring on
+            them rewards constant forecasts. With no flags set the window set
+            (count and order) is identical to the unmasked behavior.
 
     __getitem__ method: Returns the input and target data for a given index, where the target window follows
                         immediately after the input window in the time series.
 
     """
 
-    def __init__(self, data, seq_len, pred_len, dtype="float32"):
+    def __init__(self, data, seq_len, pred_len, dtype="float32", synthetic=None):
 
         # Convert the data to a tensor and set the datatype
         dtype = eval("torch." + dtype)
@@ -35,10 +42,31 @@ class ForecastingDataset(Dataset):
         self.seq_len = seq_len
         self.pred_len = pred_len
 
+        # Legacy start count (the final possible start is left unused).
+        num_starts = max(self.data.shape[1] - seq_len - pred_len, 0)
+        if synthetic is None:
+            self.valid_starts = None
+            self.num_windows = num_starts
+        else:
+            synthetic = np.asarray(synthetic, dtype=bool)
+            if len(synthetic) != self.data.shape[1]:
+                raise ValueError(
+                    f"synthetic flags length {len(synthetic)} != "
+                    f"time steps {self.data.shape[1]}"
+                )
+            window = seq_len + pred_len
+            # counts[i] = number of flagged steps in [i, i + window)
+            cumsum = np.concatenate(([0], np.cumsum(synthetic)))
+            counts = cumsum[window:] - cumsum[: len(cumsum) - window]
+            self.valid_starts = np.flatnonzero(counts[:num_starts] == 0)
+            self.num_windows = len(self.valid_starts)
+
     def __len__(self):
-        return self.data.shape[1] - self.seq_len - self.pred_len
+        return self.num_windows
 
     def __getitem__(self, idx):
+        if self.valid_starts is not None:
+            idx = int(self.valid_starts[idx])
         input_data = self.data[:, idx : idx + self.seq_len]
         target_data = self.data[
             :, idx + self.seq_len : idx + self.seq_len + self.pred_len

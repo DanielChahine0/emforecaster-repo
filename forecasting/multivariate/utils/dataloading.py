@@ -42,7 +42,42 @@ from scipy import interpolate
 MAX_INTERP_GAP = 240
 
 
-def _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP):
+def _long_gap_cells(df, max_interp_gap=MAX_INTERP_GAP):
+    """Boolean frame marking cells inside NaN runs longer than ``max_interp_gap``.
+
+    These are exactly the cells _repair_missing_values flat-fills instead of
+    interpolating: their filled values are a repeated last reading, not a
+    measurement. Row-reduce with .any(axis=1) to get the per-timestep
+    "synthetic" flag used to exclude windows from training and evaluation.
+
+    Args:
+        df (pd.DataFrame): Numeric frame indexed in time order (rows = timesteps).
+        max_interp_gap (int): Longest NaN run still considered repairable.
+
+    Returns:
+        pd.DataFrame: Boolean frame, same shape/labels as ``df``.
+    """
+    out = pd.DataFrame(False, index=df.index, columns=df.columns)
+    for col in df.columns:
+        isna = df[col].isna().to_numpy()
+        if not isna.any():
+            continue
+        n = len(isna)
+        i = 0
+        while i < n:
+            if not isna[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and isna[j]:
+                j += 1
+            if j - i > max_interp_gap:
+                out.iloc[i:j, out.columns.get_loc(col)] = True
+            i = j
+    return out
+
+
+def _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP, long_gap=None):
     """Fill missing values without linearly interpolating across long outages.
 
     Gaps up to ``max_interp_gap`` consecutive missing steps are linearly
@@ -62,29 +97,18 @@ def _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP):
     Args:
         df (pd.DataFrame): Numeric frame indexed in time order (rows = timesteps).
         max_interp_gap (int): Longest NaN run to fill by interpolation.
+        long_gap (pd.DataFrame): Optional precomputed _long_gap_cells(df) result,
+            to avoid scanning the frame twice when the caller also needs it.
 
     Returns:
         pd.DataFrame: Frame with all missing values filled.
     """
+    if long_gap is None:
+        long_gap = _long_gap_cells(df, max_interp_gap)
     interpolated = df.interpolate(method="linear", limit_direction="both")
-    for col in df.columns:
-        isna = df[col].isna().to_numpy()
-        if not isna.any():
-            continue
-        # Undo interpolation inside any NaN run longer than max_interp_gap, leaving
-        # those positions NaN for the flat ffill/bfill below.
-        n = len(isna)
-        i = 0
-        while i < n:
-            if not isna[i]:
-                i += 1
-                continue
-            j = i
-            while j < n and isna[j]:
-                j += 1
-            if j - i > max_interp_gap:
-                interpolated.iloc[i:j, interpolated.columns.get_loc(col)] = np.nan
-            i = j
+    # Undo interpolation inside the long runs, leaving those positions NaN for
+    # the flat ffill/bfill below.
+    interpolated[long_gap] = np.nan
     return interpolated.ffill().bfill()
 
 
@@ -111,6 +135,7 @@ def load_forecasting(
     datetime_features=["hour", "day"],
     average_turkey=False,
     average_italy=False,
+    return_synthetic=False,
 ):
     """
     Args:
@@ -125,7 +150,13 @@ def load_forecasting(
                            being input into the dataloader, so as to allow appropriate separation between the channels.
         resizing_mode (str): The mode for handling sequences longer than window_size. Options: "pad_trunc", "resize".
         single_channel (bool): Whether to use only a single channel of the data (for Turkey).
-
+        return_synthetic (bool): Multivariate split path only. When True, each of the
+            three returns becomes a (data, synthetic) pair, where synthetic is a
+            per-timestep bool array flagging values flat-filled across long sensor
+            outages (see _long_gap_cells) -- or None for datasets with no such gaps.
+            Windows overlapping flagged steps must not be trained on or scored.
+            The univariate window path instead applies this exclusion internally
+            and returns its usual tuples.
 
     Returns:
         train_data (np.array): Training data of shape (num_channels, train_len).
@@ -134,6 +165,9 @@ def load_forecasting(
     """
 
     # Load data. NumPy array of shape (seq_len, num_channels)
+    # synthetic_rows flags timesteps whose values were flat-filled across a long
+    # sensor outage (only the Italy multivariate files have such gaps).
+    synthetic_rows = None
     current_dir = os.path.dirname(os.path.abspath(__file__))
     # This file is at forecasting/<setup>/utils/, so the repo root (which holds
     # data/) is three directories up.
@@ -222,9 +256,16 @@ def load_forecasting(
         # Coerce every band to numeric and repair missing values (some bands in the
         # 2023 university file have empty cells). Short dropouts are linearly
         # interpolated; long outages are flat-filled rather than bridged with a
-        # ramp (see _repair_missing_values for why).
+        # ramp (see _repair_missing_values for why). The flat-filled steps are
+        # remembered in synthetic_rows: on the 2023 university file a single
+        # ~10k-step whole-station outage occupies ~64% of the chronological test
+        # split, and scoring on its constant fill rewards trivial forecasts and
+        # inflates conformal coverage, so windows touching those steps are
+        # excluded from both training and evaluation downstream.
         df = df.apply(pd.to_numeric, errors="coerce")
-        df = _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP)
+        long_gap = _long_gap_cells(df, max_interp_gap=MAX_INTERP_GAP)
+        synthetic_rows = long_gap.to_numpy().any(axis=1)
+        df = _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP, long_gap=long_gap)
 
         data = df.to_numpy().astype(np.float64)
 
@@ -244,6 +285,10 @@ def load_forecasting(
 
     if average_italy:
         data = time_window_average(data=data, m=5)  # 30min average (6min sampling rate)
+        # Averaging changes the row count, so the synthetic flags no longer align;
+        # this analysis-only path keeps the pre-existing behavior of not tracking
+        # outage fill through the averaging.
+        synthetic_rows = None
 
     def convert_array(arr, dtype=np.float32):
         # Convert each column to float32
@@ -302,6 +347,14 @@ def load_forecasting(
     val_data = data[val_idx[0] : val_idx[1]]
     test_data = data[test_idx[0] : test_idx[1]]
 
+    # Slice the synthetic flags with the exact same boundaries (including the
+    # seq_len context extension on val/test) so they stay row-aligned.
+    train_syn = val_syn = test_syn = None
+    if synthetic_rows is not None:
+        train_syn = synthetic_rows[train_idx[0] : train_idx[1]]
+        val_syn = synthetic_rows[val_idx[0] : val_idx[1]]
+        test_syn = synthetic_rows[test_idx[0] : test_idx[1]]
+
     # Normalization. Data must be in shape (seq_len, num_channels)
     if scale:
         scaler = StandardScaler()
@@ -337,6 +390,26 @@ def load_forecasting(
             [],
         )
 
+        # Window-level exclusion of outage fill: window the synthetic flags with
+        # the identical parameters and keep only windows containing no flagged
+        # step. Alignment with the data windows is by construction. The flags are
+        # per-timestep (all channels share them), so one keep mask per split
+        # applies to every channel.
+        def _window_keep(syn):
+            if syn is None:
+                return None
+            flags = create_windows(
+                torch.from_numpy(syn.astype(np.float32)),
+                seq_len + pred_len,
+                window_stride,
+                resizing_mode,
+            )
+            return flags.amax(dim=1) == 0
+
+        train_keep = _window_keep(train_syn)
+        val_keep = _window_keep(val_syn)
+        test_keep = _window_keep(test_syn)
+
         if date:
             train_window = create_windows(
                 torch.from_numpy(train_data),
@@ -356,6 +429,11 @@ def load_forecasting(
                 window_stride,
                 resizing_mode,
             )
+
+            if train_keep is not None:
+                train_window = train_window[train_keep]
+                val_window = val_window[val_keep]
+                test_window = test_window[test_keep]
 
             train_data = train_window[:, :seq_len]
             train_labels = train_window[:, seq_len:]
@@ -385,6 +463,11 @@ def load_forecasting(
                     window_stride,
                     resizing_mode,
                 )
+
+                if train_keep is not None:
+                    train_window = train_window[train_keep]
+                    val_window = val_window[val_keep]
+                    test_window = test_window[test_keep]
 
                 train_x = train_window[:, :seq_len]
                 train_y = train_window[:, seq_len:]
@@ -425,6 +508,12 @@ def load_forecasting(
             (test_data, test_labels),
         )
 
+    if return_synthetic:
+        return (
+            (train_data.T, train_syn),
+            (val_data.T, val_syn),
+            (test_data.T, test_syn),
+        )
     return train_data.T, val_data.T, test_data.T
 
 
@@ -997,6 +1086,7 @@ def get_loader(
     flag="sl",
     shuffle=False,
     generator=torch.Generator(),
+    synthetic=None,
 ):
     """
     Returns a DataLoader for a specific task.
@@ -1013,7 +1103,11 @@ def get_loader(
 
     if dataset_class == "forecasting":
         dataset = ForecastingDataset(
-            data, args.data.seq_len, args.data.pred_len, args.data.dtype
+            data,
+            args.data.seq_len,
+            args.data.pred_len,
+            args.data.dtype,
+            synthetic=synthetic,
         )
     elif dataset_class == "univariate_forecasting":
         dataset = UnivariateForecastingDataset(data[0], data[1], args.data.dtype)
@@ -1069,7 +1163,7 @@ def get_loaders(
         "UH2024",
         "EMF_2023_university_5_with_PTV",
     }:
-        train_data, val_data, test_data = load_forecasting(
+        splits = load_forecasting(
             dataset_name=args.data.dataset,
             seq_len=args.data.seq_len,
             pred_len=args.data.pred_len,
@@ -1088,7 +1182,16 @@ def get_loaders(
             cyclical_encoding=args.data.cyclical_encoding,
             datetime_features=args.data.datetime_features,
             average_italy=args.data.average_italy,
+            # The univariate window path excludes outage-fill windows internally;
+            # the multivariate split path hands back per-split synthetic flags so
+            # the ForecastingDataset can do the same exclusion.
+            return_synthetic=not args.data.univariate,
         )
+        if args.data.univariate:
+            train_data, val_data, test_data = splits
+            train_syn = val_syn = test_syn = None
+        else:
+            (train_data, train_syn), (val_data, val_syn), (test_data, test_syn) = splits
 
         # For multivariate forecasting the channel count is authoritative from the
         # loaded data (transposed to (num_channels, time)). This sets it for the
@@ -1106,6 +1209,7 @@ def get_loaders(
             shuffle=True,
             generator=generator,
             flag=flag,
+            synthetic=train_syn,
         )
         val_loader = get_loader(
             args=args,
@@ -1113,6 +1217,7 @@ def get_loaders(
             shuffle=True,
             generator=generator,
             flag=flag,
+            synthetic=val_syn,
         )
     if loader_type in {"test", "all"}:
         test_loader = get_loader(
@@ -1121,6 +1226,7 @@ def get_loaders(
             shuffle=args.data.shuffle_test,
             generator=generator,
             flag=flag,
+            synthetic=test_syn,
         )
 
     loaders = []

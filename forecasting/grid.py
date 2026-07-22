@@ -24,6 +24,22 @@ from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 MARKER = "sl_test/interval_width_mean"
 SEED = 69421
 
+# EMForecaster's patch pipeline needs ~29.5 GiB of activations for a 512 batch at
+# seq_len 336 -- more than the shared 31.35 GiB card -- and its emf2023 cells (29
+# channels, 55k train rows) OOM whenever a co-tenant process holds a few GiB.
+# Those cells train on smaller micro-batches with gradient accumulation, keeping
+# the effective batch (and the onecycle schedule) identical to every other cell.
+OOM_RETRIES = 2
+
+
+def _memory_profile(model_id, dataset, seq_len):
+    """(batch_size, accum_steps) override for known memory-heavy cells, or None."""
+    if model_id == "EMForecaster" and (
+        seq_len >= 336 or dataset == "EMF_2023_university_5_with_PTV"
+    ):
+        return 128, 4
+    return None
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Grid name -> the package owning its configs and Experiment class. Two grids do
@@ -147,8 +163,32 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
             args.exp.seed_list = [SEED]
             args.exp.seed = SEED
             args.exp.time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            profile = _memory_profile(model_id, dataset, seq_len)
+            if profile is not None:
+                args.sl.batch_size, args.sl.accum_steps = profile
+                console.log(
+                    f"[MEM ] {tag} batch_size={args.sl.batch_size} "
+                    f"x accum {args.sl.accum_steps}"
+                )
             console.log(f"[RUN ] {tag}")
-            Experiment(args).run()
+            for attempt in range(OOM_RETRIES + 1):
+                try:
+                    Experiment(args).run()
+                    break
+                except torch.cuda.OutOfMemoryError:
+                    # A cell must never silently vanish on OOM: free the cache and
+                    # retry on smaller micro-batches with the same effective batch.
+                    if attempt == OOM_RETRIES:
+                        raise
+                    args.sl.batch_size = max(1, args.sl.batch_size // 2)
+                    args.sl.accum_steps *= 2
+                    _cleanup()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    console.log(
+                        f"[OOM ] {tag} retrying with batch_size="
+                        f"{args.sl.batch_size} x accum {args.sl.accum_steps}"
+                    )
             console.log(f"[ OK ] {tag}")
             passed.append(tag)
         except Exception as exc:  # keep the grid alive on a bad cell
@@ -165,4 +205,19 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
     console.log(f"  failed:  {len(failed)}")
     for c in failed:
         console.log(f"    - {c}")
+
+    # Persist the outcome next to the logs: a crashed cell used to leave nothing
+    # but its args.yaml behind, so a whole model could silently drop out of the
+    # results table. The report survives the console scrollback.
+    report = {
+        "setup": setup,
+        "finished": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+        "passed": passed,
+        "skipped": skipped,
+        "failed": failed,
+    }
+    if not dry_run:
+        os.makedirs(logs_dir, exist_ok=True)
+        with open(os.path.join(logs_dir, f"grid_report_{setup}.json"), "w") as f:
+            json.dump(report, f, indent=2)
     return failed

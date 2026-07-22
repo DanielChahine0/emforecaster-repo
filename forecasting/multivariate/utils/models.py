@@ -225,6 +225,9 @@ def get_model(args, generator=torch.Generator()):
             d_model=args.sl.d_model,
             num_heads=args.sl.num_heads,
             num_enc_layers=args.sl.num_enc_layers,
+            revin=args.sl.revin,
+            revin_affine=args.sl.revin_affine,
+            eps_revin=args.sl.eps_revin,
         )
     else:
         raise ValueError("Please select a valid model_id.")
@@ -438,7 +441,7 @@ def compute_loss(output, batch, criterion, model_id, args, device):
     return loss
 
 
-def model_update(model, loss, optimizer, model_id, alpha=0.6):
+def model_update(model, loss, optimizer, model_id, alpha=0.6, step=True):
     if model_id in {
         "PatchTST",
         "TSMixer",
@@ -456,7 +459,10 @@ def model_update(model, loss, optimizer, model_id, alpha=0.6):
     }:
         loss.backward()
         # check_gradients(model)
-        optimizer.step()
+        # step=False accumulates gradients across micro-batches; the caller steps
+        # (and zeroes) once per accumulation group.
+        if step:
+            optimizer.step()
     else:
         raise ValueError("Please select a valid model_id.")
 

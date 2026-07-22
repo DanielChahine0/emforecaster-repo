@@ -2,6 +2,7 @@ import unittest
 import torch
 import torch.nn as nn
 from forecasting.multivariate.layers.patchtst.enc_block import _MultiheadAttention
+from forecasting.multivariate.layers.patchtst.revin import RevIN
 
 
 class MLP(nn.Module):
@@ -86,7 +87,15 @@ class EncoderBlock(nn.Module):
 
 class Transformer(nn.Module):
     def __init__(
-        self, seq_len=20, pred_len=20, d_model=32, num_heads=2, num_enc_layers=2
+        self,
+        seq_len=20,
+        pred_len=20,
+        d_model=32,
+        num_heads=2,
+        num_enc_layers=2,
+        revin=False,
+        revin_affine=True,
+        eps_revin=1e-5,
     ):
         super(Transformer, self).__init__()
         self.enc = nn.ModuleList(
@@ -101,6 +110,16 @@ class Transformer(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=2)
         self.conv2 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=1)
 
+        # RevIN parity with every other model in the benchmark: without
+        # per-window renormalization this tanh-bounded backbone cannot track the
+        # non-stationary level of the z-scored bands and collapses to the
+        # train-mean forecast at long horizons (test MSE == climatology on
+        # ED2022/UH2022 at O336). Applied in the folded (B*C, seq_len) space, so
+        # the mean/std are per window per channel while the single affine pair is
+        # shared across channels -- matching the channel-independent backbone and
+        # keeping the layer valid for any channel count.
+        self.revin = RevIN(1, eps=eps_revin, affine=revin_affine) if revin else None
+
     def forward(self, x):
         # Channel-independent multivariate I/O: fold the channel dim into the
         # batch so the univariate backbone below runs once per channel, then
@@ -108,6 +127,8 @@ class Transformer(nn.Module):
         # PatchTST use; for C == 1 this reduces to the original univariate path.
         B, C, L = x.shape
         x = x.reshape(B * C, L)  # (B, C, seq_len) -> (B*C, seq_len)
+        if self.revin is not None:
+            x = self.revin(x, "norm").reshape(B * C, L)
         x = x.unsqueeze(-1)  # (B*C, seq_len) -> (B*C, seq_len, 1)
         x = self.fc1(
             x
@@ -124,6 +145,8 @@ class Transformer(nn.Module):
         x = self.act(x)  # (B*C, seq_len, 1) for d_model == 2
 
         x = self.fc2(x.squeeze(-1))  # (B*C, seq_len) -> (B*C, pred_len)
+        if self.revin is not None:
+            x = self.revin(x, "denorm").reshape(B * C, -1)
         return x.reshape(B, C, -1)  # (B*C, pred_len) -> (B, C, pred_len)
 
 

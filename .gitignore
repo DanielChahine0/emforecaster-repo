@@ -34,6 +34,7 @@ notify-completion.js
 logs.bak/
 old_logs/
 emforecaster/hpc/logs/
+logs/_archive/
 
 # Experiment tracking / checkpoints
 checkpoint/
