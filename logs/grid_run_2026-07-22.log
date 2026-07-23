@@ -18941,3 +18941,4 @@ EarlyStopping counter: 12 out of 20
            Model Validation MAE: 0.714657                            exp.py:1242
 EarlyStopping counter: 13 out of 20
            Validation complete                                       exp.py:1242
+[13:42:17] [Epoch 17, Batch (100/426)]: 8.252s. Loss: 0.997805       exp.py:1242

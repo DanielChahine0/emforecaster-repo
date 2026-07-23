@@ -9,7 +9,11 @@
 # 2 -> 1 before the final Linear(seq_len, pred_len); any other d_model mis-shapes
 # and crashes. This matches the value that produced the univariate Transformer
 # column (the on-disk univariate config's d_model: 64 is stale and does not run).
-# RF_EMF_Transformer has no built-in RevIN, so revin/revout are off here.
+# revin: True gives this baseline the same per-window instance normalization as
+# every other model in the grid (RevIN wrapped around the folded (B*C, L)
+# backbone). Without it the tanh-bounded arch collapses to the train-mean
+# forecast at pred_len 336 (test MSE == climatology on ED2022/UH2022). revout
+# stays False: denormalization is part of the RevIN wrapper itself.
 #
 # batch_size is reduced 512 -> 128 (the one deviation from the univariate
 # hyperparameters). The channel-independent fold makes the effective batch
@@ -65,7 +69,7 @@ sl:
   lr: 1e-4
   early_stopping: True
   weight_decay: 1e-4
-  revin: False
+  revin: True
   revout: False
 
 scheduler:

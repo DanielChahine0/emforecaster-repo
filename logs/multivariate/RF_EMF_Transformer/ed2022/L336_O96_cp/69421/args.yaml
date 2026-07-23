@@ -103,7 +103,7 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-07-22_11-09-57
+  time: 2026-07-22_16-41-04
   tuning_metric: loss
   u_weight: false
   va_inductive: true
@@ -208,7 +208,7 @@ sl:
   pos_enc: learnable
   pred_dropout: 0.1
   return_head: false
-  revin: false
+  revin: true
   revin_affine: true
   revout: false
   scheduler: onecycle
