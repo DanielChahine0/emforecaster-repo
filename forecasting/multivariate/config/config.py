@@ -114,6 +114,18 @@ class Experiment(BaseModel):
         default=False,
         description="Whether to use scikit-learn for model training and evaluation",
     )
+    no_train: bool = Field(
+        default=False,
+        description=(
+            "Fit-once, non-gradient models (ARIMA): skip the epoch loop and the "
+            "checkpoint round-trip. Distinct from `sklearn`, which returns from "
+            "test() before any conformal code and is classification-only. Under "
+            "no_train the conformal recalibration on val and the test evaluation "
+            "still run, so every sl_test/* metric -- including the grid's resume "
+            "marker sl_test/interval_width_mean -- is written normally. Mutually "
+            "exclusive with sklearn."
+        ),
+    )
     sklearn_n_jobs: int = Field(
         default=-1, description="Number of CPU cores to use (-1 for all cores)"
     )
@@ -688,6 +700,23 @@ class TSMixer(BaseModel):
     )
 
 
+class ARIMA(BaseModel):
+    p: int = Field(default=1, description="ARIMA autoregressive order.")
+    d: int = Field(
+        default=0,
+        description=(
+            "ARIMA differencing order. 0 matches the call site of the repo's "
+            "reference script (analysis/general/arima.py); note the loader "
+            "standardizes each band, which removes mean and scale but not trend, "
+            "so d=0 is a modelling choice and not a stationarity guarantee."
+        ),
+    )
+    q: int = Field(default=1, description="ARIMA moving-average order.")
+    trend: str = Field(
+        default="c", description="statsmodels trend term ('n', 'c', 't', 'ct')."
+    )
+
+
 class TimesNet(BaseModel):
     num_enc_layers: int = Field(
         default=2, description="Number of encoder layers for the TimesNet model."
@@ -762,6 +791,10 @@ class Global(BaseModel):
     tsmixer: TSMixer = TSMixer()
     timesnet: TimesNet = TimesNet()
     moderntcn: ModernTCN = ModernTCN()
+    # Registration is mandatory, not cosmetic: load_config does Global(**data) and
+    # pydantic's default extra='ignore' would drop an unregistered `arima:` YAML
+    # block silently, with no error and no warning.
+    arima: ARIMA = ARIMA()
     conf: Conformal = Conformal()
 
 

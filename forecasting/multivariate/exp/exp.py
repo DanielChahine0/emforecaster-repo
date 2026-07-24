@@ -428,6 +428,20 @@ class Experiment:
             self.sklearn_train(model, train_loader.x, train_loader.y)
             return
 
+        # Fit-once, non-gradient pipeline (ARIMA). There is no epoch loop and no
+        # checkpoint, so return before both. Unlike the sklearn branch above this
+        # does NOT short-circuit test(): the conformal recalibration on val and
+        # the test evaluation still run against the same fixed predictor, so
+        # every sl_test/* key -- including the grid's resume marker -- is written
+        # normally. Returning here also keeps the model from forecasting the
+        # train split, which it never needs and which would cost more calls than
+        # val and test combined.
+        if self.args.exp.no_train:
+            self.print_master(
+                f"{self.args.exp.model_id}: fit-once model, skipping the epoch loop."
+            )
+            return
+
         # Deep learning (PyTorch) pipeline
         num_examples = len(train_loader.dataset)
         self.print_master(f"Training on {num_examples} examples...")
@@ -838,10 +852,13 @@ class Experiment:
             return
 
         # <---Deep learning (PyTorch) pipeline--->
-        # Load best model
-
-        model_weights = torch.load(best_model_path)
-        model.load_state_dict(model_weights)
+        # Load best model. A no_train model wrote no checkpoint (and has no
+        # val-selected "best" epoch to reload); it is already the fixed predictor
+        # the conformal recalibration below assumes, so the round-trip is skipped
+        # rather than faked.
+        if not self.args.exp.no_train:
+            model_weights = torch.load(best_model_path)
+            model.load_state_dict(model_weights)
 
         # <---Conformal recalibration on the best (val-selected) model--->
         # Split conformal requires the calibration residuals and the test residuals to
@@ -889,6 +906,16 @@ class Experiment:
         self.log_stats(
             stats, flag, mae, acc, ch_acc, mode="test", coverage=self.args.conf.conf
         )
+
+        # A fit-once model leaves no supervised.pth behind, so the estimated
+        # parameters would otherwise be unrecoverable from the run. Persist
+        # whatever provenance the model recorded (ARIMA: per-band order, params,
+        # AIC and convergence flag) beside its log.
+        if self.args.exp.no_train and hasattr(model, "fit_info"):
+            info = model.fit_info()
+            if info is not None:
+                with open(os.path.join(self.log_dir, "fit_info.json"), "w") as f:
+                    json.dump(info, f, indent=2)
         self.tuning_score = stats[
             f"{self.args.exp.tuning_metric}"
         ]  # For hyperparameter tuning

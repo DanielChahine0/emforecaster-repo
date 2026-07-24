@@ -95,14 +95,17 @@ They also set `exp.task: "forecasting"`, `data.dataset: "ED2022"`, and `data.num
 
 ## Jobs and how to run them
 
-`jobs/exp/rf_emf_mv/` holds five model jobs plus a smoke test, one model each:
+`jobs/exp/rf_emf_mv/` holds eight model jobs plus a smoke test, one model each:
 
 | job_name | model_id | notes |
 | --- | --- | --- |
+| `rf_emf_mv/arima` | ARIMA | classical, `exp.no_train: True` (no epoch loop, no checkpoint); one statsmodels ARIMA per band |
 | `rf_emf_mv/dlinear` | DLinear | |
 | `rf_emf_mv/emforecaster` | EMForecaster | `patch_model_id: TSMixer`, `conf.conf: True` |
-| `rf_emf_mv/patchtst` | PatchTST | |
+| `rf_emf_mv/lstm` | LSTM | `models/recurrent.py::RecurrentModel`, `backbone_id: LSTM`; requires `data.patching: True`, `last_state: False`, `avg_state: True`, `revout: True` |
+| `rf_emf_mv/patchtst` | PatchTST | in the grid until 2026-07-24; job still runnable |
 | `rf_emf_mv/timesnet` | TimesNet | multivariate-only; no univariate TimesNet job exists |
+| `rf_emf_mv/transformer` | RF_EMF_Transformer | channel-independent fold; `d_model` must be 2, `batch_size` reduced to 128 |
 | `rf_emf_mv/tsmixer` | TSMixer | |
 | `rf_emf_mv/test` | EMForecaster | multivariate smoke test (5 epochs, `seq_len` 20 / `pred_len` 30, ED2022, `num_workers: 0`); the multivariate counterpart of the univariate `test` job |
 
@@ -122,7 +125,7 @@ Note that the effective batch through the patch backbone is `batch_size * num_ch
 ## Tuning caveat
 
 `python -m forecasting.multivariate.tuning.tune <job_name> [--cc] [--acc <account>]` reads `<job>/ablation.yaml`.
-The five `rf_emf_mv/*` folders contain only `args.yaml` and no `ablation.yaml`, so the tuner cannot grid-search the multivariate-specific jobs out of the box.
+The `rf_emf_mv/*` folders contain only `args.yaml` and no `ablation.yaml`, so the tuner cannot grid-search the multivariate-specific jobs out of the box.
 
 ## Mirrored univariate jobs are dead here
 

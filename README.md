@@ -17,7 +17,7 @@ The repository contains a single deep-learning forecasting package with two para
 Both training setups are driven by the root `main.py`, which selects the setup automatically from the job name.
 Both share the same conformal-prediction uncertainty quantification (independent/joint coverage and the paper's Trade-off Score), the same hyperparameter-tuning entrypoint, and the same optional Neptune logging and HPC submission paths.
 
-Model families available through `get_model`: PatchTST, recurrent models (LSTM/RNN/GRU/Mamba via `backbone_id`), Linear, DLinear, EMForecaster, ModernTCN, TimesNet, KNN, TSMixer, and four RF baselines (RF_EMF_MLP, RF_EMF_CNN, RF_EMF_LSTM, RF_EMF_Transformer).
+Model families available through `get_model`: PatchTST, recurrent models (LSTM/RNN/GRU/Mamba via `backbone_id`, reachable as `RecurrentModel` or under the grid's `LSTM` alias), Linear, DLinear, EMForecaster, ModernTCN, TimesNet, KNN, TSMixer, ARIMA (classical, non-gradient; see `exp.no_train`), and four RF baselines (RF_EMF_MLP, RF_EMF_CNN, RF_EMF_LSTM, RF_EMF_Transformer).
 
 ## Repository layout
 
@@ -120,8 +120,10 @@ Univariate (`forecasting.univariate`):
 
 Multivariate (`forecasting.multivariate`, `rf_emf_mv` prefix):
 
+- `rf_emf_mv/arima`
 - `rf_emf_mv/dlinear`
 - `rf_emf_mv/emforecaster`
+- `rf_emf_mv/lstm`
 - `rf_emf_mv/patchtst`
 - `rf_emf_mv/timesnet`
 - `rf_emf_mv/transformer`
@@ -141,9 +143,9 @@ Passing `--grid` (or omitting the job name entirely) runs a full sweep over ever
 The exit code is non-zero if any cell failed.
 
 - `--setup {univariate,multivariate,univariate_series}` selects which grid to run:
-  - `multivariate` - one model per cell, forecasting all 27/29 frequency bands jointly. Sweeps DLinear, PatchTST, TSMixer, Transformer, and EMForecaster over the `ED2022`, `UH2022`, and `EMF_2023_university_5_with_PTV` datasets.
+  - `multivariate` - one model per cell, forecasting all 27/29 frequency bands jointly. Sweeps DLinear, TSMixer, Transformer, EMForecaster, LSTM, and ARIMA over the `ED2022`, `UH2022`, and `EMF_2023_university_5_with_PTV` datasets. (PatchTST was dropped from the sweep on 2026-07-24; its completed cells remain under `logs/multivariate/PatchTST/` and its job config is still runnable.)
   - `univariate` - the per-band counterpart of the multivariate grid: same models, datasets, and windows, but each cell trains one independent model per frequency band and averages the bands back into one number per cell, so its cells are directly comparable to the multivariate ones. Driven by `forecasting/perchannel.py`, which fans the band trainings out to a process pool.
-  - `univariate_series` - the original single-series sweep over the DET/PTV monitoring datasets (`rf_emf_det`, `rf_emf_ptv`, `rf_emf_ptv2`), with the same five model families.
+  - `univariate_series` - the original single-series sweep over the DET/PTV monitoring datasets (`rf_emf_det`, `rf_emf_ptv`, `rf_emf_ptv2`). It keeps its own five-model list (DLinear, PatchTST, TSMixer, Transformer, EMForecaster) and is unaffected by changes to the two grids above.
 
   If `--setup` is omitted in grid mode, you are prompted interactively to pick one (`u`/`m`/`s`).
 - `--window <spec>` restricts the sweep to specific lookback/horizon window(s) instead of all four. Every grid uses the same four `(seq_len, pred_len)` windows: `192x96`, `192x336`, `336x96`, `336x336`. Each window is written as `LxO` (e.g. `336x96`), `L_O` (`336_96`), or the `logs/` directory form `L336_O96`; comma-separate to select several (e.g. `--window 336x96,336x336`). The spec is validated against the grid up front, so a typo or a window not in the grid is a clean error rather than a mid-run failure. Omit to run every window.

@@ -1,0 +1,103 @@
+# Classical ARIMA baseline on the Italy EMF datasets (models/arima.py).
+#
+# ARIMA is univariate, so a cell here is one independent ARIMA per frequency
+# band, stacked into the same (B, C, pred_len) layout every other model emits.
+# In the per-band grid the same config forecasts a single band.
+#
+# exp.no_train skips the gradient epoch loop and the checkpoint round-trip, but
+# NOT the test path: the split-conformal recalibration on val and the test
+# evaluation still run, so this cell writes the same sl_test/* keys and the same
+# resume marker (sl_test/interval_width_mean) as the deep models. Do NOT reach
+# for exp.sklearn instead -- that branch returns from test() before any conformal
+# code and is classification-only (predict_proba), so the cell would exit 0, be
+# logged [ OK ] by both drivers, write no marker, and be re-run on every
+# invocation forever.
+#
+# Protocol: fit once per (dataset, band) on the scaled train split, then
+# ARIMAResults.apply(window).forecast(steps=pred_len) per evaluation window.
+# apply defaults to refit=False, so the parameters are fixed and each window is
+# just a Kalman pass -- ARIMA sees exactly seq_len points of context, the same
+# information the deep models get.
+#
+# Split conformal is arguably cleaner here than for the deep models: the
+# recalibration in exp.test() exists because calibration residuals came from the
+# live last-epoch model while test residuals come from the best checkpoint. A
+# fit-once model has neither, so its predictor is fixed by construction and the
+# recalibration is a no-op.
+#
+# sl.epochs / lr / optimizer / early_stopping are inert under no_train but must
+# stay parseable. scheduler "None" keeps supervised_train from building one
+# against a null optimizer.
+#
+# data.dataset / seq_len / pred_len / exp.id are set per run by
+# forecasting/grid.py and forecasting/perchannel.py; data.num_channels is
+# auto-inferred from the CSV (27 or 29), except in the per-band grid which pins
+# it to 1.
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF-MV"
+  model_id: "ARIMA"
+  learning_type: "sl"
+  id: ""
+  # ARIMA's MLE is deterministic given the data, so a second seed would be a
+  # byte-identical duplicate. Both grid drivers pin SEED=69421 anyway.
+  seed_list: [69421]
+  seed: 69421
+  mae: True
+  task: "forecasting"
+  neptune: False
+  no_train: True
+  eval_test_per_epoch: False
+
+data:
+  seq_load: True
+  dataset: "ED2022"
+  univariate: False
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 336
+  pred_len: 96
+  train_split: 0.7
+  val_split: 0.1
+  num_channels: 27
+  scale: True
+
+# (1, 0, 1) matches the call site of the repo's reference script
+# (analysis/general/arima.py), whose own signature default of (1, 1, 1)
+# contradicts it. d=0 is a modelling choice: the loader standardizes each band,
+# which removes mean and scale but not trend, so this is not a stationarity
+# guarantee. analysis/general/adf.py can settle it per band if needed.
+arima:
+  p: 1
+  d: 0
+  q: 1
+  trend: "c"
+
+ddp:
+  ddp: False
+  master_port: "11763"
+  find_unused_parameters: True
+
+sl:
+  optimizer: "adam"
+  dataset_class: "forecasting"
+  criterion: "MSE"
+  scheduler: "None"
+  epochs: 0
+  batch_size: 512
+  lr: 1e-4
+  early_stopping: False
+  weight_decay: 0.0
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False

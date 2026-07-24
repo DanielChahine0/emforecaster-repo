@@ -22,6 +22,7 @@ from forecasting.multivariate.models.modern_tcn import ModernTCN
 from forecasting.multivariate.models.timesnet import TimesNet
 from forecasting.multivariate.models.tsmixer import TSMixer
 from forecasting.multivariate.models.emforecaster import EMForecaster
+from forecasting.multivariate.models.arima import ARIMAForecaster
 
 # Unsupervised models
 from tslearn.neighbors import KNeighborsTimeSeriesClassifier
@@ -63,7 +64,12 @@ def get_model(args, generator=torch.Generator()):
             head_type=args.sl.head_type,
             channel_independent=args.sl.channel_independent,
         )
-    elif args.exp.model_id == "RecurrentModel":
+    # "LSTM" is an alias for the LSTM-backboned RecurrentModel. It exists so the
+    # grid gets a self-documenting logs/ dir (build_run_dir stamps model_id
+    # verbatim) without colliding with RF_EMF_LSTM, which is the batch-axis
+    # baseline in models/rf_emf_baselines.py that produced the published
+    # single-series column and must stay frozen.
+    elif args.exp.model_id in {"RecurrentModel", "LSTM"}:
         model = RecurrentModel(
             d_model=args.sl.d_model,
             backbone_id=args.exp.backbone_id,
@@ -229,13 +235,29 @@ def get_model(args, generator=torch.Generator()):
             revin_affine=args.sl.revin_affine,
             eps_revin=args.sl.eps_revin,
         )
+    elif args.exp.model_id == "ARIMA":
+        model = ARIMAForecaster(
+            dataset=args.data.dataset,
+            seq_len=args.data.seq_len,
+            pred_len=args.data.pred_len,
+            order=(args.arima.p, args.arima.d, args.arima.q),
+            trend=args.arima.trend,
+            train_split=args.data.train_split,
+            val_split=args.data.val_split,
+            scale=args.data.scale,
+            target_channel=(
+                args.data.target_channel if args.data.single_channel else None
+            ),
+        )
     else:
         raise ValueError("Please select a valid model_id.")
     return model
 
 
 def get_optim(args, model, optimizer_type="adamw", flag="sl"):
-    if args.exp.sklearn:
+    # no_train models have no parameters to optimize; exclude_weight_decay would
+    # hand AdamW two empty param groups.
+    if args.exp.sklearn or args.exp.no_train:
         return None
 
     optimizer_classes = {"adam": optim.Adam, "adamw": optim.AdamW}
@@ -360,6 +382,8 @@ def forward_pass(args, model, batch, model_id, device):
         "RF_EMF_Transformer",
         "EMForecaster",
         "CyclicalEMForecaster",
+        "LSTM",
+        "ARIMA",
     }:
 
         x = batch[0]
@@ -429,6 +453,8 @@ def compute_loss(output, batch, criterion, model_id, args, device):
         "RF_EMF_Transformer",
         "EMForecaster",
         "CyclicalEMForecaster",
+        "LSTM",
+        "ARIMA",
     }:
         out, target = prepare_output_and_target(output, batch[1], args, device)
         # output = output.squeeze()
@@ -456,6 +482,11 @@ def model_update(model, loss, optimizer, model_id, alpha=0.6, step=True):
         "RF_EMF_Transformer",
         "EMForecaster",
         "CyclicalEMForecaster",
+        # "ARIMA" is deliberately absent: it has no gradients, and under
+        # exp.no_train this function is unreachable. Leaving it out means an
+        # accidentally-unset no_train raises here instead of trying to backward
+        # through a detached forecast.
+        "LSTM",
     }:
         loss.backward()
         # check_gradients(model)

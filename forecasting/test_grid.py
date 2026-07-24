@@ -36,11 +36,28 @@ def test_grid_model_ids_match_job_configs():
             assert args.exp.model_id == model_id, f"{setup} {job}: {args.exp.model_id} != {model_id}"
 
 
-def test_all_grids_have_60_cells():
-    for setup in ("multivariate", "univariate", "univariate_series"):
+# The two comparable grids share MV_MODELS (6 models x 3 datasets x 4 windows);
+# univariate_series has its own 5-model list. Spelled out rather than derived
+# from len(models), so a model silently dropped from a grid fails here.
+EXPECTED_CELLS = {"multivariate": 72, "univariate": 72, "univariate_series": 60}
+
+
+def test_grid_cell_counts():
+    for setup, expected in EXPECTED_CELLS.items():
         g = grids.GRIDS[setup]
         n = len(g["models"]) * len(g["datasets"]) * len(g["windows"])
-        assert n == 60, f"{setup} has {n} cells, expected 60"
+        assert n == expected, f"{setup} has {n} cells, expected {expected}"
+
+
+def test_grid_does_not_use_the_batch_axis_lstm():
+    # models/rf_emf_baselines.py::LSTM (model_id RF_EMF_LSTM) runs its recurrence
+    # over the DataLoader batch axis and squeezes a (B, 1, O) forecast against a
+    # (B, 1, O) target. It stays reachable because it produced the published
+    # single-series column, so guard against it drifting back into a sweep.
+    for setup in ("multivariate", "univariate"):
+        ids = {model_id for _, model_id, _ in grids.GRIDS[setup]["models"]}
+        assert "RF_EMF_LSTM" not in ids, f"{setup} must use 'LSTM', not RF_EMF_LSTM"
+        assert "LSTM" in ids
 
 
 def test_grids_use_alpha_point_one():
@@ -123,7 +140,7 @@ def test_select_windows_rejects_window_not_in_grid():
 
 
 def test_run_grid_window_filter_limits_cells(tmp_path):
-    # One window instead of four -> 15 cells (5 models x 3 datasets x 1 window).
+    # One window instead of four -> 18 cells (6 models x 3 datasets x 1 window).
     failed = grid.run_grid("multivariate", dry_run=True, logs_dir=str(tmp_path),
                            windows=[(336, 96)])
     assert failed == []
@@ -141,7 +158,7 @@ def test_run_grid_refuses_per_channel_setup():
 
 
 def test_run_grid_dry_run_lists_all_cells(tmp_path):
-    # dry_run must not train; it should visit all 60 cells and report them.
+    # dry_run must not train; it should visit every cell and report them.
     failed = grid.run_grid("multivariate", dry_run=True, logs_dir=str(tmp_path))
     assert failed == []
 
@@ -166,5 +183,5 @@ def test_run_grid_records_failures_and_continues(tmp_path, monkeypatch):
 
     monkeypatch.setattr(grid, "setup_modules", lambda setup: (fake_load_config, FakeExperiment))
     failed = grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path))
-    # Every cell raised, but the grid kept going and recorded all 60 as failed.
-    assert len(failed) == 60
+    # Every cell raised, but the grid kept going and recorded them all as failed.
+    assert len(failed) == EXPECTED_CELLS["multivariate"]

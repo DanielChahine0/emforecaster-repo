@@ -70,11 +70,16 @@ def process_experiment(directory, console):
 
 
 def find_json_file(directory, console):
-    try:
-        return next(f for f in os.listdir(directory) if f.endswith(".json"))
-    except StopIteration:
-        console.log(f"[blue]No JSON file found in {directory}. Skipping...[/blue]")
-        return None
+    # Named explicitly rather than "the first *.json in the directory": the only
+    # caller gets `directory` from a glob for log.json, and a run dir can hold a
+    # second JSON beside it (a fit-once model writes fit_info.json there). The
+    # old arbitrary pick parsed whichever one readdir happened to yield first,
+    # then failed on the missing parameters/* keys and skipped the run.
+    log_json = os.path.join(directory, "log.json")
+    if os.path.isfile(log_json):
+        return "log.json"
+    console.log(f"[blue]No log.json found in {directory}. Skipping...[/blue]")
+    return None
 
 
 def read_json_file(directory, json_file, console):

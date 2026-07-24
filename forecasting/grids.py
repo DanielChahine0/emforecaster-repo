@@ -25,12 +25,27 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 WINDOWS = [(192, 96), (192, 336), (336, 96), (336, 336)]
 
+# Job names must start with "rf_emf_mv": run_grid resolves the config in-process
+# and ignores the prefix, but the per-band driver shells out to main.py, which
+# picks forecasting.multivariate only on job_name.startswith("rf_emf_mv").
+#
+# PatchTST was dropped from the sweep on 2026-07-24 when LSTM and ARIMA were
+# added; its 12 completed multivariate cells stay on disk under
+# logs/multivariate/PatchTST/ and remain valid, they are simply no longer part of
+# the grid. Re-add the tuple to bring them back.
 MV_MODELS = [
     ("DLinear", "DLinear", "rf_emf_mv/dlinear"),
-    ("PatchTST", "PatchTST", "rf_emf_mv/patchtst"),
     ("TSMixer", "TSMixer", "rf_emf_mv/tsmixer"),
     ("Transformer", "RF_EMF_Transformer", "rf_emf_mv/transformer"),
     ("EMForecaster", "EMForecaster", "rf_emf_mv/emforecaster"),
+    # models/recurrent.py::RecurrentModel with backbone_id "LSTM" -- NOT
+    # models/rf_emf_baselines.py::LSTM (model_id RF_EMF_LSTM), which builds
+    # nn.LSTM(seq_len, d_model) with batch_first left False and so runs its
+    # recurrence over the DataLoader batch axis. See the job config header.
+    ("LSTM", "LSTM", "rf_emf_mv/lstm"),
+    # Classical fit-once baseline: one statsmodels ARIMA per band, no gradient
+    # loop (exp.no_train). See forecasting/multivariate/models/arima.py.
+    ("ARIMA", "ARIMA", "rf_emf_mv/arima"),
 ]
 MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
 

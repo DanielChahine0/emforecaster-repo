@@ -39,7 +39,11 @@ def lambda_analysis(dataset_file, output_path=None, dpi=600):
         "EMForecaster": "EMForecaster",
         "PatchTST": "PatchTST",
         "RF_EMF_Transformer": "Transformer",
-        "RF_EMF_LSTM": "LSTM",
+        # The grid's LSTM is model_id "LSTM" (models/recurrent.py::RecurrentModel)
+        # and needs no entry -- .replace leaves unmapped ids unchanged. RF_EMF_LSTM
+        # is the frozen batch-axis baseline from the single-series sweep; label it
+        # distinctly so the two never merge into one series on a shared plot.
+        "RF_EMF_LSTM": "LSTM (batch-axis)",
         "RF_EMF_GRU": "GRU",
         "RF_EMF_CNN": "CNN",
         "RF_EMF_MLP": "MLP",
@@ -63,21 +67,33 @@ def lambda_analysis(dataset_file, output_path=None, dpi=600):
         "#2E8B57",  # Sea Green
         "#DC143C",  # Crimson
         "#DAA520",  # Goldenrod
+        "#7C3AED",  # Violet
+        "#6B7280",  # Slate grey (classical baseline)
     ]
 
     # Create lambda values for x-axis
     lambda_values = np.linspace(0, 1, 100)
 
     # Define desired legend order
+    # Keyed on the DISPLAY label (the post-`replace` value), not the model_id. A
+    # label missing from this list maps to NaN, sorts last, and shifts the colour
+    # of every model after it -- so every value of model_labels, plus every
+    # unmapped model_id in forecasting/grids.py, must appear here.
+    #
+    # The first eight entries are the original published order and must not be
+    # reordered or inserted into: colour is assigned by post-sort position, so
+    # moving an entry silently recolours the existing figures. New models append.
     legend_order = [
         "EMForecaster",
         "DLinear",
         "PatchTST",
         "TSMixer",
-        "LSTM",
+        "LSTM (batch-axis)",
         "CNN",
         "MLP",
         "Transformer",
+        "LSTM",
+        "ARIMA",
     ]
 
     # Sort DataFrame according to legend order

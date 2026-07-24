@@ -156,8 +156,10 @@ def test_dry_run_plans_every_band_and_trains_nothing(tmp_path, monkeypatch):
 
 
 def test_window_filter_runs_only_the_selected_window(tmp_path, monkeypatch):
-    # One window -> 5 models x 3 datasets x 1 window = 15 cells, and the bands of
-    # just those cells: 5*(27 + 27 + 29) = 415 runs.
+    # One window -> len(models) x 3 datasets x 1 window cells, and the bands of
+    # just those cells: len(models) * (27 + 27 + 29) runs. Derived from the grid
+    # so adding a model does not turn this into a spurious failure.
+    num_models = len(grids.GRIDS["univariate"]["models"])
     windows = [(336, 96)]
     calls = []
 
@@ -168,14 +170,17 @@ def test_window_filter_runs_only_the_selected_window(tmp_path, monkeypatch):
 
     monkeypatch.setattr(perchannel, "run_channel", fake_run_channel)
     perchannel.run_per_channel_grid(jobs=4, logs_dir=str(tmp_path), windows=windows)
-    assert len(calls) == 5 * (27 + 27 + 29)
+    assert len(calls) == num_models * (27 + 27 + 29)
     # Every run used the requested window and nothing else.
     assert {(l, o) for l, o, _, _ in calls} == {(336, 96)}
 
 
 def test_run_grid_skips_completed_bands_and_records_failures(tmp_path, monkeypatch):
-    # 60 cells: 20 on each of two 27-band datasets, 20 on the 29-band one.
-    expected = 20 * 27 + 20 * 27 + 20 * 29
+    # Every cell of the grid: (models x windows) runs on each of two 27-band
+    # datasets and on the 29-band one.
+    per_dataset = (len(grids.GRIDS["univariate"]["models"])
+                   * len(grids.GRIDS["univariate"]["windows"]))
+    expected = per_dataset * 27 + per_dataset * 27 + per_dataset * 29
     calls = []
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
