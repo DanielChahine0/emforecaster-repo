@@ -344,6 +344,15 @@ class SL(BaseModel):
         description="Normalization mode: 'batch1d', 'batch2d', or 'layer'",
     )
     batch_size: int = Field(default=64, description="Batch size")
+    accum_steps: int = Field(
+        default=1,
+        description=(
+            "Gradient-accumulation micro-steps per optimizer step; the effective "
+            "batch is batch_size * accum_steps. Lets memory-heavy cells (e.g. "
+            "EMForecaster at seq_len 336) train with the same effective batch and "
+            "onecycle schedule as the rest of the grid on a smaller GPU footprint."
+        ),
+    )
     revin: bool = Field(
         default=True, description="Whether to use instance normalization with RevIN."
     )

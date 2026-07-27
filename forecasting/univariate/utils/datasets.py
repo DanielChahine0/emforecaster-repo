@@ -61,6 +61,14 @@ class UnivariateForecastingDataset(Dataset):
 
     def __init__(self, x, y, dtype="float32"):
 
+        # Targets deliberately keep the 2D (num_windows, pred_len) layout here. The
+        # multivariate twin (multivariate/utils/datasets.py) adds a singleton channel
+        # axis to x and y, but that copy also keeps the full (batch, num_channels,
+        # pred_len) forecast through the criterion. This package's
+        # prepare_output_and_target squeezes the forecast to (batch, pred_len)
+        # instead, so unsqueezing y here would pair a (B, pred_len) forecast with a
+        # (B, 1, pred_len) target and broadcast the training loss to (B, B, pred_len).
+        # The channel axis is reconciled in Experiment.coverage() instead.
         # Convert the data to a tensor and set the datatype
         dtype = eval("torch." + dtype)
 

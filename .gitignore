@@ -37,6 +37,7 @@ emforecaster/hpc/logs/
 # logs/_archive/ is deliberately NOT ignored: superseded runs are kept there as
 # the provenance record for the benchmark, and an untracked archive was lost to
 # an rm on 2026-07-23. See logs/_archive/PROVENANCE.md.
+logs/_archive/
 
 # Experiment tracking / checkpoints
 checkpoint/

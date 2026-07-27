@@ -429,7 +429,7 @@ def compute_loss(output, batch, criterion, model_id, args, device):
     return loss
 
 
-def model_update(model, loss, optimizer, model_id, alpha=0.6):
+def model_update(model, loss, optimizer, model_id, alpha=0.6, step=True):
     if model_id in {
         "PatchTST",
         "TSMixer",
@@ -447,7 +447,10 @@ def model_update(model, loss, optimizer, model_id, alpha=0.6):
     }:
         loss.backward()
         # check_gradients(model)
-        optimizer.step()
+        # step=False accumulates gradients across micro-batches; the caller steps
+        # (and zeroes) once per accumulation group.
+        if step:
+            optimizer.step()
     else:
         raise ValueError("Please select a valid model_id.")
 

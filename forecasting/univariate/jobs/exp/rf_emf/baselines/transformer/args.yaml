@@ -1,3 +1,16 @@
+# Univariate (single-series) Transformer baseline on the DET/PTV monitoring CSVs
+# (model_id RF_EMF_Transformer, models/rf_emf_baselines.py::Transformer).
+#
+# d_model MUST be 2: the arch's conv1 (kernel_size=2) collapses the feature dim
+# 2 -> 1 before the final Linear(seq_len, pred_len), so any other value reaches
+# fc2 with a last dim of d_model - 1 and raises "mat1 and mat2 shapes cannot be
+# multiplied". This file carried a stale d_model: 64 that could not run at all --
+# every Transformer cell of the univariate_series grid crashed on the first
+# forward pass -- until 2026-07-24. 2 is the value the multivariate job already
+# documents and the one that produced the published Transformer column.
+#
+# data.dataset / seq_len / pred_len / exp.id are set per run by
+# forecasting/grid.py (python main.py --grid --setup univariate_series).
 exp:
   project_name: "rf-emf-forecasting/RF-EMF"
   model_id: "RF_EMF_Transformer"
@@ -30,7 +43,7 @@ ddp:
 sl:
   dataset_class: "univariate_forecasting"
   criterion: "MSE"
-  d_model: 64
+  d_model: 2
   num_heads: 2
   num_enc_layers: 2
   epochs: 100

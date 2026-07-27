@@ -1083,8 +1083,14 @@ class Experiment:
 
         for idx in indices:
             plt.figure(figsize=(10, 5))
-            plt.plot(preds[idx].cpu().numpy(), label="Predictions")
-            plt.plot(targets[idx].cpu().numpy(), label="Targets")
+            # preds[idx]/targets[idx] are (num_channels, pred_len); transpose so the
+            # horizon is the x-axis and each channel is one line. Without the .T a
+            # single-channel (1, pred_len) forecast makes plt.plot draw pred_len
+            # single-point series at x=0 -- a blank frame with a degenerate x-axis
+            # (this silently blanked every per-channel plot). A 1-D (pred_len,)
+            # forecast is unaffected: numpy .T on a 1-D array is a no-op.
+            plt.plot(preds[idx].cpu().numpy().T, label="Predictions")
+            plt.plot(targets[idx].cpu().numpy().T, label="Targets")
             plt.title(f"Sample {idx}")
             plt.xlabel("Time (6min)")
             plt.ylabel("Normalized EMF Exposure (V/m)")

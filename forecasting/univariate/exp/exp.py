@@ -419,6 +419,12 @@ class Experiment:
         num_examples = len(train_loader.dataset)
         self.print_master(f"Training on {num_examples} examples...")
 
+        # Gradient accumulation: backward every micro-batch, step the optimizer
+        # (and scheduler) once per group of accum_steps, so batch_size 128 x
+        # accum 4 follows the same optimization trajectory as batch_size 512.
+        accum_steps = max(1, getattr(getattr(self.args, flag), "accum_steps", 1))
+        num_batches = len(train_loader)
+
         if early_stopping:
             self.init_earlystopping(best_model_path)
             self.print_master("Early stopping initialized.")
@@ -436,7 +442,8 @@ class Experiment:
             start_time = time.time()
 
             for i, batch in enumerate(train_loader):
-                optimizer.zero_grad()
+                if i % accum_steps == 0:
+                    optimizer.zero_grad()
                 output = forward_pass(self.args, self.model_fwd, batch, model_id, self.device)
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
@@ -448,9 +455,14 @@ class Experiment:
                 running_loss += loss * num_batch_examples
                 running_num_examples += num_batch_examples
 
-                # Update model parameters
+                # Update model parameters. The backward loss is scaled by the
+                # accumulation factor so summed micro-batch gradients match the
+                # full-batch gradient; logging above uses the unscaled loss.
                 alpha = next(ema) if ema else 0.966
-                model_update(model, loss, optimizer, model_id, alpha)
+                do_step = ((i + 1) % accum_steps == 0) or (i + 1) == num_batches
+                model_update(
+                    model, loss / accum_steps, optimizer, model_id, alpha, step=do_step
+                )
 
                 # Periodic Logging
                 if (i + 1) % 100 == 0:
@@ -476,7 +488,9 @@ class Experiment:
                     running_num_examples = torch.tensor(0.0, device=self.device)
                     start_time = time.time()
 
-                if scheduler:
+                # Scheduler advances once per optimizer step (not per micro-batch)
+                # so the onecycle trajectory is independent of accum_steps.
+                if scheduler and do_step:
                     scheduler.step()
 
             epoch_loss = total_loss.item() / num_examples
@@ -674,14 +688,16 @@ class Experiment:
         self.criterion = get_criterion(self.args, self.args.sl.criterion)
         self.print_master(f"{self.args.sl.criterion} initialized.")
 
-        # Get supervised scheduler
+        # Get supervised scheduler. Per-epoch step count is optimizer steps, which
+        # under gradient accumulation is ceil(batches / accum_steps).
         if self.args.sl.scheduler != "None":
+            accum_steps = max(1, self.args.sl.accum_steps)
             self.sl_scheduler = get_scheduler(
                 self.args,
                 self.args.sl.scheduler,
                 "supervised",
                 self.optimizer,
-                len(self.train_loader),
+                -(-len(self.train_loader) // accum_steps),
             )
         else:
             self.sl_scheduler = None
@@ -744,6 +760,10 @@ class Experiment:
             pass
         elif self.args.exp.calibrate:
             self.init_dataloaders(loader_type="all", learning_type="sl")
+        elif self.args.conf.conf and not self.args.conf.validation_eval:
+            # Conformal recalibration below needs the val set. seq_load frees any
+            # existing loaders, so build train/val/test together to keep val_loader.
+            self.init_dataloaders(loader_type="all", learning_type="sl")
         else:
             self.init_dataloaders(loader_type="test", learning_type="sl")
 
@@ -766,6 +786,30 @@ class Experiment:
 
         model_weights = torch.load(best_model_path)
         model.load_state_dict(model_weights)
+
+        # <---Conformal recalibration on the best (val-selected) model--->
+        # Split conformal requires the calibration residuals and the test residuals to
+        # come from the same fixed predictor. During training (validation_eval=False)
+        # the scores were calibrated on the live last/early-stop-epoch model, but the
+        # weights just loaded are the best checkpoint; whenever the best epoch is not
+        # the final/trigger epoch these differ and the coverage guarantee is void.
+        # Recalibrate on the val set with the best model so both predictors match.
+        # The validation_eval=True path already persists/reloads scores tied to the
+        # best checkpoint, so it is left untouched.
+        if self.args.conf.conf and not self.args.conf.validation_eval:
+            self.evaluate(
+                model=model,
+                model_id=model_id,
+                loader=self.val_loader,
+                criterion=criterion,
+                flag=flag,
+                mae=mae,
+                acc=acc,
+                ch_acc=ch_acc,
+                conformal_calibrate=True,
+                coverage=False,
+            )
+
         # Test set evaluation
 
         stats = self.evaluate(
@@ -965,11 +1009,26 @@ class Experiment:
         preds = preds.detach().cpu()
         targets = targets.detach().cpu()
 
+        # The conformal stack expects (n_samples, pred_len, num_channels). The models
+        # emit (n_samples, num_channels, pred_len), so move the channel axis last; a
+        # bare 2D (n_samples, pred_len) tensor just gains a singleton channel.
+        # Without the 3D branch a (n, 1, O) forecast met a (n, O, 1) target and
+        # l1_loss broadcast them into an (n, O, O) cross-horizon outer product: the
+        # critical scores came out (O, O) instead of (O, 1), so ic/jc/interval_width_*
+        # averaged over all horizon PAIRS and the Bonferroni correction went inert
+        # (pred_len read as 1). Only RF_EMF_Transformer, whose forward returns a 2D
+        # (batch, pred_len), took the correct path -- the other four grid models are
+        # all (batch, 1, pred_len). Training/test MSE and MAE were never affected:
+        # prepare_output_and_target squeezes the forecast before the criterion.
         if preds.dim() == 2:
             preds = preds.unsqueeze(-1)
+        elif preds.dim() == 3:
+            preds = preds.transpose(1, 2).contiguous()
 
         if targets.dim() == 2:
             targets = targets.unsqueeze(-1)
+        elif targets.dim() == 3:
+            targets = targets.transpose(1, 2).contiguous()
 
         if mode == "calibrate":
             self.print_master("Calibrating conformal prediction model...")
