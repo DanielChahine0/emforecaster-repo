@@ -339,8 +339,8 @@ def render_section(title: str, runs: list[Run], cells: dict[tuple, Cell], models
     if not row_keys:
         return ""
 
-    out = [f"# {title}", ""]
-    out.append("## Table A | MSE (`sl_test/loss`)")
+    out = [f"## {title}", ""]
+    out.append("### Table A | MSE (`sl_test/loss`)")
     out.append("")
     out.append("**Bold** = best (lowest) value in the row, among populated cells.")
     out.append("")
@@ -349,23 +349,23 @@ def render_section(title: str, runs: list[Run], cells: dict[tuple, Cell], models
 
     if any(cells.get((m, ds, sl, pl, conf)) and cells[(m, ds, sl, pl, conf)].mae is not None
            for m in models for ds, sl, pl in row_keys):
-        out.append("## Table A2 | MAE (`sl_test/mae`)")
+        out.append("### Table A2 | MAE (`sl_test/mae`)")
         out.append("")
         out.append(render_metric_table(cells, models, row_keys, conf, "mae", 4, bold_lowest=True))
         out.append("")
 
-    out.append("## Table B | Training Time (`parameters/running_time`)")
+    out.append("### Table B | Training Time (`parameters/running_time`)")
     out.append("")
     out.append("**Bold** = fastest in the row. `X` = not logged (e.g. ARIMA is not gradient-trained).")
     out.append("")
     out.append(render_time_table(cells, models, row_keys, conf, "running_time", format_seconds))
     out.append("")
 
-    out.append("## Table C | Per-Epoch Training Time (`running_time / len(sl_train/loss)`, per run)")
+    out.append("### Table C | Per-Epoch Training Time (`running_time / len(sl_train/loss)`, per run)")
     out.append("")
     out.append(render_time_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine))
     out.append("")
-    out.append("### Per-model summary")
+    out.append("#### Per-model summary")
     out.append("")
     out.append(render_summary_table(runs, models, conf))
     out.append("")
@@ -373,7 +373,7 @@ def render_section(title: str, runs: list[Run], cells: dict[tuple, Cell], models
     if conf:
         if any(cells.get((m, ds, sl, pl, True)) and cells[(m, ds, sl, pl, True)].ic is not None
                for m in models for ds, sl, pl in row_keys):
-            out.append("## Table D | Marginal Coverage % (`sl_test/ic`)")
+            out.append("### Table D | Marginal Coverage % (`sl_test/ic`)")
             out.append("")
             out.append("Not bolded -- \"best\" means closest to the target coverage, not highest.")
             out.append("")
@@ -381,13 +381,13 @@ def render_section(title: str, runs: list[Run], cells: dict[tuple, Cell], models
             out.append("")
         if any(cells.get((m, ds, sl, pl, True)) and cells[(m, ds, sl, pl, True)].jc is not None
                for m in models for ds, sl, pl in row_keys):
-            out.append("## Table E | Joint Coverage % (`sl_test/jc`)")
+            out.append("### Table E | Joint Coverage % (`sl_test/jc`)")
             out.append("")
             out.append(render_metric_table(cells, models, row_keys, True, "jc", 2, bold_lowest=False))
             out.append("")
         if any(cells.get((m, ds, sl, pl, True)) and cells[(m, ds, sl, pl, True)].interval_width is not None
                for m in models for ds, sl, pl in row_keys):
-            out.append("## Table F | Mean Interval Width (`sl_test/interval_width_mean`)")
+            out.append("### Table F | Mean Interval Width (`sl_test/interval_width_mean`)")
             out.append("")
             out.append("Not bolded -- narrower is only better when the target coverage (Table D) is met.")
             out.append("")
@@ -433,7 +433,7 @@ def render_report(title: str, logs_root: Path, runs: list[Run], cells: dict[tupl
 
     sizes = render_model_sizes(cells, models)
     if sizes.count("\n") > 1:
-        out.append("# Model sizes")
+        out.append("## Model sizes")
         out.append("")
         out.append("Weights come from `parameters/sl/num_params` in each log. For multivariate logs this can "
                     "vary by dataset (different channel counts), not just by (model, L, O); this table shows "
@@ -450,8 +450,9 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--logs-root", required=True, type=Path,
                          help="Directory to walk for log.json files, e.g. 'logs/univariate' or 'logs/multivariate'.")
-    parser.add_argument("--output", required=True, type=Path,
-                         help="Markdown file to write.")
+    parser.add_argument("--output", type=Path, default=None,
+                         help="Markdown file to write. Omit to print the report to stdout instead "
+                              "(diagnostics still go to stderr, so `... > file.md` works too).")
     parser.add_argument("--title", default=None,
                          help="Report title. Defaults to the --logs-root directory name.")
     parser.add_argument("--exclude", action="append", default=[], metavar="SUBSTRING",
@@ -471,9 +472,12 @@ def main() -> None:
     title = args.title or args.logs_root.name.replace("_", " ").title()
     md = render_report(title, args.logs_root, runs, cells)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(md)
-    print(f"Wrote {args.output} ({len(runs)} runs, {len(cells)} aggregated cells).")
+    if args.output is None:
+        print(md)
+    else:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(md)
+        print(f"Wrote {args.output} ({len(runs)} runs, {len(cells)} aggregated cells).", file=sys.stderr)
 
 
 if __name__ == "__main__":
