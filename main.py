@@ -118,7 +118,8 @@ def prompt_setup():
     while True:
         ans = input(
             "Run [u]nivariate (one model per band), [m]ultivariate (one model per "
-            "cell), or [s]eries (DET/PTV single-series) grid? "
+            "cell), [s]eries (DET/PTV single-series), or [h]ybrid (k-cluster "
+            "channel grouping) grid? "
         ).strip().lower()
         if ans in ("u", "uni", "univariate"):
             return "univariate"
@@ -126,7 +127,9 @@ def prompt_setup():
             return "multivariate"
         if ans in ("s", "series", "univariate_series"):
             return "univariate_series"
-        print("Please enter 'u', 'm', or 's'.")
+        if ans in ("h", "hybrid"):
+            return "hybrid"
+        print("Please enter 'u', 'm', 's', or 'h'.")
 
 if __name__ == "__main__":
     # Non-hyperparameter tuning
@@ -137,13 +140,15 @@ if __name__ == "__main__":
     parser.add_argument("--grid", action="store_true",
                         help="Run a full model x dataset x window grid instead of one job.")
     parser.add_argument("--setup",
-                        choices=["univariate", "multivariate", "univariate_series"],
+                        choices=["univariate", "multivariate", "univariate_series", "hybrid"],
                         default=None,
                         help="Grid setup. 'univariate' trains one model per frequency "
                              "band on the multivariate datasets and averages the bands; "
                              "'multivariate' trains one model per cell over all bands; "
-                             "'univariate_series' is the DET/PTV single-series sweep. "
-                             "If omitted in grid mode, you are prompted.")
+                             "'univariate_series' is the DET/PTV single-series sweep; "
+                             "'hybrid' trains one model per cell with a k-cluster "
+                             "channel-grouping head, sweeping k in addition to model/"
+                             "dataset/window. If omitted in grid mode, you are prompted.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Grid mode only: list cells and targets without training.")
     parser.add_argument("--jobs", type=int, default=8,

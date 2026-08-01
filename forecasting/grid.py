@@ -32,8 +32,17 @@ SEED = 69421
 OOM_RETRIES = 2
 
 
-def _memory_profile(model_id, dataset, seq_len):
+def _memory_profile(model_id, dataset, seq_len, hybrid_k=None):
     """(batch_size, accum_steps) override for known memory-heavy cells, or None."""
+    if hybrid_k is not None and model_id in {"EMForecaster", "LSTM"}:
+        # ClusteredHead's per-cluster Linear(size*F, size*pred_len) scales with
+        # cluster-size^2, so at small k the head alone can dwarf the rest of the
+        # model. This only helps activation memory -- if a cell still OOMs after
+        # retries, the head's weights/optimizer state (not activations) are
+        # likely the cause, and the fix is excluding that cell from the sweep
+        # (see forecasting/grids.py's GRIDS["hybrid"] k_values note), not a
+        # smaller batch size.
+        return 64, 8
     if model_id == "EMForecaster" and (
         seq_len >= 336 or dataset == "EMF_2023_university_5_with_PTV"
     ):
@@ -51,6 +60,7 @@ SETUP_PACKAGE = {
     "multivariate": "multivariate",
     "univariate": "multivariate",
     "univariate_series": "univariate",
+    "hybrid": "multivariate",
 }
 
 # Grid name -> the <setup> folder its runs land in under logs/. The names differ
@@ -62,6 +72,7 @@ LOG_SETUP = {
     "multivariate": "multivariate",
     "univariate": PER_CHANNEL_SETUP,
     "univariate_series": "univariate",
+    "hybrid": "hybrid",
 }
 
 
@@ -82,9 +93,10 @@ def args_path(setup, job):
 
 
 def cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(SEED,),
-              logs_dir="logs"):
+              logs_dir="logs", tag=""):
     run_dir = build_run_dir(LOG_SETUP.get(setup, setup), model_id, dataset,
-                            seq_len, pred_len, conf_on=True, logs_dir=logs_dir)
+                            seq_len, pred_len, conf_on=True, logs_dir=logs_dir,
+                            tag=tag)
     for seed in seeds:
         p = os.path.join(run_dir, str(seed), "log.json")
         try:
@@ -130,23 +142,34 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
         )
     load_config, Experiment = setup_modules(setup)
     passed, skipped, failed = [], [], []
-    cells = [(m, d, w)
-             for m in grid_def["models"]
-             for d in grid_def["datasets"]
-             for w in windows]
+    k_values = grid_def.get("k_values")
+    if k_values:
+        cells = [(m, d, w, k)
+                 for m in grid_def["models"]
+                 for d in grid_def["datasets"]
+                 for w in windows
+                 for k in k_values]
+    else:
+        cells = [(m, d, w, None)
+                 for m in grid_def["models"]
+                 for d in grid_def["datasets"]
+                 for w in windows]
     total = len(cells)
 
-    for n, ((label, model_id, job), dataset, (seq_len, pred_len)) in enumerate(cells, 1):
-        tag = f"[{n:2d}/{total}] {label:<12} {dataset}/L{seq_len}/O{pred_len}"
+    for n, ((label, model_id, job), dataset, (seq_len, pred_len), k) in enumerate(cells, 1):
+        k_suffix = f" k={k}" if k is not None else ""
+        cell_tag = f"[{n:2d}/{total}] {label:<12} {dataset}/L{seq_len}/O{pred_len}{k_suffix}"
+        run_tag = f"k{k}" if k is not None else ""
 
-        if cell_done(setup, model_id, dataset, seq_len, pred_len, logs_dir=logs_dir):
-            console.log(f"[SKIP] {tag}")
-            skipped.append(tag)
+        if cell_done(setup, model_id, dataset, seq_len, pred_len, logs_dir=logs_dir,
+                     tag=run_tag):
+            console.log(f"[SKIP] {cell_tag}")
+            skipped.append(cell_tag)
             continue
 
         if dry_run:
-            console.log(f"[DRY ] {tag} -> {job} dataset={dataset} L={seq_len} O={pred_len}")
-            passed.append(tag)
+            console.log(f"[DRY ] {cell_tag} -> {job} dataset={dataset} L={seq_len} O={pred_len}")
+            passed.append(cell_tag)
             continue
 
         try:
@@ -163,14 +186,20 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
             args.exp.seed_list = [SEED]
             args.exp.seed = SEED
             args.exp.time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            profile = _memory_profile(model_id, dataset, seq_len)
+            if k is not None:
+                # Must come after the args.exp.id = "" reset above, or different
+                # k's would collide in the same log directory.
+                args.hybrid.enabled = True
+                args.hybrid.k_clusters = k
+                args.exp.id = run_tag
+            profile = _memory_profile(model_id, dataset, seq_len, hybrid_k=k)
             if profile is not None:
                 args.sl.batch_size, args.sl.accum_steps = profile
                 console.log(
-                    f"[MEM ] {tag} batch_size={args.sl.batch_size} "
+                    f"[MEM ] {cell_tag} batch_size={args.sl.batch_size} "
                     f"x accum {args.sl.accum_steps}"
                 )
-            console.log(f"[RUN ] {tag}")
+            console.log(f"[RUN ] {cell_tag}")
             for attempt in range(OOM_RETRIES + 1):
                 try:
                     Experiment(args).run()
@@ -186,15 +215,15 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     console.log(
-                        f"[OOM ] {tag} retrying with batch_size="
+                        f"[OOM ] {cell_tag} retrying with batch_size="
                         f"{args.sl.batch_size} x accum {args.sl.accum_steps}"
                     )
-            console.log(f"[ OK ] {tag}")
-            passed.append(tag)
+            console.log(f"[ OK ] {cell_tag}")
+            passed.append(cell_tag)
         except Exception as exc:  # keep the grid alive on a bad cell
-            console.log(f"[FAIL] {tag} ({type(exc).__name__}: {exc})")
+            console.log(f"[FAIL] {cell_tag} ({type(exc).__name__}: {exc})")
             console.print_exception()
-            failed.append(tag)
+            failed.append(cell_tag)
         finally:
             _cleanup()
 

@@ -90,6 +90,10 @@ def get_model(args, generator=torch.Generator()):
             eps_revin=args.sl.eps_revin,
             last_state=args.sl.last_state,
             avg_state=args.sl.avg_state,
+            cluster_assignment=(
+                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+            ),
+            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
         )
     elif args.exp.model_id == "Linear":
         model = Linear(
@@ -107,6 +111,10 @@ def get_model(args, generator=torch.Generator()):
             moving_avg=args.dlinear.moving_avg,
             individual=args.dlinear.individual,
             return_head=args.sl.return_head,
+            cluster_assignment=(
+                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+            ),
+            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
         )
     elif args.exp.model_id == "EMForecaster":
         model = EMForecaster(
@@ -128,6 +136,10 @@ def get_model(args, generator=torch.Generator()):
             patch_embed_dim=args.sl.patch_embed_dim,
             independent_patching=args.sl.independent_patching,
             pos_enc=args.sl.pos_enc,
+            cluster_assignment=(
+                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+            ),
+            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
         )
 
     elif args.exp.model_id == "ModernTCN":
@@ -234,6 +246,10 @@ def get_model(args, generator=torch.Generator()):
             revin=args.sl.revin,
             revin_affine=args.sl.revin_affine,
             eps_revin=args.sl.eps_revin,
+            cluster_assignment=(
+                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+            ),
+            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
         )
     elif args.exp.model_id == "ARIMA":
         model = ARIMAForecaster(

@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 # Layers and models
 from forecasting.multivariate.models.dlinear import DLinear
 from forecasting.multivariate.layers.patcher import Patcher
+from forecasting.multivariate.layers.clustered_head import ClusteredHead
 from forecasting.multivariate.models.tsmixer import TSMixer
 
 # Weight initialization
@@ -42,6 +43,8 @@ class EMForecaster(nn.Module):
         patching_on: bool = True,
         num_patches: int = 0,
         return_head: bool = True,
+        cluster_assignment: Optional[List[int]] = None,
+        k_clusters: int = 1,
     ) -> None:
         super(EMForecaster, self).__init__()
 
@@ -84,6 +87,7 @@ class EMForecaster(nn.Module):
         self.patch_dim = patch_dim
         self.patching_on = patching_on
         self.return_head = return_head
+        self.hybrid = cluster_assignment is not None
 
         if self.patching_on:
             if patch_stride == -1:
@@ -136,8 +140,18 @@ class EMForecaster(nn.Module):
         else:
             self.patch_norm = nn.Identity()
 
-        # Base model
-        self.base_model = self.get_base_model()
+        # Base model / hybrid head. The clustered head replaces base_model
+        # entirely when hybrid mode is enabled -- base_model is never built in
+        # that case, since it's structurally single-channel (see forward()).
+        if self.hybrid:
+            self.clustered_head = ClusteredHead(
+                cluster_assignment,
+                k_clusters,
+                self.num_patches * patch_embed_dim,
+                self.pred_len,
+            )
+        else:
+            self.base_model = self.get_base_model()
 
         # Weight initialization
         self.apply(lambda m: xavier_init(m, seed=seed))
@@ -187,12 +201,24 @@ class EMForecaster(nn.Module):
             # # Project + Positional Encoding
             x = x + self.pos_enc  # (B*C, 1, num_patches * patch_embed_dim)
 
-            # Base Model + Linear Head
-            x = self.base_model(x)  # (B*C, 1, pred_len)
+            if self.hybrid:
+                # Unfold the channels back out BEFORE the head: the clustered
+                # head needs to see all channels in a cluster simultaneously,
+                # unlike base_model which is structurally single-channel.
+                # pos_enc is a length-F vector broadcast per row, so adding it
+                # before this reshape (above) is numerically identical to
+                # adding it after.
+                x = x.reshape(
+                    B, C, self.num_patches * self.patch_embed_dim
+                )  # (B, C, num_patches * patch_embed_dim)
+                x = self.clustered_head(x)  # (B, C, pred_len)
+            else:
+                # Base Model + Linear Head
+                x = self.base_model(x)  # (B*C, 1, pred_len)
 
-            # Unfold the channels back out before the per-channel RevIN denorm
-            if self.patching_on:
-                x = x.reshape(B, C, self.pred_len)  # (B, C, pred_len)
+                # Unfold the channels back out before the per-channel RevIN denorm
+                if self.patching_on:
+                    x = x.reshape(B, C, self.pred_len)  # (B, C, pred_len)
 
             # RevOUT
             if self.revout:

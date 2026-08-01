@@ -1,7 +1,10 @@
+from typing import List, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from forecasting.multivariate.layers.dlinear.series_decomp import series_decomp
+from forecasting.multivariate.layers.clustered_head import ClusteredHead
 
 
 class DLinear(nn.Module):
@@ -20,6 +23,8 @@ class DLinear(nn.Module):
         moving_avg=25,
         individual=False,
         return_head=True,
+        cluster_assignment: Optional[List[int]] = None,
+        k_clusters: int = 1,
     ):
         """
         Args:
@@ -29,7 +34,12 @@ class DLinear(nn.Module):
             num_channels (int): Number of input channels (features).
             num_classes (int): Number of classes for classification task.
             moving_avg (int): Window size of moving average.
-            individual (bool): Whether shared model among different variates.
+            individual (bool): Whether shared model among different variates. Ignored
+                when cluster_assignment is given (hybrid mode).
+            cluster_assignment (Optional[List[int]]): Per-channel cluster id for the
+                hybrid k-cluster head. When given, replaces the individual/shared
+                head choice with k_clusters group-specific heads.
+            k_clusters (int): Number of clusters when cluster_assignment is given.
         """
 
         super(DLinear, self).__init__()
@@ -47,8 +57,16 @@ class DLinear(nn.Module):
         self.decomposition = series_decomp(moving_avg)
         self.individual = individual
         self.channels = num_channels
+        self.hybrid = cluster_assignment is not None
 
-        if self.individual:
+        if self.hybrid:
+            self.seasonal_head = ClusteredHead(
+                cluster_assignment, k_clusters, self.seq_len, self.pred_len
+            )
+            self.trend_head = ClusteredHead(
+                cluster_assignment, k_clusters, self.seq_len, self.pred_len
+            )
+        elif self.individual:
             self.Linear_Seasonal = nn.ModuleList()
             self.Linear_Trend = nn.ModuleList()
 
@@ -84,7 +102,10 @@ class DLinear(nn.Module):
         seasonal_init, trend_init = seasonal_init.permute(0, 2, 1), trend_init.permute(
             0, 2, 1
         )
-        if self.individual:
+        if self.hybrid:
+            seasonal_output = self.seasonal_head(seasonal_init)
+            trend_output = self.trend_head(trend_init)
+        elif self.individual:
             seasonal_output = torch.zeros(
                 [seasonal_init.size(0), seasonal_init.size(1), self.pred_len],
                 dtype=seasonal_init.dtype,

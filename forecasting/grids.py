@@ -49,6 +49,15 @@ MV_MODELS = [
 ]
 MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
 
+# The k-cluster hybrid head (forecasting/multivariate/layers/clustered_head.py):
+# partitions channels into k clusters and mixes channels only within a cluster,
+# instead of the fully joint or fully channel-independent extremes. ARIMA has no
+# backbone/head concept (classical per-series fit) and TSMixer's backbone already
+# mixes all channels densely in every layer regardless of any hybrid setting, so
+# a clustered head on top of it would only restrict the final readout, not the
+# actual information flow -- both are excluded here.
+HYBRID_MODELS = [m for m in MV_MODELS if m[1] not in ("ARIMA", "TSMixer")]
+
 SERIES_MODELS = [
     ("DLinear", "DLinear", "rf_emf/dlinear"),
     ("PatchTST", "PatchTST", "rf_emf/patchtst"),
@@ -73,6 +82,18 @@ GRIDS = {
     "univariate_series": {
         "models": SERIES_MODELS, "datasets": SERIES_DATASETS, "windows": WINDOWS,
         "alpha": 0.1,
+    },
+    # k-cluster hybrid channel grouping. Same models/datasets/windows spirit as
+    # "multivariate", plus a k_values sweep dimension. k=1 (fully joint) and
+    # k=num_channels (one independently-trained head per channel) are
+    # deliberately excluded from the main sweep: neither is a parametric match
+    # for any existing baseline already in the multivariate/univariate grids
+    # (ClusteredHead's per-channel heads are independently trained, not
+    # weight-tied like today's channel-independent heads), so treat them as
+    # separate one-off sanity checks rather than grid cells.
+    "hybrid": {
+        "models": HYBRID_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
+        "alpha": 0.1, "k_values": [2, 3, 5, 9],
     },
 }
 

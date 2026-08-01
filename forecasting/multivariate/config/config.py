@@ -775,6 +775,41 @@ class ModernTCN(BaseModel):
     )
 
 
+class Hybrid(BaseModel):
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to use the k-cluster hybrid channel-grouping head. When False, "
+            "every model behaves exactly as before this feature was added. When "
+            "True, the model's final per-channel head is replaced by k_clusters "
+            "group-specific heads, each mixing only the channels assigned to its "
+            "own cluster (k=1 is fully joint, k=num_channels gives each channel its "
+            "own independently-trained head)."
+        ),
+    )
+    k_clusters: int = Field(
+        default=1,
+        description="Number of channel clusters for the hybrid head. Only used when hybrid.enabled=True.",
+    )
+    cluster_method: str = Field(
+        default="kmeans",
+        description="Clustering method used to assign channels to clusters. Options: 'kmeans'.",
+    )
+    cluster_seed: int = Field(
+        default=69421,
+        description="Random seed for the clustering algorithm. Matches the grid's SEED constant (forecasting/grid.py) for determinism.",
+    )
+    cluster_assignment: List[int] = Field(
+        default=[],
+        description=(
+            "Cluster id (0..k_clusters-1) assigned to each channel, in the same "
+            "channel order as sl_test/mse_per_channel. Empty until populated by the "
+            "dataloader from the training split; persisted here so it round-trips "
+            "into the run's resolved args.yaml for reproducibility."
+        ),
+    )
+
+
 class Global(BaseModel):
     exp: Experiment = Experiment()
     data: Data = Data()
@@ -796,6 +831,7 @@ class Global(BaseModel):
     # block silently, with no error and no warning.
     arima: ARIMA = ARIMA()
     conf: Conformal = Conformal()
+    hybrid: Hybrid = Hybrid()
 
 
 def load_config(file_path: str) -> Global:

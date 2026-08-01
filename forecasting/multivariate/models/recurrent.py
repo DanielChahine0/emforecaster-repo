@@ -8,9 +8,10 @@ from mambapy.mamba import MambaConfig
 from forecasting.multivariate.layers.patchtst.revin import RevIN
 from forecasting.multivariate.layers.patchtst.pos_enc import PositionalEncoding
 from forecasting.multivariate.layers.patcher import Patcher
+from forecasting.multivariate.layers.clustered_head import ClusteredHead
 from forecasting.multivariate.utils.weight_init import xavier_init
 
-from typing import Optional
+from typing import List, Optional
 
 
 class RecurrentModel(nn.Module):
@@ -36,6 +37,8 @@ class RecurrentModel(nn.Module):
         last_state=True,
         avg_state=False,
         return_head=True,
+        cluster_assignment: Optional[List[int]] = None,
+        k_clusters: int = 1,
     ):
         super(RecurrentModel, self).__init__()
 
@@ -145,7 +148,14 @@ class RecurrentModel(nn.Module):
 
         head_dim = 2 * head_dim if bidirectional else head_dim
 
-        if head_type == "linear":
+        self.hybrid = cluster_assignment is not None
+        if self.hybrid:
+            if head_type != "linear":
+                raise NotImplementedError(
+                    "hybrid k-cluster head only supports head_type='linear'"
+                )
+            self.head = ClusteredHead(cluster_assignment, k_clusters, head_dim, pred_len)
+        elif head_type == "linear":
             self.head = nn.Linear(head_dim, pred_len)
         elif head_type == "mlp":
             self.head = nn.Sequential(

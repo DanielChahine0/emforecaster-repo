@@ -33,7 +33,10 @@ MODEL_ORDER = [
     "EMForecaster", "DLinear", "TSMixer", "PatchTST",
     "Transformer", "RF_EMF_Transformer", "LSTM", "RF_EMF_LSTM", "ARIMA",
 ]
-DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf2023"]
+DATASET_DISPLAY = {
+    "emf_2023_university_5_with_ptv": "EMF2023 (University-5 w/ PTV)",
+}
+DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
 
 # format is "<N>s" or "<N>min <N>s"
 _TIME_RE = re.compile(r"^(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
@@ -235,7 +238,7 @@ def render_metric_table(cells, models, row_keys, conf, attr, decimals, bold_lowe
             if populated:
                 min_i = min(populated, key=lambda p: p[1])[0]
                 strs[min_i] = f"**{strs[min_i]}**"
-        lines.append(f"| {ds.upper()} | {sl} | {pl} | " + " | ".join(strs) + " |")
+        lines.append(f"| {DATASET_DISPLAY.get(ds, ds.upper())} | {sl} | {pl} | " + " | ".join(strs) + " |")
     return "\n".join(lines)
 
 
@@ -251,7 +254,7 @@ def render_time_table(cells, models, row_keys, conf, attr, formatter) -> str:
         if populated:
             min_i = min(populated, key=lambda p: p[1])[0]
             strs[min_i] = f"**{strs[min_i]}**"
-        lines.append(f"| {ds.upper()} | {sl} | {pl} | " + " | ".join(strs) + " |")
+        lines.append(f"| {DATASET_DISPLAY.get(ds, ds.upper())} | {sl} | {pl} | " + " | ".join(strs) + " |")
     return "\n".join(lines)
 
 
@@ -302,12 +305,12 @@ def replicate_note(cells: dict[tuple, Cell], conf: bool) -> str:
             f"so rows mix cells with different amounts of averaging.")
 
 
-def render_section(title: str, runs: list[Run], cells: dict[tuple, Cell], models: list[str], conf: bool) -> str:
+def render_section(subtitle: str, runs: list[Run], cells: dict[tuple, Cell], models: list[str], conf: bool) -> str:
     row_keys = row_keys_for(cells, conf)
     if not row_keys:
         return ""
 
-    out = [f"## {title}", ""]
+    out = []
     out.append("### Table A | MSE (`sl_test/loss`)")
     out.append("")
     out.append("**Bold** = best (lowest) value in the row, among populated cells.")
@@ -377,19 +380,19 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
         "",
     ]
 
-    without_cp = render_section("1 · Point-Forecasting Performance (without conformal prediction)",
-                                 runs, cells, models, conf=False)
-    if without_cp:
-        out.append(without_cp)
-        out.append("---")
-        out.append("")
-
-    with_cp = render_section("2 · Point-Forecasting Performance (with conformal prediction)",
-                              runs, cells, models, conf=True)
-    if with_cp:
-        out.append(with_cp)
-        out.append("---")
-        out.append("")
+    section_number = 0
+    for subtitle, conf in [
+        ("Point-Forecasting Performance (without conformal prediction)", False),
+        ("Point-Forecasting Performance (with conformal prediction)", True),
+    ]:
+        body = render_section(subtitle, runs, cells, models, conf=conf)
+        if body:
+            section_number += 1
+            out.append(f"## {section_number} · {subtitle}")
+            out.append("")
+            out.append(body)
+            out.append("---")
+            out.append("")
 
     sizes = render_model_sizes(cells, models)
     if sizes.count("\n") > 1:
@@ -405,7 +408,7 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
     return "\n".join(out)
 
 
-DEFAULT_TABLES_FILE = Path(__file__).resolve().parent.parent / "tables.md"
+DEFAULT_TABLES_FILE = Path(__file__).resolve().parent / "tables.md"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
 # only top-level '# ' headings; everything a report emits is '##' or deeper

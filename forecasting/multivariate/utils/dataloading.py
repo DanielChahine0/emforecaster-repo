@@ -1199,6 +1199,23 @@ def get_loaders(
         # difference across the Italy datasets automatically.
         if not args.data.univariate:
             args.data.num_channels = int(train_data.shape[0])
+
+            # Cluster assignment must be computed once from the training split and
+            # reused identically at train/val/test time. get_loaders() re-reads the
+            # CSV and re-derives train_data from scratch on every call (train, val,
+            # test loader_types), so only compute when empty to avoid a KMeans
+            # refit potentially disagreeing across calls.
+            if args.hybrid.enabled and not args.hybrid.cluster_assignment:
+                from forecasting.multivariate.utils.clustering import (
+                    compute_channel_clusters,
+                )
+
+                args.hybrid.cluster_assignment = compute_channel_clusters(
+                    train_data,
+                    k=args.hybrid.k_clusters,
+                    method=args.hybrid.cluster_method,
+                    seed=args.hybrid.cluster_seed,
+                )
     else:
         raise ValueError(f"Invalid dataset name: {args.data.dataset}")
 

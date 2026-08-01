@@ -187,6 +187,14 @@ class Experiment:
             self.logger["parameters/data/seq_len"] = loaders[-1]
             self.print_master(f"Sequence set to the median: {self.args.data.seq_len}.")
 
+        # init_logger() dumps args.yaml before dataloading runs, so the
+        # hybrid.cluster_assignment computed inside get_loaders() (unlike
+        # num_channels, not trivially re-derivable without re-running the
+        # clustering) would otherwise always serialize as []. Re-dump once it's
+        # populated so the persisted args.yaml is reproducible.
+        if self.args.hybrid.enabled and self.args.hybrid.cluster_assignment:
+            global_to_yaml(self.args, os.path.join(self.log_dir, "args.yaml"))
+
     def free_memory(self):
         for k in ["train", "val", "test"]:
             if hasattr(self, f"{k}_loader"):
@@ -257,7 +265,13 @@ class Experiment:
                 # one channel at a time. Split them into logs/multivariate/ and
                 # logs/univariate (per channel)/ so a per-band sweep cannot be
                 # mistaken for, or collide with, the joint results.
-                setup=PER_CHANNEL_SETUP if self.args.data.single_channel else "multivariate",
+                setup=(
+                    "hybrid"
+                    if self.args.hybrid.enabled
+                    else PER_CHANNEL_SETUP
+                    if self.args.data.single_channel
+                    else "multivariate"
+                ),
                 model_id=self.args.exp.model_id,
                 dataset=self.args.data.dataset,
                 seq_len=self.args.data.seq_len,
