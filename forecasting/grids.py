@@ -233,6 +233,53 @@ def select_seeds(spec):
     return [SEED + i for i in range(count)]
 
 
+def select_k_values(spec, available):
+    """The cluster counts a hybrid grid sweeps, for a --k value.
+
+    `spec` None/empty -> `available` unchanged (None for a grid with no k
+    dimension, which is what tells run_grid not to add k to its cells at all).
+    Otherwise a single count ('5') or a comma-separated list ('1,2') selects
+    exactly those, deduped and run in ascending order.
+
+    Unlike select_windows, a requested k need NOT be one of the grid's own
+    k_values: the endpoints k=1 and k=num_channels are deliberately outside the
+    sweep (see GRIDS["hybrid"]) precisely so they can be run as one-offs, and
+    '--k 1' has to reach them without editing this file. run_grid logs any such
+    off-grid value so it is visible in the run's own output.
+
+    Raises ValueError on a non-positive or malformed k, and on --k against a grid
+    that has no k dimension, so a typo is a clean error rather than a sweep that
+    silently trains the wrong thing.
+    """
+    if spec is None or spec == "":
+        return list(available) if available else None
+    if not available:
+        raise ValueError(
+            "--k only applies to a grid with a k dimension (currently just "
+            "'hybrid'); this grid has none"
+        )
+    ks = []
+    for token in str(spec).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            k = int(token)
+        except ValueError:
+            raise ValueError(
+                f"bad --k value {token!r}; use a count like '5' or a list "
+                f"like '1,2'"
+            )
+        if k < 1:
+            raise ValueError(f"--k must be at least 1, got {k}")
+        ks.append(k)
+    if not ks:
+        raise ValueError("empty --k value")
+    # Duplicates would plan the same cell twice; the second pass would skip on the
+    # resume check, but the plan and the [n/total] counts would still lie.
+    return sorted(dict.fromkeys(ks))
+
+
 def _is_band(column):
     """Whether a processed-CSV column becomes a model channel.
 

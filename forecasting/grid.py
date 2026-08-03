@@ -122,7 +122,8 @@ def _cleanup():
         pass
 
 
-def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None):
+def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
+             k_values=None):
     """Run every cell of the grid for one setup. Returns the list of failed runs.
 
     logs_dir only affects the resume check; Experiment.run() always writes under
@@ -130,6 +131,8 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None):
     windows overrides the grid's window list (already validated by the caller);
     None runs all of them. seeds is the list of seeds each cell is trained on
     (also caller-validated); None means just SEED, the pre---seeds behaviour.
+    k_values overrides a hybrid grid's cluster counts (also caller-validated);
+    None means the grid's own k_values, i.e. the pre---k behaviour.
     """
     console = Console()
     grid_def = GRIDS[setup]
@@ -146,7 +149,16 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None):
         )
     load_config, Experiment = setup_modules(setup)
     passed, skipped, failed = [], [], []
-    k_values = grid_def.get("k_values")
+    grid_k = grid_def.get("k_values")
+    k_values = grid_k if k_values is None else list(k_values)
+    # --k may ask for a k outside the declared sweep on purpose (k=1 and
+    # k=num_channels are excluded from GRIDS["hybrid"] as one-off sanity checks).
+    # Say so, so an off-grid cell is never mistaken for part of the sweep when
+    # the results are read back later.
+    off_grid = [k for k in (k_values or []) if k not in (grid_k or [])]
+    if off_grid:
+        console.log(f"[NOTE ] k={', '.join(str(k) for k in off_grid)} outside the "
+                    f"{setup} grid's k_values {grid_k}; running as a one-off")
     if k_values:
         cells = [(m, d, w, k)
                  for m in grid_def["models"]
@@ -255,6 +267,9 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None):
         "setup": setup,
         "finished": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         "seeds": seeds,
+        # None on every non-hybrid grid; recorded so a --k run's report says which
+        # cluster counts it actually covered rather than implying the full sweep.
+        "k_values": k_values,
         "passed": passed,
         "skipped": skipped,
         "failed": failed,

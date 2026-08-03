@@ -159,6 +159,15 @@ if __name__ == "__main__":
                              "instead of all four. Format 'LxO' (e.g. '336x96') "
                              "or 'L336_O96'; comma-separate for several. Omit to "
                              "run every window.")
+    parser.add_argument("--k", type=str, default=None,
+                        help="Hybrid grid only: restrict to specific cluster "
+                             "count(s) instead of every k in the grid. A single "
+                             "value ('5') or a comma-separated list ('1,2'). A k "
+                             "outside the grid's own k_values is allowed, so "
+                             "'--k 1' runs the fully joint head without editing "
+                             "forecasting/grids.py; k must be <= the dataset's "
+                             "channel count (27 or 29) or the cell fails at model "
+                             "build with an empty cluster.")
     parser.add_argument("--seeds", type=str, default=None,
                         help="Grid mode only: how many seeds to train each cell "
                              "on (default 1). A count counts up from 69421, so "
@@ -177,13 +186,15 @@ if __name__ == "__main__":
         print("Running in venv test mode")
         # Add any venv test specific code here
     elif args.grid or args.job_name is None:
-        from forecasting.grids import GRIDS, select_seeds, select_windows
+        from forecasting.grids import (GRIDS, select_k_values, select_seeds,
+                                       select_windows)
         setup = args.setup or prompt_setup()
-        # Validate --window/--seeds against this grid up front so a typo is a clean
-        # error, not a mid-run traceback (or a silently empty sweep).
+        # Validate --window/--seeds/--k against this grid up front so a typo is a
+        # clean error, not a mid-run traceback (or a silently empty sweep).
         try:
             windows = select_windows(args.window, GRIDS[setup]["windows"])
             seeds = select_seeds(args.seeds)
+            k_values = select_k_values(args.k, GRIDS[setup].get("k_values"))
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(2)
@@ -197,7 +208,7 @@ if __name__ == "__main__":
         else:
             from forecasting.grid import run_grid
             failed = run_grid(setup, dry_run=args.dry_run, windows=windows,
-                              seeds=seeds)
+                              seeds=seeds, k_values=k_values)
         sys.exit(1 if failed else 0)
     else:
         if args.ablation is not None:

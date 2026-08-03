@@ -183,6 +183,59 @@ def test_run_grid_dry_run_lists_all_hybrid_cells(tmp_path):
     assert failed == []
 
 
+def test_select_k_values_defaults_to_the_grid(tmp_path):
+    assert grids.select_k_values(None, grids.GRIDS["hybrid"]["k_values"]) == [2, 3, 5, 9]
+    assert grids.select_k_values("", grids.GRIDS["hybrid"]["k_values"]) == [2, 3, 5, 9]
+    # A grid with no k dimension stays k-less, which is what tells run_grid to
+    # leave k out of its cells entirely.
+    assert grids.select_k_values(None, grids.GRIDS["multivariate"].get("k_values")) is None
+
+
+def test_select_k_values_parses_single_and_list():
+    ks = grids.GRIDS["hybrid"]["k_values"]
+    assert grids.select_k_values("5", ks) == [5]
+    assert grids.select_k_values("3,2", ks) == [2, 3]        # sorted
+    assert grids.select_k_values("2,2,3", ks) == [2, 3]      # deduped
+
+
+def test_select_k_values_allows_off_grid_k():
+    # k=1 is deliberately not in the sweep; --k 1 must still reach it, since that
+    # is the whole point of being able to run the endpoints as one-offs.
+    assert 1 not in grids.GRIDS["hybrid"]["k_values"]
+    assert grids.select_k_values("1", grids.GRIDS["hybrid"]["k_values"]) == [1]
+
+
+def test_select_k_values_rejects_bad_values():
+    ks = grids.GRIDS["hybrid"]["k_values"]
+    for bad in ("0", "-3", "two", "2,x", ","):
+        with pytest.raises(ValueError):
+            grids.select_k_values(bad, ks)
+
+
+def test_select_k_values_rejects_k_on_a_grid_without_one():
+    with pytest.raises(ValueError):
+        grids.select_k_values("3", grids.GRIDS["multivariate"].get("k_values"))
+
+
+def test_run_grid_k_values_override_restricts_the_cells(tmp_path, capsys):
+    grid.run_grid("hybrid", dry_run=True, logs_dir=str(tmp_path),
+                  windows=[(336, 96)], k_values=[1])
+    out = capsys.readouterr().out
+    assert "k=1" in out
+    for k in grids.GRIDS["hybrid"]["k_values"]:
+        assert f"k={k}" not in out
+    # one cell per model x dataset, and no k dimension left over
+    assert out.count("[DRY ]") == len(grids.HYBRID_MODELS) * len(grids.MV_DATASETS)
+
+
+def test_run_grid_without_k_values_runs_the_whole_sweep(tmp_path, capsys):
+    grid.run_grid("hybrid", dry_run=True, logs_dir=str(tmp_path),
+                  windows=[(336, 96)], k_values=None)
+    out = capsys.readouterr().out
+    assert out.count("[DRY ]") == (len(grids.HYBRID_MODELS) * len(grids.MV_DATASETS)
+                                   * len(grids.GRIDS["hybrid"]["k_values"]))
+
+
 def test_non_hybrid_grids_unaffected_by_k_dimension(tmp_path):
     # multivariate/univariate_series have no k_values key, so run_grid's k
     # dimension must be a no-op for them (cell count, tags, everything unchanged).
