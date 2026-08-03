@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from rich.console import Console
 from rich.table import Table
 
-from forecasting.grid import MARKER, SEED
+from forecasting.grid import MARKER, SEED, _memory_profile
 from forecasting.grids import GRIDS, dataset_num_channels
 from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 
@@ -75,6 +75,17 @@ def cell_dir(model_id, dataset, seq_len, pred_len, logs_dir="logs"):
                          conf_on=True, logs_dir=logs_dir)
 
 
+def aggregate_name(seed=SEED):
+    """Filename for a cell's aggregate, which is per seed.
+
+    The canonical seed keeps the bare 'aggregate.json' every cell already on disk
+    uses, so nothing has to be re-read or renamed. Seeds added by --seeds get
+    their own file: a cell dir holds all of its seeds' band runs, so one name for
+    all of them would leave the last seed aggregated overwriting the rest.
+    """
+    return "aggregate.json" if seed == SEED else f"aggregate_seed{seed}.json"
+
+
 def channel_run_dir(model_id, dataset, seq_len, pred_len, channel, logs_dir="logs"):
     return build_run_dir(LOG_SETUP, model_id, dataset, seq_len, pred_len,
                          conf_on=True, tag=channel_tag(channel), logs_dir=logs_dir)
@@ -107,12 +118,18 @@ def channel_done(model_id, dataset, seq_len, pred_len, channel, seed=SEED,
 
 
 def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
-                     workers=None):
+                     workers=None, model_id=None):
     """Config overrides turning a joint multivariate job into one band's run.
 
     `workers` overrides the dataloader worker count that hardware.normalize_config
     picked for a solo run; main.py applies the ablation after that call, so this
     wins.
+
+    `model_id`, when given, applies the same batch_size/accum_steps mitigation
+    grid.py uses for the joint grid's known memory-heavy cells (e.g. EMForecaster
+    at seq_len >= 336). Without it, `jobs` concurrent band trainings each try to
+    allocate a full-batch cell's worth of activations on one shared GPU -- exactly
+    what a solo joint run is already sized to the edge of.
     """
     ablation = {
         "global.data.dataset": dataset,
@@ -140,14 +157,18 @@ def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
     }
     if workers is not None:
         ablation["global.data.num_workers"] = workers
+    if model_id is not None:
+        profile = _memory_profile(model_id, dataset, seq_len)
+        if profile is not None:
+            ablation["global.sl.batch_size"], ablation["global.sl.accum_steps"] = profile
     return ablation
 
 
 def run_channel(job, dataset, seq_len, pred_len, channel, alpha, seed=SEED,
-                workers=None, threads=None):
+                workers=None, threads=None, model_id=None):
     """Train one band in its own process. Returns (ok, error_tail)."""
     ablation = channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed,
-                                workers=workers)
+                                workers=workers, model_id=model_id)
     cmd = [sys.executable, os.path.join(_REPO_ROOT, "main.py"), job,
            "--ablation", json.dumps(ablation)]
     env = dict(os.environ)
@@ -223,22 +244,26 @@ def aggregate_cell(model_id, dataset, seq_len, pred_len, num_channels, seed=SEED
     if write and summary["channels_complete"]:
         target = cell_dir(model_id, dataset, seq_len, pred_len, logs_dir)
         os.makedirs(target, exist_ok=True)
-        with open(os.path.join(target, "aggregate.json"), "w") as f:
+        with open(os.path.join(target, aggregate_name(seed)), "w") as f:
             json.dump(summary, f, indent=2)
     return summary
 
 
 def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="logs",
-                         windows=None):
+                         windows=None, seeds=None):
     """Run every band of every cell, then aggregate. Returns the failed bands.
 
     windows overrides the grid's window list (already validated by the caller);
-    None runs all of them.
+    None runs all of them. seeds is the list of seeds each band is trained on
+    (also caller-validated); None means just SEED, the pre---seeds behaviour.
+    Note that a seed here multiplies *band* runs, not cells: a second seed on the
+    full grid is another 27/29 trainings per cell.
     """
     console = Console()
     grid_def = GRIDS[setup]
     alpha = grid_def["alpha"]
     windows = grid_def["windows"] if windows is None else windows
+    seeds = [SEED] if seeds is None else list(seeds)
     channels_by_dataset = {d: dataset_num_channels(d) for d in grid_def["datasets"]}
 
     cells = [(m, d, w)
@@ -246,24 +271,36 @@ def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="lo
              for d in grid_def["datasets"]
              for w in windows]
 
-    # Flatten every (cell, band) into one work list so the pool stays saturated.
-    # Draining a cell before starting the next would idle workers on that cell's
-    # stragglers, once per cell, 60 times over.
+    # Flatten every (seed, cell, band) into one work list so the pool stays
+    # saturated. Draining a cell before starting the next would idle workers on
+    # that cell's stragglers, once per cell, 60 times over. Seed-major for the
+    # same reason run_grid is: an interrupted sweep leaves a complete grid at one
+    # seed rather than a handful of cells with error bars.
     work, skipped = [], 0
-    for (label, model_id, job), dataset, (seq_len, pred_len) in cells:
-        for channel in range(channels_by_dataset[dataset]):
-            if channel_done(model_id, dataset, seq_len, pred_len, channel,
-                            logs_dir=logs_dir):
-                skipped += 1
-                continue
-            work.append((label, model_id, job, dataset, seq_len, pred_len, channel))
+    for seed in seeds:
+        for (label, model_id, job), dataset, (seq_len, pred_len) in cells:
+            for channel in range(channels_by_dataset[dataset]):
+                if channel_done(model_id, dataset, seq_len, pred_len, channel,
+                                seed=seed, logs_dir=logs_dir):
+                    skipped += 1
+                    continue
+                work.append((label, model_id, job, dataset, seq_len, pred_len,
+                             channel, seed))
+
+    def _band_tag(dataset, seq_len, pred_len, channel, seed):
+        # Label the seed only when there is more than one, so an ordinary sweep's
+        # log lines do not all carry the same constant.
+        seed_suffix = f" seed={seed}" if len(seeds) > 1 else ""
+        return (f"{dataset}/L{seq_len}/O{pred_len}/{channel_tag(channel)}"
+                f"{seed_suffix}")
 
     workers, threads = worker_budget(jobs)
-    total_bands = sum(channels_by_dataset[d] for _, d, _ in cells)
+    total_bands = sum(channels_by_dataset[d] for _, d, _ in cells) * len(seeds)
     console.log(f"===== {setup} per-channel grid =====")
     console.log(f"  cells:    {len(cells)} ({len(grid_def['models'])} models x "
                 f"{len(grid_def['datasets'])} datasets x {len(windows)} windows)")
     console.log(f"  bands:    {dict(channels_by_dataset)}")
+    console.log(f"  seeds:    {len(seeds)} ({', '.join(str(s) for s in seeds)})")
     console.log(f"  runs:     {total_bands} total, {skipped} already complete, "
                 f"{len(work)} to run")
     console.log(f"  parallel: {jobs} concurrent band trainings "
@@ -271,28 +308,30 @@ def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="lo
                 f"{os.cpu_count()} cores)")
 
     if dry_run:
-        for label, model_id, job, dataset, seq_len, pred_len, channel in work:
-            console.log(f"[DRY ] {label:<12} {dataset}/L{seq_len}/O{pred_len}/"
-                        f"{channel_tag(channel)} -> {job}")
+        for label, model_id, job, dataset, seq_len, pred_len, channel, seed in work:
+            console.log(f"[DRY ] {label:<12} "
+                        f"{_band_tag(dataset, seq_len, pred_len, channel, seed)} "
+                        f"-> {job}")
         console.log(f"[DRY ] {len(work)} band runs planned")
         return []
 
     failed, done = [], 0
 
     def _train(item):
-        label, model_id, job, dataset, seq_len, pred_len, channel = item
+        label, model_id, job, dataset, seq_len, pred_len, channel, seed = item
         ok, err = run_channel(job, dataset, seq_len, pred_len, channel, alpha,
-                              workers=workers, threads=threads)
+                              seed=seed, workers=workers, threads=threads,
+                              model_id=model_id)
         return item, ok, err
 
     # Threads, not processes: each one only blocks on subprocess.run, so the GIL
     # is irrelevant and max_workers is exactly the training concurrency.
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         for item, ok, err in pool.map(_train, work):
-            label, model_id, job, dataset, seq_len, pred_len, channel = item
+            label, model_id, job, dataset, seq_len, pred_len, channel, seed = item
             done += 1
             tag = (f"[{done:4d}/{len(work)}] {label:<12} "
-                   f"{dataset}/L{seq_len}/O{pred_len}/{channel_tag(channel)}")
+                   f"{_band_tag(dataset, seq_len, pred_len, channel, seed)}")
             if ok:
                 console.log(f"[ OK ] {tag}")
             else:
@@ -304,25 +343,37 @@ def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="lo
     console.log("")
     console.log(f"===== {setup} per-channel grid summary =====")
     table = Table(show_header=True, header_style="bold")
-    for column in ("model", "dataset", "window", "bands", "MSE (mean)", "MAE (mean)"):
+    columns = ["model", "dataset", "window"]
+    if len(seeds) > 1:
+        columns.append("seed")
+    columns += ["bands", "MSE (mean)", "MAE (mean)"]
+    for column in columns:
         table.add_column(column)
 
+    # One aggregate per (cell, seed): a cell dir holds every seed's band runs, so
+    # averaging across seeds here would silently mix them into one number.
     incomplete = []
-    for (label, model_id, job), dataset, (seq_len, pred_len) in cells:
-        summary = aggregate_cell(model_id, dataset, seq_len, pred_len,
-                                 channels_by_dataset[dataset], logs_dir=logs_dir)
-        if not summary["complete"]:
-            incomplete.append(
-                f"{label} {dataset}/L{seq_len}/O{pred_len} "
-                f"({summary['channels_complete']}/{summary['num_channels']} bands)"
-            )
-        mse, mae = summary["mse_mean"], summary["mae_mean"]
-        table.add_row(
-            label, dataset, f"L{seq_len}_O{pred_len}",
-            f"{summary['channels_complete']}/{summary['num_channels']}",
-            f"{mse:.6f}" if mse is not None else "-",
-            f"{mae:.6f}" if mae is not None else "-",
-        )
+    for seed in seeds:
+        for (label, model_id, job), dataset, (seq_len, pred_len) in cells:
+            summary = aggregate_cell(model_id, dataset, seq_len, pred_len,
+                                     channels_by_dataset[dataset], seed=seed,
+                                     logs_dir=logs_dir)
+            seed_suffix = f" seed={seed}" if len(seeds) > 1 else ""
+            if not summary["complete"]:
+                incomplete.append(
+                    f"{label} {dataset}/L{seq_len}/O{pred_len}{seed_suffix} "
+                    f"({summary['channels_complete']}/{summary['num_channels']} bands)"
+                )
+            mse, mae = summary["mse_mean"], summary["mae_mean"]
+            row = [label, dataset, f"L{seq_len}_O{pred_len}"]
+            if len(seeds) > 1:
+                row.append(str(seed))
+            row += [
+                f"{summary['channels_complete']}/{summary['num_channels']}",
+                f"{mse:.6f}" if mse is not None else "-",
+                f"{mae:.6f}" if mae is not None else "-",
+            ]
+            table.add_row(*row)
     console.print(table)
 
     console.log(f"  band runs failed: {len(failed)}")
@@ -332,6 +383,7 @@ def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="lo
     console.log(f"  incomplete cells: {len(incomplete)}")
     for cell in incomplete:
         console.log(f"    - {cell}")
+    names = ", ".join(aggregate_name(s) for s in seeds)
     console.log(f"  per-cell aggregates written to {logs_dir}/{LOG_SETUP}/"
-                "<model>/<dataset>/L<seq>_O<pred>_cp/aggregate.json")
+                f"<model>/<dataset>/L<seq>_O<pred>_cp/{names}")
     return failed

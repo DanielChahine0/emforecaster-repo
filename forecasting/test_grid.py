@@ -1,7 +1,33 @@
 import json
 import os
+import types
 
 from forecasting import grid, grids
+
+
+def _fake_load_config(path):
+    """A config with just the attributes run_grid overwrites, so no torch needed."""
+    exp = types.SimpleNamespace(model_id="DLinear", mps=False, gpu_id=0, compile=False,
+                                neptune=True, id="x", ablation_id=1, seed_list=[],
+                                seed=0, time="")
+    data = types.SimpleNamespace(dataset="", seq_len=0, pred_len=0, num_workers=0,
+                                 pin_memory=False)
+    conf = types.SimpleNamespace(conf=False, alpha=0.0)
+    sl = types.SimpleNamespace(batch_size=0)
+    hybrid = types.SimpleNamespace(enabled=False, k_clusters=0)
+    return types.SimpleNamespace(exp=exp, data=data, conf=conf, sl=sl, hybrid=hybrid)
+
+
+def _fake_experiment(on_run):
+    """Experiment stand-in calling on_run(args) instead of training."""
+    class FakeExperiment:
+        def __init__(self, args):
+            self.args = args
+
+        def run(self):
+            return on_run(self.args)
+
+    return FakeExperiment
 
 
 def test_cell_done_false_when_no_log(tmp_path):
@@ -36,10 +62,12 @@ def test_grid_model_ids_match_job_configs():
             assert args.exp.model_id == model_id, f"{setup} {job}: {args.exp.model_id} != {model_id}"
 
 
-# The two comparable grids share MV_MODELS (6 models x 3 datasets x 4 windows);
-# univariate_series has its own 5-model list. Spelled out rather than derived
-# from len(models), so a model silently dropped from a grid fails here.
-EXPECTED_CELLS = {"multivariate": 72, "univariate": 72, "univariate_series": 60}
+# multivariate is MV_MODELS (6 models x 3 datasets x 4 windows). The per-band
+# univariate grid runs those same six plus PatchTST, which was dropped from the
+# joint sweep on 2026-07-24 but still runs one band at a time, so it is one model
+# wider. univariate_series has its own 5-model list. Spelled out rather than
+# derived from len(models), so a model silently dropped from a grid fails here.
+EXPECTED_CELLS = {"multivariate": 72, "univariate": 84, "univariate_series": 60}
 
 
 def test_grid_cell_counts():
@@ -74,9 +102,13 @@ def test_model_tuples_are_label_id_job():
 
 def test_univariate_grid_mirrors_multivariate_cells():
     # The per-band grid is only interpretable if its cells line up with the joint
-    # grid's, so it must share the same models, datasets and windows.
+    # grid's, so every multivariate model/dataset/window must have a per-band
+    # counterpart. PatchTST is the one deliberate extra: it left the joint sweep
+    # on 2026-07-24 but still runs per band, so it has no multivariate cell
+    # beside it and every other per-band model does.
     uni, mv = grids.GRIDS["univariate"], grids.GRIDS["multivariate"]
-    assert uni["models"] == mv["models"]
+    assert [m for m in uni["models"] if m in mv["models"]] == mv["models"]
+    assert [m for m in uni["models"] if m not in mv["models"]] == [grids.PATCHTST_MODEL]
     assert uni["datasets"] == mv["datasets"]
     assert uni["windows"] == mv["windows"]
     assert uni["per_channel"] is True
@@ -146,6 +178,83 @@ def test_run_grid_window_filter_limits_cells(tmp_path):
     assert failed == []
 
 
+def test_select_seeds_default_is_the_canonical_seed_only():
+    # No --seeds must reproduce the pre-flag behaviour exactly, or every existing
+    # run on disk stops matching the resume check.
+    assert grids.select_seeds(None) == [grid.SEED]
+
+
+def test_select_seeds_counts_up_from_the_canonical_seed():
+    # The canonical seed has to come first so a multi-seed sweep resumes the runs
+    # already on disk instead of training a fresh set beside them.
+    assert grids.select_seeds(3) == [grid.SEED, grid.SEED + 1, grid.SEED + 2]
+    assert grids.select_seeds("3") == grids.select_seeds(3)
+
+
+def test_select_seeds_takes_an_explicit_list_and_dedupes():
+    assert grids.select_seeds("69422,69423") == [69422, 69423]
+    assert grids.select_seeds("69421,69421") == [69421]
+
+
+def test_select_seeds_rejects_bad_values():
+    for spec, expected in ((0, "at least 1"), (-2, "at least 1"), ("x", "bad --seeds")):
+        try:
+            grids.select_seeds(spec)
+        except ValueError as exc:
+            assert expected in str(exc), f"{spec!r}: {exc}"
+        else:
+            raise AssertionError(f"--seeds {spec!r} should be rejected")
+
+
+def test_run_grid_trains_every_cell_once_per_seed(tmp_path, monkeypatch):
+    runs = []
+
+    def fake_run(args):
+        runs.append((args.data.dataset, args.data.seq_len, args.data.pred_len,
+                     args.exp.seed))
+
+    monkeypatch.setattr(grid, "setup_modules",
+                        lambda setup: (_fake_load_config, _fake_experiment(fake_run)))
+    windows = [(336, 96)]
+    seeds = [grid.SEED, grid.SEED + 1]
+    grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path),
+                  windows=windows, seeds=seeds)
+
+    cells = len(grids.GRIDS["multivariate"]["models"]) * 3 * len(windows)
+    assert len(runs) == cells * len(seeds)
+    # Each seed covered the whole grid, and seed_list followed exp.seed rather
+    # than staying on the config's default.
+    for seed in seeds:
+        assert sum(1 for r in runs if r[3] == seed) == cells
+
+
+def test_run_grid_runs_only_the_seeds_not_already_complete(tmp_path, monkeypatch):
+    # A cell complete at the canonical seed must not retrain when a second seed
+    # is added -- resume is per (cell, seed), not per cell.
+    run_dir = grid.build_run_dir("multivariate", "DLinear", "ED2022", 336, 96,
+                                 conf_on=True, logs_dir=str(tmp_path))
+    seed_dir = os.path.join(run_dir, str(grid.SEED))
+    os.makedirs(seed_dir)
+    with open(os.path.join(seed_dir, "log.json"), "w") as f:
+        json.dump({grid.MARKER: 0.42}, f)
+
+    runs = []
+    monkeypatch.setattr(
+        grid, "setup_modules",
+        lambda setup: (_fake_load_config,
+                       _fake_experiment(lambda args: runs.append(args.exp.seed))))
+    windows = [(336, 96)]
+    seeds = [grid.SEED, grid.SEED + 1]
+    grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path),
+                  windows=windows, seeds=seeds)
+
+    cells = len(grids.GRIDS["multivariate"]["models"]) * 3 * len(windows)
+    # The one complete (cell, seed) was skipped; the same cell's second seed and
+    # every other cell still ran.
+    assert runs.count(grid.SEED) == cells - 1
+    assert runs.count(grid.SEED + 1) == cells
+
+
 def test_run_grid_refuses_per_channel_setup():
     # Running the per-band grid through the joint driver would silently train the
     # wrong thing, so it must raise instead.
@@ -164,24 +273,11 @@ def test_run_grid_dry_run_lists_all_cells(tmp_path):
 
 
 def test_run_grid_records_failures_and_continues(tmp_path, monkeypatch):
-    import types as _t
+    def explode(args):
+        raise RuntimeError("boom")
 
-    def fake_load_config(path):
-        exp = _t.SimpleNamespace(model_id="DLinear", mps=False, gpu_id=0, compile=False,
-                                 neptune=True, id="x", ablation_id=1, seed_list=[], seed=0, time="")
-        data = _t.SimpleNamespace(dataset="", seq_len=0, pred_len=0, num_workers=0, pin_memory=False)
-        conf = _t.SimpleNamespace(conf=False, alpha=0.0)
-        sl = _t.SimpleNamespace(batch_size=0)
-        return _t.SimpleNamespace(exp=exp, data=data, conf=conf, sl=sl)
-
-    class FakeExperiment:
-        def __init__(self, args):
-            self.args = args
-
-        def run(self):
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(grid, "setup_modules", lambda setup: (fake_load_config, FakeExperiment))
+    monkeypatch.setattr(grid, "setup_modules",
+                        lambda setup: (_fake_load_config, _fake_experiment(explode)))
     failed = grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path))
     # Every cell raised, but the grid kept going and recorded them all as failed.
     assert len(failed) == EXPECTED_CELLS["multivariate"]

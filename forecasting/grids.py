@@ -25,6 +25,12 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 WINDOWS = [(192, 96), (192, 336), (336, 96), (336, 336)]
 
+# The grid's canonical seed. Every run currently on disk sits under it, so it has
+# to stay first in any multi-seed list: a --seeds sweep then resumes the work
+# already done and only trains the seeds it adds. Extra seeds continue the
+# consecutive block the job configs already use (seed_list: [69421, 69422, ...]).
+SEED = 69421
+
 # Job names must start with "rf_emf_mv": run_grid resolves the config in-process
 # and ignores the prefix, but the per-band driver shells out to main.py, which
 # picks forecasting.multivariate only on job_name.startswith("rf_emf_mv").
@@ -32,7 +38,8 @@ WINDOWS = [(192, 96), (192, 336), (336, 96), (336, 336)]
 # PatchTST was dropped from the sweep on 2026-07-24 when LSTM and ARIMA were
 # added; its 12 completed multivariate cells stay on disk under
 # logs/multivariate/PatchTST/ and remain valid, they are simply no longer part of
-# the grid. Re-add the tuple to bring them back.
+# the grid. Re-add the tuple here to bring it back for "multivariate" too --
+# it already runs in the per-band "univariate" grid below via PATCHTST_MODEL.
 MV_MODELS = [
     ("DLinear", "DLinear", "rf_emf_mv/dlinear"),
     ("TSMixer", "TSMixer", "rf_emf_mv/tsmixer"),
@@ -48,6 +55,12 @@ MV_MODELS = [
     ("ARIMA", "ARIMA", "rf_emf_mv/arima"),
 ]
 MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
+
+# PatchTST kept out of MV_MODELS (so the joint "multivariate" grid stays as
+# dropped on 2026-07-24) but included in the per-band "univariate" grid, which
+# reuses this same rf_emf_mv/patchtst job config one band at a time.
+PATCHTST_MODEL = ("PatchTST", "PatchTST", "rf_emf_mv/patchtst")
+UNIVARIATE_MODELS = [MV_MODELS[0], PATCHTST_MODEL] + MV_MODELS[1:]
 
 # The k-cluster hybrid head (forecasting/multivariate/layers/clustered_head.py):
 # partitions channels into k clusters and mixes channels only within a cluster,
@@ -76,8 +89,8 @@ GRIDS = {
     # cell beside it. per_channel is what makes forecasting/perchannel.py fan a
     # cell out into one run per band instead of training it once.
     "univariate": {
-        "models": MV_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS, "alpha": 0.1,
-        "per_channel": True,
+        "models": UNIVARIATE_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
+        "alpha": 0.1, "per_channel": True,
     },
     "univariate_series": {
         "models": SERIES_MODELS, "datasets": SERIES_DATASETS, "windows": WINDOWS,
@@ -145,6 +158,50 @@ def select_windows(spec, available):
             f"requested window(s) {pretty} not in grid windows ({have})"
         )
     return [w for w in available if w in requested]
+
+
+def select_seeds(spec):
+    """The seeds every cell of a grid is trained on, for a --seeds value.
+
+    `spec` None -> just [SEED], i.e. exactly what the grids did before --seeds
+    existed. An integer count N -> the first N seeds counting up from SEED, so
+    N=3 is [69421, 69422, 69423]. A comma-separated list of integers is taken
+    literally instead, for re-running one specific seed.
+
+    Raises ValueError on a non-positive count or a malformed token, so a typo is
+    a clean error rather than a sweep that silently trains nothing.
+    """
+    if spec is None or spec == "":
+        return [SEED]
+    text = str(spec).strip()
+    if "," in text:
+        seeds = []
+        for token in text.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                seeds.append(int(token))
+            except ValueError:
+                raise ValueError(
+                    f"bad --seeds value {token!r}; use a count like '3' or an "
+                    f"explicit list like '69421,69423'"
+                )
+        if not seeds:
+            raise ValueError("empty --seeds value")
+        # Duplicates would train the same run twice; the second pass would skip
+        # on the resume check, but the plan and the counts would still lie.
+        return list(dict.fromkeys(seeds))
+    try:
+        count = int(text)
+    except ValueError:
+        raise ValueError(
+            f"bad --seeds value {text!r}; use a count like '3' or an explicit "
+            f"list like '69421,69423'"
+        )
+    if count < 1:
+        raise ValueError(f"--seeds must be at least 1, got {count}")
+    return [SEED + i for i in range(count)]
 
 
 def _is_band(column):

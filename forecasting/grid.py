@@ -16,13 +16,15 @@ import torch
 from rich.console import Console
 
 from forecasting import hardware
-from forecasting.grids import GRIDS
+from forecasting.grids import GRIDS, SEED
 from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 
 # Last conformal metric written to log.json; its presence means train + test +
 # conformal recalibration all finished for a seed.
 MARKER = "sl_test/interval_width_mean"
-SEED = 69421
+
+# SEED is defined in forecasting/grids.py (beside the seed selection --seeds
+# uses) and re-exported here, where perchannel.py and the tests already read it.
 
 # EMForecaster's patch pipeline needs ~29.5 GiB of activations for a 512 batch at
 # seq_len 336 -- more than the shared 31.35 GiB card -- and its emf2023 cells (29
@@ -120,17 +122,19 @@ def _cleanup():
         pass
 
 
-def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
-    """Run every cell of the grid for one setup. Returns the list of failed cells.
+def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None):
+    """Run every cell of the grid for one setup. Returns the list of failed runs.
 
     logs_dir only affects the resume check; Experiment.run() always writes under
     the default logs/ tree, so pass a custom logs_dir for dry-run/testing only.
     windows overrides the grid's window list (already validated by the caller);
-    None runs all of them.
+    None runs all of them. seeds is the list of seeds each cell is trained on
+    (also caller-validated); None means just SEED, the pre---seeds behaviour.
     """
     console = Console()
     grid_def = GRIDS[setup]
     windows = grid_def["windows"] if windows is None else windows
+    seeds = [SEED] if seeds is None else list(seeds)
     if grid_def.get("per_channel"):
         # A per-band cell is many runs, not one, and needs the process pool in
         # forecasting/perchannel.py. Fail loudly instead of silently training the
@@ -154,15 +158,24 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
                  for m in grid_def["models"]
                  for d in grid_def["datasets"]
                  for w in windows]
-    total = len(cells)
+    # Seed-major, not cell-major: an interrupted multi-seed sweep then leaves a
+    # complete grid at one seed rather than the first few cells with error bars
+    # and the rest missing entirely. Resume is per (cell, seed) either way, so
+    # restarting picks up exactly where it stopped.
+    runs = [(cell, seed) for seed in seeds for cell in cells]
+    total = len(runs)
 
-    for n, ((label, model_id, job), dataset, (seq_len, pred_len), k) in enumerate(cells, 1):
+    for n, (((label, model_id, job), dataset, (seq_len, pred_len), k), seed) in enumerate(runs, 1):
         k_suffix = f" k={k}" if k is not None else ""
-        cell_tag = f"[{n:2d}/{total}] {label:<12} {dataset}/L{seq_len}/O{pred_len}{k_suffix}"
+        # Label the seed only when there is more than one, so an ordinary sweep's
+        # log lines do not all carry the same constant.
+        seed_suffix = f" seed={seed}" if len(seeds) > 1 else ""
+        cell_tag = (f"[{n:2d}/{total}] {label:<12} "
+                    f"{dataset}/L{seq_len}/O{pred_len}{k_suffix}{seed_suffix}")
         run_tag = f"k{k}" if k is not None else ""
 
-        if cell_done(setup, model_id, dataset, seq_len, pred_len, logs_dir=logs_dir,
-                     tag=run_tag):
+        if cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(seed,),
+                     logs_dir=logs_dir, tag=run_tag):
             console.log(f"[SKIP] {cell_tag}")
             skipped.append(cell_tag)
             continue
@@ -183,8 +196,8 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
             args.exp.neptune = False
             args.exp.id = ""
             args.exp.ablation_id = 1
-            args.exp.seed_list = [SEED]
-            args.exp.seed = SEED
+            args.exp.seed_list = [seed]
+            args.exp.seed = seed
             args.exp.time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             if k is not None:
                 # Must come after the args.exp.id = "" reset above, or different
@@ -241,6 +254,7 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None):
     report = {
         "setup": setup,
         "finished": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+        "seeds": seeds,
         "passed": passed,
         "skipped": skipped,
         "failed": failed,

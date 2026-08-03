@@ -159,6 +159,13 @@ if __name__ == "__main__":
                              "instead of all four. Format 'LxO' (e.g. '336x96') "
                              "or 'L336_O96'; comma-separate for several. Omit to "
                              "run every window.")
+    parser.add_argument("--seeds", type=str, default=None,
+                        help="Grid mode only: how many seeds to train each cell "
+                             "on (default 1). A count counts up from 69421, so "
+                             "'--seeds 3' runs 69421, 69422, 69423 and reuses "
+                             "whatever is already complete at 69421. A comma-"
+                             "separated list (e.g. '69422,69423') selects those "
+                             "seeds exactly.")
     parser.add_argument("--venv_test", action="store_true", help="Flag for venv test")
     parser.add_argument("--ablation", type=str, default=None, help="Ablation study configuration")
     parser.add_argument("--ablation_id", type=int, default=1, help="Ablation study configuration")
@@ -170,12 +177,13 @@ if __name__ == "__main__":
         print("Running in venv test mode")
         # Add any venv test specific code here
     elif args.grid or args.job_name is None:
-        from forecasting.grids import GRIDS, select_windows
+        from forecasting.grids import GRIDS, select_seeds, select_windows
         setup = args.setup or prompt_setup()
-        # Validate --window against this grid up front so a typo is a clean error,
-        # not a mid-run traceback (or a silently empty sweep).
+        # Validate --window/--seeds against this grid up front so a typo is a clean
+        # error, not a mid-run traceback (or a silently empty sweep).
         try:
             windows = select_windows(args.window, GRIDS[setup]["windows"])
+            seeds = select_seeds(args.seeds)
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(2)
@@ -184,10 +192,12 @@ if __name__ == "__main__":
         if GRIDS[setup].get("per_channel"):
             from forecasting.perchannel import run_per_channel_grid
             failed = run_per_channel_grid(setup=setup, jobs=args.jobs,
-                                          dry_run=args.dry_run, windows=windows)
+                                          dry_run=args.dry_run, windows=windows,
+                                          seeds=seeds)
         else:
             from forecasting.grid import run_grid
-            failed = run_grid(setup, dry_run=args.dry_run, windows=windows)
+            failed = run_grid(setup, dry_run=args.dry_run, windows=windows,
+                              seeds=seeds)
         sys.exit(1 if failed else 0)
     else:
         if args.ablation is not None:

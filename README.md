@@ -98,7 +98,7 @@ Run from the repository root. `main.py` has two modes:
 python main.py <job_name> [--quick] [--ablation '<json>'] [--ablation_id <int>]
 
 # Grid mode: run a full model x dataset x window sweep
-python main.py --grid [--setup <setup>] [--window <spec>] [--dry_run] [--jobs <int>]
+python main.py --grid [--setup <setup>] [--window <spec>] [--seeds <spec>] [--dry_run] [--jobs <int>]
 ```
 
 The setup is chosen automatically from the job name: any `job_name` starting with `rf_emf_mv` dispatches to `forecasting.multivariate`, everything else to `forecasting.univariate`.
@@ -149,6 +149,7 @@ The exit code is non-zero if any cell failed.
 
   If `--setup` is omitted in grid mode, you are prompted interactively to pick one (`u`/`m`/`s`).
 - `--window <spec>` restricts the sweep to specific lookback/horizon window(s) instead of all four. Every grid uses the same four `(seq_len, pred_len)` windows: `192x96`, `192x336`, `336x96`, `336x336`. Each window is written as `LxO` (e.g. `336x96`), `L_O` (`336_96`), or the `logs/` directory form `L336_O96`; comma-separate to select several (e.g. `--window 336x96,336x336`). The spec is validated against the grid up front, so a typo or a window not in the grid is a clean error rather than a mid-run failure. Omit to run every window.
+- `--seeds <spec>` trains every cell on more than one seed instead of just the canonical `69421` (default: 1 seed). A count counts up from the canonical seed, so `--seeds 3` runs `69421`, `69422`, `69423`; a comma-separated list (`--seeds 69422,69423`) selects those seeds exactly, for topping up a grid that already has `69421`. Because the canonical seed comes first and resume is per `(cell, seed)`, adding seeds to a finished sweep re-runs only the new ones — the existing runs are skipped, not retrained. Seeds are run seed-major (the whole grid at one seed, then the next), so an interrupted multi-seed sweep leaves a complete grid at one seed rather than a handful of cells with error bars. Note that on the per-channel grid a seed multiplies *band* runs: a second seed on the full `--setup univariate` grid is another ~1,700 trainings.
 - `--dry_run` lists the cells and their target log directories without training anything. Useful to preview what a sweep will do.
 - `--jobs <int>` applies to the per-channel (`--setup univariate`) grid only: how many band trainings run concurrently (default 8). Lower it if the GPU runs out of memory.
 
@@ -163,11 +164,15 @@ python main.py --grid --setup univariate --window 336x96 --jobs 4
 
 # Preview the single-series sweep for two windows without training
 python main.py --grid --setup univariate_series --window 192x96,336x96 --dry_run
+
+# Single-series sweep on one window, three seeds (69421-69423) for error bars
+python main.py --grid --setup univariate_series --window 336x96 --seeds 3
 ```
 
 ### Seeds and outputs
 
-By default `main.py` iterates over every seed in `args.exp.seed_list`, building a fresh `Experiment` per seed.
+In single-job mode `main.py` iterates over every seed in `args.exp.seed_list`, building a fresh `Experiment` per seed.
+Grid mode ignores the config's `seed_list` and pins the seeds itself — the canonical `69421` unless `--seeds` asks for more — so a cell's log path is stable and the resume check can find it.
 With offline logging (`exp.neptune=False`), outputs land under `logs/<ablation_id>_<model_id>_<exp.id>/<seed>/`, containing the resolved `args.yaml`, `log.json` metrics, best weights `supervised.pth`, conformal calibration `scores` (when enabled), and 10 randomly-sampled forecast plots named `plot_<index>.png` (for example `plot_5320.png`), where `<index>` is a random position in the test set, not a sequential `plot_0.png … plot_9.png`.
 
 ## Usage: hyperparameter tuning

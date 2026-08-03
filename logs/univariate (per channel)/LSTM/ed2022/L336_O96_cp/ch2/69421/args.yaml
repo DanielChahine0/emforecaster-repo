@@ -109,11 +109,17 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-07-27_09-33-03
+  time: 2026-08-01_23-52-59
   tuning_metric: loss
   u_weight: false
   va_inductive: true
   va_splits: 5
+hybrid:
+  cluster_assignment: []
+  cluster_method: kmeans
+  cluster_seed: 69421
+  enabled: false
+  k_clusters: 1
 mlp_mixer:
   cha_mixer_dim: 128
   dropout: 0.0

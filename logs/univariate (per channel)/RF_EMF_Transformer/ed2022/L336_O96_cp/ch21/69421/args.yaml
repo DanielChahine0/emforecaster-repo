@@ -1,3 +1,8 @@
+arima:
+  d: 0
+  p: 1
+  q: 1
+  trend: c
 conf:
   alpha: 0.1
   conf: true
@@ -91,6 +96,7 @@ exp:
   model_id: RF_EMF_Transformer
   mps: false
   neptune: false
+  no_train: false
   other_metrics: false
   patch_model_id: DLinear
   project_name: rf-emf-forecasting/RF-EMF-MV
@@ -103,11 +109,17 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-07-23_01-27-24
+  time: 2026-08-01_22-50-37
   tuning_metric: loss
   u_weight: false
   va_inductive: true
   va_splits: 5
+hybrid:
+  cluster_assignment: []
+  cluster_method: kmeans
+  cluster_seed: 69421
+  enabled: false
+  k_clusters: 1
 mlp_mixer:
   cha_mixer_dim: 128
   dropout: 0.0

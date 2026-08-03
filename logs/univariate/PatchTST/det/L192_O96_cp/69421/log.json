@@ -9,7 +9,7 @@
   "parameters/exp/neptune": false,
   "parameters/exp/api_token": "",
   "parameters/exp/project_name": "rf-emf-forecasting/RF-EMF",
-  "parameters/exp/time": "2026-08-01_12-25-01",
+  "parameters/exp/time": "2026-08-01_14-51-21",
   "parameters/exp/early_stopping": true,
   "parameters/exp/acc": false,
   "parameters/exp/ch_acc": false,
@@ -500,7 +500,7 @@
     0.46474170422488437,
     0.4650419501848118
   ],
-  "parameters/running_time": "33s",
+  "parameters/running_time": "41s",
   "sl_test/loss": [
     0.39884773110087773
   ],

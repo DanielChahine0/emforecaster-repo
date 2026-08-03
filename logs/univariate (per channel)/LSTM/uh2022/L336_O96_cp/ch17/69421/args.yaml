@@ -32,7 +32,7 @@ data:
   median_seq_len: false
   num_channels: 1
   num_classes: 2
-  num_workers: 2
+  num_workers: 4
   numpy_data: false
   pad_to_max: false
   patch_dim: 16
@@ -109,11 +109,17 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-07-27_09-37-31
+  time: 2026-08-02_16-43-30
   tuning_metric: loss
   u_weight: false
   va_inductive: true
   va_splits: 5
+hybrid:
+  cluster_assignment: []
+  cluster_method: kmeans
+  cluster_seed: 69421
+  enabled: false
+  k_clusters: 1
 mlp_mixer:
   cha_mixer_dim: 128
   dropout: 0.0

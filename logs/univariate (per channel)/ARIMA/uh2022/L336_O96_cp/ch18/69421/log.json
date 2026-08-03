@@ -9,7 +9,7 @@
   "parameters/exp/neptune": false,
   "parameters/exp/api_token": "",
   "parameters/exp/project_name": "rf-emf-forecasting/RF-EMF-MV",
-  "parameters/exp/time": "2026-07-27_09-48-25",
+  "parameters/exp/time": "2026-08-02_16-57-43",
   "parameters/exp/early_stopping": true,
   "parameters/exp/acc": false,
   "parameters/exp/ch_acc": false,
@@ -49,7 +49,7 @@
   "parameters/data/balance": true,
   "parameters/data/train_split": 0.7,
   "parameters/data/val_split": 0.1,
-  "parameters/data/num_workers": 2,
+  "parameters/data/num_workers": 4,
   "parameters/data/pin_memory": true,
   "parameters/data/prefetch_factor": 2,
   "parameters/data/shuffle_test": false,
@@ -200,6 +200,11 @@
   "parameters/conf/corrected": false,
   "parameters/conf/intervals": true,
   "parameters/conf/validation_eval": false,
+  "parameters/hybrid/enabled": false,
+  "parameters/hybrid/k_clusters": 1,
+  "parameters/hybrid/cluster_method": "kmeans",
+  "parameters/hybrid/cluster_seed": 69421,
+  "parameters/hybrid/cluster_assignment": "",
   "parameters/sl/num_params": 0,
   "sl_test/loss": [
     1.5015990218495936
@@ -211,7 +216,7 @@
     1.5015990734
   ],
   "sl_test/mae": [
-    0.22915461559051975
+    0.22915396341463415
   ],
   "sl_test/ic": [
     91.05049896240234
@@ -220,9 +225,9 @@
     23.832754135131836
   ],
   "sl_test/interval_width_mean": [
-    0.6733813881874084
+    0.6733801364898682
   ],
   "sl_test/interval_width_std": [
-    0.01806684210896492
+    0.018066802993416786
   ]
 }

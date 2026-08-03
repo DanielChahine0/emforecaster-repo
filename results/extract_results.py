@@ -2,8 +2,8 @@
 """Build point-forecasting result tables from a logs/ tree of log.json runs.
 
     python results/extract_results.py --logs-root logs/multivariate
-    python results/extract_results.py --logs-root "logs/univariate (merged)" --output out.md
-    python results/extract_results.py   # no --logs-root: processes every logs/* subdirectory
+    python results/extract_results.py --logs-root "logs/univariate (per channel)" --output out.md
+    python results/extract_results.py   # no --logs-root: rebuild every section of results/tables.md
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 MODEL_DISPLAY = {
     "EMForecaster": "EMForecaster (2025)",
@@ -38,22 +38,28 @@ DATASET_DISPLAY = {
 }
 DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
 
-# format is "<N>s" or "<N>min <N>s"
-_TIME_RE = re.compile(r"^(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
+MISSING = "—"
+
+# format is "<N>s", "<N>min <N>s" or "<N>hr <N>min <N>s"
+_TIME_RE = re.compile(
+    r"^(?:(?P<hr>\d+)h(?:r|rs)?\s*)?(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
+_CHANNEL_RE = re.compile(r"^ch(\d+)$")
 
 
 def parse_running_time(raw: Optional[str]) -> Optional[float]:
     if not raw:
         return None
     m = _TIME_RE.match(raw.strip())
-    if not m or (m.group("min") is None and m.group("sec") is None):
+    if not m or not any(m.group(g) for g in ("hr", "min", "sec")):
         raise ValueError(f"unrecognized running_time format: {raw!r}")
-    return int(m.group("min") or 0) * 60 + int(m.group("sec") or 0)
+    return (int(m.group("hr") or 0) * 3600
+            + int(m.group("min") or 0) * 60
+            + int(m.group("sec") or 0))
 
 
 def format_seconds(sec: Optional[float]) -> str:
     if sec is None:
-        return "X"
+        return MISSING
     sec = round(sec)
     h, rem = divmod(sec, 3600)
     m, s = divmod(rem, 60)
@@ -68,7 +74,7 @@ def format_seconds(sec: Optional[float]) -> str:
 
 def format_seconds_fine(sec: Optional[float]) -> str:
     if sec is None:
-        return "X"
+        return MISSING
     if sec < 60:
         return f"{sec:.1f}s"
     return format_seconds(sec)
@@ -89,6 +95,8 @@ class Run:
     ic: Optional[float]
     jc: Optional[float]
     interval_width: Optional[float]
+    channel: Optional[int]
+    seed: Optional[str]
     path: Path
 
 
@@ -103,6 +111,8 @@ class Cell:
     interval_width: Optional[float]
     num_params: Optional[int]
     n: int
+    n_channels: Optional[int]
+    n_seeds: Optional[int]
 
 
 def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
@@ -156,8 +166,16 @@ def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
             v = d.get("sl_test/interval_width_mean")
             interval_width = v[0] if v else None
 
+        channel = None
+        for part in log_path.parts:
+            m = _CHANNEL_RE.fullmatch(part)
+            if m:
+                channel = int(m.group(1))
+        seed = log_path.parent.name if log_path.parent.name.isdigit() else None
+
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
-                         running_time, per_epoch, num_params, ic, jc, interval_width, log_path))
+                         running_time, per_epoch, num_params, ic, jc, interval_width,
+                         channel, seed, log_path))
     return runs
 
 
@@ -166,13 +184,18 @@ def mean_of(runs: list[Run], attr: str) -> Optional[float]:
     return statistics.mean(vals) if vals else None
 
 
-def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
+def group_runs(runs: list[Run]) -> dict[tuple, list[Run]]:
     groups: dict[tuple, list[Run]] = defaultdict(list)
     for r in runs:
         groups[(r.model, r.dataset, r.seq_len, r.pred_len, r.conf)].append(r)
+    return groups
 
+
+def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
     cells = {}
-    for key, rs in groups.items():
+    for key, rs in group_runs(runs).items():
+        channels = {r.channel for r in rs if r.channel is not None}
+        seeds = {r.seed for r in rs if r.seed is not None}
         cells[key] = Cell(
             mse=mean_of(rs, "mse"),
             mae=mean_of(rs, "mae"),
@@ -183,16 +206,15 @@ def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
             interval_width=mean_of(rs, "interval_width"),
             num_params=next((r.num_params for r in rs if r.num_params), None),
             n=len(rs),
+            n_channels=len(channels) or None,
+            n_seeds=len(seeds) or None,
         )
     return cells
 
 
 def diagnose(runs: list[Run], cells: dict[tuple, Cell]) -> None:
     """Flag (don't fix) a seed running 3x+ slower than its siblings in the same cell."""
-    groups: dict[tuple, list[Run]] = defaultdict(list)
-    for r in runs:
-        groups[(r.model, r.dataset, r.seq_len, r.pred_len, r.conf)].append(r)
-    for key, rs in groups.items():
+    for key, rs in group_runs(runs).items():
         times = [r.running_time for r in rs if r.running_time is not None]
         if len(times) < 2:
             continue
@@ -203,6 +225,8 @@ def diagnose(runs: list[Run], cells: dict[tuple, Cell]) -> None:
                   f"conf={conf}: {[format_seconds(t) for t in times]} -- possible contended/throttled "
                   f"outlier seed; consider --exclude", file=sys.stderr)
 
+
+# ---------------------------------------------------------------- ordering
 
 def model_rank(m: str) -> tuple:
     return (0, MODEL_ORDER.index(m)) if m in MODEL_ORDER else (1, m)
@@ -216,208 +240,397 @@ def sort_models(models: set[str]) -> list[str]:
     return sorted(models, key=model_rank)
 
 
+def model_label(m: str) -> str:
+    return MODEL_DISPLAY.get(m, m)
+
+
+def dataset_label(ds: str) -> str:
+    return DATASET_DISPLAY.get(ds, ds.upper())
+
+
+DISPLAY_ORDER = list(dict.fromkeys(model_label(m) for m in MODEL_ORDER))
+
+
+def display_rank(label: str) -> tuple:
+    return (0, DISPLAY_ORDER.index(label)) if label in DISPLAY_ORDER else (1, label)
+
+
 def row_keys_for(cells: dict[tuple, Cell], conf: bool) -> list[tuple]:
     keys = {(ds, sl, pl) for (_, ds, sl, pl, c) in cells if c == conf}
     return sorted(keys, key=lambda k: (dataset_rank(k[0]), k[1], k[2]))
 
 
+# ---------------------------------------------------------------- markdown
+
 def fmt_num(v: Optional[float], decimals: int) -> str:
-    return f"{v:.{decimals}f}" if v is not None else ""
+    return f"{v:.{decimals}f}" if v is not None else MISSING
 
 
-def render_metric_table(cells, models, row_keys, conf, attr, decimals, bold_lowest) -> str:
-    lines = [
-        "| Dataset | $L$ | $O$ | " + " | ".join(MODEL_DISPLAY.get(m, m) for m in models) + " |",
-        "|---|---|---|" + "---|" * len(models),
-    ]
+def num_fmt(decimals: int) -> Callable[[Optional[float]], str]:
+    return lambda v: fmt_num(v, decimals)
+
+
+def md_table(headers: list[str], aligns: str, rows: list[list[str]]) -> list[str]:
+    """`aligns` is one char per column: 'l' or 'r'."""
+    rule = {"l": ":---", "r": "---:"}
+    return (
+        ["| " + " | ".join(headers) + " |",
+         "|" + "|".join(rule[a] for a in aligns) + "|"]
+        + ["| " + " | ".join(r) + " |" for r in rows]
+    )
+
+
+class Doc:
+    """Markdown builder that keeps heading levels and numbering consistent."""
+
+    def __init__(self, title: str):
+        self.lines = [f"# {title}", ""]
+        self.group_no = 0
+        self.table_no = 0
+
+    def para(self, text: str) -> None:
+        self.lines.extend([text, ""])
+
+    def quote(self, items: list[tuple[str, str]]) -> None:
+        for i, (label, value) in enumerate(items):
+            if i:
+                self.lines.append(">")
+            self.lines.append(f"> **{label}** · {value}")
+        self.lines.append("")
+
+    def group(self, title: str) -> None:
+        self.group_no += 1
+        self.table_no = 0
+        self.lines.extend([f"## {self.group_no} · {title}", ""])
+
+    def table(self, title: str, lines: list[str], note: Optional[str] = None) -> None:
+        self.table_no += 1
+        self.lines.extend([f"### {self.group_no}.{self.table_no} · {title}", ""])
+        if note:
+            self.lines.extend([note, ""])
+        self.lines.extend(lines + [""])
+
+    def render(self) -> str:
+        return "\n".join(self.lines).rstrip("\n") + "\n"
+
+
+# ---------------------------------------------------------------- per-root tables
+
+def metric_rows(cells, models, row_keys, conf, attr, fmt, bold_best: bool) -> list[list[str]]:
+    rows = []
     for ds, sl, pl in row_keys:
-        row_vals = [getattr(cells.get((m, ds, sl, pl, conf)), attr, None) for m in models]
-        strs = [fmt_num(v, decimals) for v in row_vals]
-        if bold_lowest:
-            populated = [(i, v) for i, v in enumerate(row_vals) if v is not None]
+        vals = [getattr(cells.get((m, ds, sl, pl, conf)), attr, None) for m in models]
+        strs = [fmt(v) for v in vals]
+        if bold_best:
+            populated = [(i, v) for i, v in enumerate(vals) if v is not None]
             if populated:
-                min_i = min(populated, key=lambda p: p[1])[0]
-                strs[min_i] = f"**{strs[min_i]}**"
-        lines.append(f"| {DATASET_DISPLAY.get(ds, ds.upper())} | {sl} | {pl} | " + " | ".join(strs) + " |")
-    return "\n".join(lines)
+                best = min(populated, key=lambda p: p[1])[0]
+                strs[best] = f"**{strs[best]}**"
+        rows.append([dataset_label(ds), str(sl), str(pl)] + strs)
+    return rows
 
 
-def render_time_table(cells, models, row_keys, conf, attr, formatter) -> str:
-    lines = [
-        "| Dataset | $L$ | $O$ | " + " | ".join(MODEL_DISPLAY.get(m, m) for m in models) + " |",
-        "|---|---|---|" + "---|" * len(models),
-    ]
-    for ds, sl, pl in row_keys:
-        row_vals = [getattr(cells.get((m, ds, sl, pl, conf)), attr, None) for m in models]
-        strs = [formatter(v) for v in row_vals]
-        populated = [(i, v) for i, v in enumerate(row_vals) if v is not None]
-        if populated:
-            min_i = min(populated, key=lambda p: p[1])[0]
-            strs[min_i] = f"**{strs[min_i]}**"
-        lines.append(f"| {DATASET_DISPLAY.get(ds, ds.upper())} | {sl} | {pl} | " + " | ".join(strs) + " |")
-    return "\n".join(lines)
+def metric_table(cells, models, row_keys, conf, attr, fmt, bold_best=True) -> list[str]:
+    return md_table(
+        ["Dataset", "$L$", "$O$"] + [model_label(m) for m in models],
+        "lrr" + "r" * len(models),
+        metric_rows(cells, models, row_keys, conf, attr, fmt, bold_best),
+    )
 
 
-def render_summary_table(runs, models, conf) -> str:
-    lines = [
-        "| Model | Mean / epoch | Estimation for 100 ep |",
-        "|---|---:|---:|",
-    ]
+def has_metric(cells, models, row_keys, conf, attr) -> bool:
+    return any(getattr(cells.get((m, ds, sl, pl, conf)), attr, None) is not None
+               for m in models for ds, sl, pl in row_keys)
+
+
+def epoch_summary_table(runs, models, conf) -> list[str]:
     rows = []
     for m in models:
         vals = [r.per_epoch for r in runs if r.model == m and r.conf == conf and r.per_epoch is not None]
-        if not vals:
-            continue
-        mean_epoch = statistics.mean(vals)
-        rows.append((m, mean_epoch))
-    for m, mean_epoch in sorted(rows, key=lambda r: r[1]):
-        lines.append(f"| {MODEL_DISPLAY.get(m, m)} | {format_seconds_fine(mean_epoch)} "
-                      f"| ~{format_seconds(mean_epoch * 100)} |")
-    return "\n".join(lines)
+        if vals:
+            rows.append((m, statistics.mean(vals), len(vals)))
+    return md_table(
+        ["Model", "Mean / epoch", "Projected 100 epochs", "Runs"],
+        "lrrr",
+        [[model_label(m), format_seconds_fine(mean), f"~{format_seconds(mean * 100)}", str(n)]
+         for m, mean, n in sorted(rows, key=lambda r: r[1])],
+    )
 
 
-def render_model_sizes(cells, models) -> str:
-    lo_cols = sorted({(sl, pl) for (_, _, sl, pl, _) in cells}, key=lambda p: (p[0], p[1]))
-    lines = [
-        "| Model | " + " | ".join(f"L{sl} / O{pl}" for sl, pl in lo_cols) + " |",
-        "|---|" + "---:|" * len(lo_cols),
-    ]
+def model_size_table(cells, models) -> list[str]:
+    settings = sorted({(sl, pl) for (_, _, sl, pl, _) in cells})
+    rows = []
     for m in models:
         row = []
-        for sl, pl in lo_cols:
-            found = None
-            for (mm, _, ssl, ppl, _), cell in cells.items():
-                if mm == m and ssl == sl and ppl == pl and cell.num_params:
-                    found = cell.num_params
-                    break
-            row.append(f"{found:,}" if found else "")
-        if any(row):
-            lines.append(f"| {MODEL_DISPLAY.get(m, m)} | " + " | ".join(row) + " |")
-    return "\n".join(lines)
+        for sl, pl in settings:
+            found = next((c.num_params for (mm, _, ssl, ppl, _), c in cells.items()
+                          if mm == m and ssl == sl and ppl == pl and c.num_params), None)
+            row.append(f"{found:,}" if found else MISSING)
+        if any(v != MISSING for v in row):
+            rows.append([model_label(m)] + row)
+    if not rows:
+        return []
+    return md_table(["Model"] + [f"L{sl} → O{pl}" for sl, pl in settings], "l" + "r" * len(settings), rows)
 
 
-def replicate_note(cells: dict[tuple, Cell], conf: bool) -> str:
-    ns = sorted({cell.n for key, cell in cells.items() if key[4] == conf})
-    if len(ns) <= 1:
-        n = ns[0] if ns else 0
-        return f"Every cell in this section averages **{n}** replicate run(s)."
-    return (f"Replicate counts per cell in this section range from **{min(ns)}** to **{max(ns)}**, "
-            f"so rows mix cells with different amounts of averaging.")
-
-
-def render_section(subtitle: str, runs: list[Run], cells: dict[tuple, Cell], models: list[str], conf: bool) -> str:
-    row_keys = row_keys_for(cells, conf)
-    if not row_keys:
-        return ""
-
-    out = []
-    out.append("### Table A | MSE (`sl_test/loss`)")
-    out.append("")
-    out.append("**Bold** = best (lowest) value in the row, among populated cells.")
-    out.append("")
-    out.append(render_metric_table(cells, models, row_keys, conf, "mse", 4, bold_lowest=True))
-    out.append("")
-
-    if any(cells.get((m, ds, sl, pl, conf)) and cells[(m, ds, sl, pl, conf)].mae is not None
-           for m in models for ds, sl, pl in row_keys):
-        out.append("### Table A2 | MAE (`sl_test/mae`)")
-        out.append("")
-        out.append(render_metric_table(cells, models, row_keys, conf, "mae", 4, bold_lowest=True))
-        out.append("")
-
-    out.append("### Table B | Training Time (`parameters/running_time`)")
-    out.append("")
-    out.append("**Bold** = fastest in the row. `X` = not logged (e.g. ARIMA is not gradient-trained).")
-    out.append("")
-    out.append(render_time_table(cells, models, row_keys, conf, "running_time", format_seconds))
-    out.append("")
-
-    out.append("### Table C | Per-Epoch Training Time (`running_time / len(sl_train/loss)`, per run)")
-    out.append("")
-    out.append(render_time_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine))
-    out.append("")
-    out.append("#### Per-model summary")
-    out.append("")
-    out.append(render_summary_table(runs, models, conf))
-    out.append("")
-
-    if conf:
-        if any(cells.get((m, ds, sl, pl, True)) and cells[(m, ds, sl, pl, True)].ic is not None
-               for m in models for ds, sl, pl in row_keys):
-            out.append("### Table D | Marginal Coverage % (`sl_test/ic`)")
-            out.append("")
-            out.append("Not bolded -- \"best\" means closest to the target coverage, not highest.")
-            out.append("")
-            out.append(render_metric_table(cells, models, row_keys, True, "ic", 2, bold_lowest=False))
-            out.append("")
-        if any(cells.get((m, ds, sl, pl, True)) and cells[(m, ds, sl, pl, True)].jc is not None
-               for m in models for ds, sl, pl in row_keys):
-            out.append("### Table E | Joint Coverage % (`sl_test/jc`)")
-            out.append("")
-            out.append(render_metric_table(cells, models, row_keys, True, "jc", 2, bold_lowest=False))
-            out.append("")
-        if any(cells.get((m, ds, sl, pl, True)) and cells[(m, ds, sl, pl, True)].interval_width is not None
-               for m in models for ds, sl, pl in row_keys):
-            out.append("### Table F | Mean Interval Width (`sl_test/interval_width_mean`)")
-            out.append("")
-            out.append("Not bolded -- narrower is only better when the target coverage (Table D) is met.")
-            out.append("")
-            out.append(render_metric_table(cells, models, row_keys, True, "interval_width", 3, bold_lowest=False))
-            out.append("")
-
-    out.append(replicate_note(cells, conf))
-    out.append("")
-    return "\n".join(out)
+def coverage_summary(runs: list[Run], cells: dict[tuple, Cell]) -> str:
+    per_channel = runs and all(r.channel is not None for r in runs)
+    ns = sorted({c.n for c in cells.values()})
+    span = f"**{ns[0]}**" if len(ns) == 1 else f"**{min(ns)}–{max(ns)}**"
+    if per_channel:
+        seeds = sorted({c.n_seeds for c in cells.values() if c.n_seeds})
+        seed_txt = (f"{seeds[0]} seed" if len(seeds) == 1 and seeds[0] == 1
+                    else f"{min(seeds)}–{max(seeds)} seeds" if seeds else "unknown seed count")
+        return (f"{len(runs)} logs · each table cell is a mean over {span} single-channel runs "
+                f"({seed_txt} per channel)")
+    return f"{len(runs)} logs · each table cell averages {span} replicate run(s)"
 
 
 def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
     models = sort_models({k[0] for k in cells})
+    confs = [c for c in (False, True) if row_keys_for(cells, c)]
+    settings = sorted({(r.seq_len, r.pred_len) for r in runs})
+    datasets = sorted({r.dataset for r in runs}, key=dataset_rank)
 
-    out = [
-        f"# {title}",
-        "",
-        "---",
-        "",
-    ]
+    doc = Doc(title)
+    doc.quote([
+        ("Models", ", ".join(model_label(m) for m in models)),
+        ("Datasets", ", ".join(dataset_label(d) for d in datasets)),
+        ("Grid", ", ".join(f"L{sl} → O{pl}" for sl, pl in settings)),
+        ("Runs", coverage_summary(runs, cells)),
+        ("Conformal prediction",
+         "on for every run" if confs == [True] else
+         "off for every run" if confs == [False] else
+         "reported separately below for runs with and without it"),
+    ])
 
-    section_number = 0
-    for subtitle, conf in [
-        ("Point-Forecasting Performance (without conformal prediction)", False),
-        ("Point-Forecasting Performance (with conformal prediction)", True),
-    ]:
-        body = render_section(subtitle, runs, cells, models, conf=conf)
-        if body:
-            section_number += 1
-            out.append(f"## {section_number} · {subtitle}")
-            out.append("")
-            out.append(body)
-            out.append("---")
-            out.append("")
+    for conf in confs:
+        suffix = ""
+        if len(confs) > 1:
+            suffix = " — with conformal prediction" if conf else " — without conformal prediction"
+        row_keys = row_keys_for(cells, conf)
 
-    sizes = render_model_sizes(cells, models)
-    if sizes.count("\n") > 1:
-        out.append("## Model sizes")
-        out.append("")
-        out.append("Weights come from `parameters/sl/num_params` in each log. For multivariate logs this can "
-                    "vary by dataset (different channel counts), not just by (model, L, O); this table shows "
-                    "the first value found per (model, L, O) -- cross-check if that matters for your use case.")
-        out.append("")
-        out.append(sizes)
-        out.append("")
+        doc.group("Forecast accuracy" + suffix)
+        doc.para("**Bold** marks the best (lowest) value in each row, among populated cells. "
+                 f"`{MISSING}` means the run was not logged.")
+        doc.table("MSE — `sl_test/loss`",
+                  metric_table(cells, models, row_keys, conf, "mse", num_fmt(4)))
+        if has_metric(cells, models, row_keys, conf, "mae"):
+            doc.table("MAE — `sl_test/mae`",
+                      metric_table(cells, models, row_keys, conf, "mae", num_fmt(4)))
 
-    return "\n".join(out)
+        doc.group("Training cost" + suffix)
+        doc.para("**Bold** marks the fastest model in each row."
+                 + (" ARIMA is not gradient-trained, so it logs no training time or epochs."
+                    if "ARIMA" in models else ""))
+        doc.table("Total training time — `parameters/running_time`",
+                  metric_table(cells, models, row_keys, conf, "running_time", format_seconds))
+        doc.table("Per-epoch training time — `running_time / len(sl_train/loss)`",
+                  metric_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine))
+        doc.table("Mean epoch cost by model", epoch_summary_table(runs, models, conf),
+                  note="Averaged over every run of that model in this section, all datasets and "
+                       "settings pooled.")
 
+        if conf:
+            doc.group("Conformal prediction")
+            doc.para("Nothing is bolded here: the best coverage is the one closest to the target, "
+                     "not the highest, and a narrower interval only helps when the target coverage "
+                     "is actually met.")
+            if has_metric(cells, models, row_keys, True, "ic"):
+                doc.table("Marginal coverage % — `sl_test/ic`",
+                          metric_table(cells, models, row_keys, True, "ic", num_fmt(2), bold_best=False))
+            if has_metric(cells, models, row_keys, True, "jc"):
+                doc.table("Joint coverage % — `sl_test/jc`",
+                          metric_table(cells, models, row_keys, True, "jc", num_fmt(2), bold_best=False))
+            if has_metric(cells, models, row_keys, True, "interval_width"):
+                doc.table("Mean interval width — `sl_test/interval_width_mean`",
+                          metric_table(cells, models, row_keys, True, "interval_width",
+                                       num_fmt(3), bold_best=False))
+
+    sizes = model_size_table(cells, models)
+    if sizes:
+        doc.group("Model size")
+        doc.table("Trainable weights — `parameters/sl/num_params`", sizes,
+                  note="Multivariate models size with the channel count, so a value can vary by "
+                       "dataset as well as by (model, $L$, $O$); this table shows the first value "
+                       "found per (model, $L$, $O$).")
+
+    return doc.render()
+
+
+# ---------------------------------------------------------------- comparison
+
+def canonical_cells(cells: dict[tuple, Cell]) -> dict[tuple, Cell]:
+    """Re-key cells by display name so `RF_EMF_Transformer` and `Transformer` line up."""
+    out: dict[tuple, Cell] = {}
+    for (m, ds, sl, pl, conf), cell in sorted(cells.items(), key=lambda kv: model_rank(kv[0][0])):
+        out.setdefault((model_label(m), ds, sl, pl, conf), cell)
+    return out
+
+
+def shared_keys(a: dict[tuple, Cell], b: dict[tuple, Cell]) -> list[tuple]:
+    return sorted(set(a) & set(b),
+                  key=lambda k: (dataset_rank(k[1]), k[2], k[3], display_rank(k[0])))
+
+
+def fmt_delta(value: float, decimals: int, unit: str) -> str:
+    if round(value, decimals) == 0:
+        return f"{0:.{decimals}f}{unit}"
+    return f"{value:+.{decimals}f}{unit}"
+
+
+def pair_rows(keys, left, right, attr, fmt, lower_is_better: bool, delta: str):
+    rows, wins = [], [0, 0, 0]  # left, right, tie
+    for key in keys:
+        a = getattr(left.get(key), attr, None)
+        b = getattr(right.get(key), attr, None)
+        sa, sb, sd = fmt(a), fmt(b), MISSING
+        if a is not None and b is not None:
+            if delta == "pct" and a:
+                sd = fmt_delta((b - a) / a * 100, 1, "%")
+            elif delta == "pp":
+                sd = fmt_delta(b - a, 2, " pp")
+            if lower_is_better:
+                if b < a:
+                    sb, wins[1] = f"**{sb}**", wins[1] + 1
+                elif a < b:
+                    sa, wins[0] = f"**{sa}**", wins[0] + 1
+                else:
+                    wins[2] += 1
+        model, ds, sl, pl, _ = key
+        rows.append([dataset_label(ds), str(sl), str(pl), model, sa, sb, sd])
+    return rows, wins
+
+
+def pair_table(keys, left, right, left_label, right_label, attr, fmt,
+               lower_is_better=True, delta="pct"):
+    rows, wins = pair_rows(keys, left, right, attr, fmt, lower_is_better, delta)
+    return md_table(["Dataset", "$L$", "$O$", "Model", left_label, right_label, "Δ"],
+                    "lrrlrrr", rows), wins
+
+
+def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
+                      uv_roots: list[tuple[str, dict[tuple, Cell]]]) -> str:
+    mv = canonical_cells(mv_cells)
+    matched = [(label, canonical_cells(c)) for label, c in uv_roots]
+    matched = [(label, c, shared_keys(mv, c)) for label, c in matched]
+    matched = [(label, c, keys) for label, c, keys in matched if keys]
+    if not matched:
+        return ""
+
+    left = short_label(mv_title)
+    doc = Doc(title)
+    doc.quote([
+        ("Compares", " · ".join(f"{left} vs {short_label(label)}" for label, _, _ in matched)),
+        ("Matched on", "(dataset, $L$, $O$, model, conformal setting) — only cells present in "
+                       "both trees appear below"),
+        ("Reading Δ", f"Δ is the univariate value relative to {left}, so a negative Δ favours the "
+                      "univariate pipeline; **bold** marks the better of the two wherever lower "
+                      "is unambiguously better"),
+    ])
+
+    all_wins: list[tuple[str, str, list[int]]] = []
+    for label, uv, keys in matched:
+        right = short_label(label)
+        pair = f"{left} vs {right}"
+
+        doc.group(f"Accuracy — {pair}")
+        doc.para(f"{len(keys)} matched cells, from `{mv_title}` and `{label}`.")
+        for metric, attr, decimals in [("MSE — `sl_test/loss`", "mse", 4),
+                                       ("MAE — `sl_test/mae`", "mae", 4)]:
+            table, wins = pair_table(keys, mv, uv, left, right, attr, num_fmt(decimals))
+            doc.table(metric, table)
+            all_wins.append((right, metric.split(" —")[0], wins))
+
+        doc.group(f"Training cost — {pair}")
+        doc.para(f"`{right}` is the mean cost of one channel's model; `all channels` multiplies it "
+                 "by the channel count, which is what the whole forecast costs when every channel "
+                 f"needs its own model. Δ compares that total against {left}.")
+        rows = []
+        for key in keys:
+            a = getattr(mv.get(key), "running_time", None)
+            b = getattr(uv.get(key), "running_time", None)
+            chans = getattr(uv.get(key), "n_channels", None)
+            total = b * chans if b is not None and chans else None
+            sd = fmt_delta((total - a) / a * 100, 1, "%") if a and total is not None else MISSING
+            model, ds, sl, pl, _ = key
+            rows.append([dataset_label(ds), str(sl), str(pl), model, format_seconds(a),
+                         format_seconds(b), str(chans) if chans else MISSING,
+                         format_seconds(total), sd])
+        doc.table("Total training time — `parameters/running_time`",
+                  md_table(["Dataset", "$L$", "$O$", "Model", left, right,
+                            "Channels", "All channels", "Δ"], "lrrlrrrrr", rows))
+
+        conformal = [k for k in keys if k[4]]
+        if conformal:
+            doc.group(f"Conformal prediction — {pair}")
+            doc.para("Δ is in percentage points for coverage and relative for interval width. "
+                     "Coverage is not bolded: closest to target wins, not highest.")
+            for metric, attr, decimals, lower, kind in [
+                ("Marginal coverage % — `sl_test/ic`", "ic", 2, False, "pp"),
+                ("Joint coverage % — `sl_test/jc`", "jc", 2, False, "pp"),
+                ("Mean interval width — `sl_test/interval_width_mean`", "interval_width", 3, True, "pct"),
+            ]:
+                if any(getattr(mv.get(k), attr, None) is not None for k in conformal):
+                    table, wins = pair_table(conformal, mv, uv, left, right, attr,
+                                             num_fmt(decimals), lower_is_better=lower, delta=kind)
+                    doc.table(metric, table)
+                    if lower:
+                        all_wins.append((right, "Interval width", wins))
+
+    doc.group("Scoreboard")
+    doc.table("Matched-cell wins by metric",
+              md_table(["Comparison", "Metric", left, "Univariate", "Tie"], "llrrr",
+                       [[f"{left} vs {label}", metric, str(w[0]), str(w[1]), str(w[2])]
+                        for label, metric, w in all_wins]),
+              note="How many matched cells each pipeline wins, counted only for the metrics where "
+                   "lower is unambiguously better.")
+    return doc.render()
+
+
+# ---------------------------------------------------------------- file I/O
 
 DEFAULT_TABLES_FILE = Path(__file__).resolve().parent / "tables.md"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+
+MULTIVARIATE_TITLE = "Multivariate"
+COMPARISON_TITLE = "Multivariate vs Univariate"
+ROOT_TITLES = {
+    "univariate": "Univariate Series",
+    "univariate (per channel)": "Univariate (Per Channel)",
+    "multivariate": MULTIVARIATE_TITLE,
+}
+# compact forms used as column headers in the side-by-side comparison
+SHORT_TITLES = {
+    "Univariate Series": "Univariate series",
+    "Univariate (Per Channel)": "Per-channel",
+    MULTIVARIATE_TITLE: "Multivariate",
+}
+
+
+def short_label(title: str) -> str:
+    return SHORT_TITLES.get(title, title)
+SECTION_ORDER = [
+    "Univariate Series",
+    "Univariate (Per Channel)",
+    MULTIVARIATE_TITLE,
+    COMPARISON_TITLE,
+]
+# headings written by older versions of this script
+HEADING_ALIASES = {
+    "Univariate": "Univariate Series",
+    "Univariate Per Channel": "Univariate (Per Channel)",
+}
 
 # only top-level '# ' headings; everything a report emits is '##' or deeper
 _SECTION_RE = re.compile(r"^# (.+)$", re.MULTILINE)
 
 
 def derive_heading(logs_root: Path) -> str:
-    name = logs_root.name.replace("(", " ").replace(")", " ")
-    name = re.sub(r"[_\s]+", " ", name).strip()
+    key = logs_root.name.lower()
+    if key in ROOT_TITLES:
+        return ROOT_TITLES[key]
+    name = re.sub(r"[_\s]+", " ", logs_root.name.replace("(", " ").replace(")", " ")).strip()
     return name.title()
 
 
@@ -427,29 +640,40 @@ def split_sections(text: str) -> list[tuple[str, str]]:
     for i, m in enumerate(matches):
         start = m.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        sections.append((m.group(1).strip(), text[start:end].rstrip("\n")))
+        heading = m.group(1).strip()
+        body = text[start:end].rstrip("\n")
+        renamed = HEADING_ALIASES.get(heading)
+        if renamed:
+            heading = renamed
+            body = _SECTION_RE.sub(f"# {renamed}", body, count=1)
+        sections.append((heading, body))
     return sections
 
 
-def upsert_section(tables_path: Path, heading: str, section_md: str) -> bool:
-    """Replace the section under `heading`, or append one if it doesn't exist yet."""
+def upsert_sections(tables_path: Path, updates: list[tuple[str, str]]) -> list[tuple[str, bool]]:
+    """Replace or append each section, then reorder the file to SECTION_ORDER."""
     existing = tables_path.read_text() if tables_path.exists() else ""
-    sections = split_sections(existing)
-    block = section_md.rstrip("\n")
+    sections: list[tuple[str, str]] = []
+    for heading, body in split_sections(existing):
+        if not any(heading == h for h, _ in sections):
+            sections.append((heading, body))
 
-    replaced = False
-    new_sections = []
-    for h, b in sections:
-        if h == heading:
-            new_sections.append((h, block))
-            replaced = True
+    outcome = []
+    for heading, body in updates:
+        block = body.rstrip("\n")
+        for i, (h, _) in enumerate(sections):
+            if h == heading:
+                sections[i] = (heading, block)
+                outcome.append((heading, True))
+                break
         else:
-            new_sections.append((h, b))
-    if not replaced:
-        new_sections.append((heading, block))
+            sections.append((heading, block))
+            outcome.append((heading, False))
 
-    tables_path.write_text("\n\n".join(b for _, b in new_sections) + "\n")
-    return replaced
+    rank = {h: i for i, h in enumerate(SECTION_ORDER)}
+    ordered = sorted(enumerate(sections), key=lambda p: (rank.get(p[1][0], len(rank)), p[0]))
+    tables_path.write_text("\n\n".join(b for _, (_, b) in ordered) + "\n")
+    return outcome
 
 
 def main() -> None:
@@ -479,6 +703,7 @@ def main() -> None:
         if not logs_roots:
             parser.error(f"no subdirectories found under {DEFAULT_LOGS_DIR}")
 
+    loaded: list[tuple[str, list[Run], dict[tuple, Cell]]] = []
     for logs_root in logs_roots:
         if not logs_root.is_dir():
             parser.error(f"--logs-root {logs_root} is not a directory")
@@ -492,19 +717,34 @@ def main() -> None:
 
         cells = aggregate(runs)
         diagnose(runs, cells)
+        loaded.append((args.title or derive_heading(logs_root), runs, cells))
 
-        title = args.title or derive_heading(logs_root)
-        md = render_report(title, runs, cells)
+    if args.output is not None:
+        title, runs, cells = loaded[0]
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(render_report(title, runs, cells))
+        print(f"Wrote {args.output} ({len(runs)} runs, {len(cells)} aggregated cells).", file=sys.stderr)
+        return
 
-        if args.output is None:
-            replaced = upsert_section(DEFAULT_TABLES_FILE, title, md)
-            verb = "Updated" if replaced else "Added"
-            print(f"{verb} '# {title}' section in {DEFAULT_TABLES_FILE} "
-                  f"({len(runs)} runs, {len(cells)} aggregated cells).", file=sys.stderr)
+    updates = [(title, render_report(title, runs, cells)) for title, runs, cells in loaded]
+
+    by_title = {title: cells for title, _, cells in loaded}
+    mv_cells = by_title.get(MULTIVARIATE_TITLE)
+    uv_roots = [(t, c) for t, c in by_title.items() if t != MULTIVARIATE_TITLE]
+    if mv_cells and uv_roots:
+        comparison = render_comparison(COMPARISON_TITLE, MULTIVARIATE_TITLE, mv_cells, uv_roots)
+        if comparison:
+            updates.append((COMPARISON_TITLE, comparison))
         else:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(md)
-            print(f"Wrote {args.output} ({len(runs)} runs, {len(cells)} aggregated cells).", file=sys.stderr)
+            print("WARNING: no (dataset, L, O, model) cells shared between the multivariate and "
+                  "univariate trees; skipping the comparison section", file=sys.stderr)
+    elif len(loaded) < 2:
+        print(f"NOTE: '{COMPARISON_TITLE}' needs every logs/ subdirectory; run without "
+              f"--logs-root to rebuild it.", file=sys.stderr)
+
+    for title, replaced in upsert_sections(DEFAULT_TABLES_FILE, updates):
+        print(f"{'Updated' if replaced else 'Added'} '# {title}' section in {DEFAULT_TABLES_FILE}.",
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

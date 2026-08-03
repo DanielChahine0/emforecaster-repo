@@ -76,6 +76,24 @@ def test_ablation_carries_worker_override():
     assert pooled["global.data.num_workers"] == 2
 
 
+def test_ablation_applies_memory_profile_for_heavy_cells():
+    # Same condition grid.py's joint EMForecaster cells hit at seq_len >= 336:
+    # without this, `jobs` concurrent band trainings each ask for a full-batch
+    # cell's worth of activations on one shared GPU.
+    ablation = perchannel.channel_ablation("ED2022", 336, 96, 0, 0.1,
+                                           model_id="EMForecaster")
+    assert ablation["global.sl.batch_size"] == 128
+    assert ablation["global.sl.accum_steps"] == 4
+
+
+def test_ablation_skips_memory_profile_without_model_id():
+    plain = perchannel.channel_ablation("ED2022", 336, 96, 0, 0.1)
+    assert "global.sl.batch_size" not in plain
+    # A light cell (e.g. DLinear) at the same window needs no override either.
+    light = perchannel.channel_ablation("ED2022", 336, 96, 0, 0.1, model_id="DLinear")
+    assert "global.sl.batch_size" not in light
+
+
 def test_channel_done_requires_the_conformal_marker(tmp_path):
     args = ("DLinear", "ED2022", 192, 96, 3)
     assert perchannel.channel_done(*args, logs_dir=str(tmp_path)) is False
@@ -164,7 +182,8 @@ def test_window_filter_runs_only_the_selected_window(tmp_path, monkeypatch):
     calls = []
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
-                         seed=perchannel.SEED, workers=None, threads=None):
+                         seed=perchannel.SEED, workers=None, threads=None,
+                         model_id=None):
         calls.append((seq_len, pred_len, dataset, channel))
         return True, ""
 
@@ -173,6 +192,50 @@ def test_window_filter_runs_only_the_selected_window(tmp_path, monkeypatch):
     assert len(calls) == num_models * (27 + 27 + 29)
     # Every run used the requested window and nothing else.
     assert {(l, o) for l, o, _, _ in calls} == {(336, 96)}
+
+
+def test_seeds_multiply_band_runs_and_aggregate_per_seed(tmp_path, monkeypatch):
+    # A seed multiplies band runs, not cells: every band of every cell is trained
+    # once per seed, and each seed's bands land under their own <seed>/ leaf.
+    num_models = len(grids.GRIDS["univariate"]["models"])
+    windows = [(336, 96)]
+    seeds = [perchannel.SEED, perchannel.SEED + 1]
+    calls = []
+
+    def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
+                         seed=perchannel.SEED, workers=None, threads=None,
+                         model_id=None):
+        calls.append((dataset, channel, seed))
+        return True, ""
+
+    monkeypatch.setattr(perchannel, "run_channel", fake_run_channel)
+    perchannel.run_per_channel_grid(jobs=4, logs_dir=str(tmp_path), windows=windows,
+                                    seeds=seeds)
+    bands_per_seed = num_models * (27 + 27 + 29)
+    assert len(calls) == bands_per_seed * len(seeds)
+    for seed in seeds:
+        assert sum(1 for c in calls if c[2] == seed) == bands_per_seed
+
+
+def test_extra_seeds_get_their_own_aggregate_file(tmp_path):
+    # Every seed's bands share one cell dir, so a single aggregate.json would let
+    # the last seed aggregated overwrite the others.
+    assert perchannel.aggregate_name(perchannel.SEED) == "aggregate.json"
+    other = perchannel.SEED + 1
+    assert perchannel.aggregate_name(other) == f"aggregate_seed{other}.json"
+
+    for seed, mse in ((perchannel.SEED, 0.25), (other, 0.5)):
+        _write_log(tmp_path, "DLinear", "ED2022", 192, 96, 0,
+                   {perchannel.MARKER: 1.0, "sl_test/mse": mse}, seed=seed)
+        perchannel.aggregate_cell("DLinear", "ED2022", 192, 96, 1, seed=seed,
+                                  logs_dir=str(tmp_path))
+
+    cell = perchannel.cell_dir("DLinear", "ED2022", 192, 96, logs_dir=str(tmp_path))
+    for seed, mse in ((perchannel.SEED, 0.25), (other, 0.5)):
+        with open(os.path.join(cell, perchannel.aggregate_name(seed))) as f:
+            written = json.load(f)
+        assert written["seed"] == seed
+        assert written["mse_mean"] == mse
 
 
 def test_run_grid_skips_completed_bands_and_records_failures(tmp_path, monkeypatch):
@@ -184,7 +247,8 @@ def test_run_grid_skips_completed_bands_and_records_failures(tmp_path, monkeypat
     calls = []
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
-                         seed=perchannel.SEED, workers=None, threads=None):
+                         seed=perchannel.SEED, workers=None, threads=None,
+                         model_id=None):
         calls.append((job, dataset, seq_len, pred_len, channel))
         return False, "boom"
 
