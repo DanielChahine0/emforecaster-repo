@@ -1,0 +1,113 @@
+# Single-series LSTM baseline on the DET/PTV monitoring CSVs.
+#
+# The univariate_series counterpart of rf_emf_mv/lstm/args.yaml, added 2026-08-03
+# so this grid carries the same seven models as the multivariate and per-band
+# grids. Same model and same hyperparameters; only the data switches differ
+# (univariate=True, dataset_class=univariate_forecasting, num_channels=1).
+#
+# model_id "LSTM" dispatches to models/recurrent.py::RecurrentModel with
+# backbone_id "LSTM" -- NOT models/rf_emf_baselines.py::LSTM (model_id
+# RF_EMF_LSTM, config at rf_emf/baselines/lstm/args.yaml). That older class builds
+# nn.LSTM(seq_len, d_model) with batch_first left at its default False, so the
+# recurrence runs over the DataLoader batch axis and the whole lookback is
+# consumed as one flat feature vector. It is left frozen because it produced the
+# published univariate "LSTM (1997)" column; the numbers here are a different
+# model and must not be merged with it. utils/models.py::get_model added the
+# "LSTM" alias for exactly this reason -- so the two land in different logs/ dirs.
+#
+# Three settings are correctness requirements, not preferences:
+#
+#   data.patching MUST be True. recurrent.py sets input_size = d_model if
+#   patching else num_channels, so patching False hands the LSTM (B, C, L) and
+#   dies with "input.size(-1) must be equal to input_size". It also selects which
+#   unsqueeze this package's 2-D (B, L) batch gets: (B, 1, L) under patching,
+#   (B, L, 1) without it.
+#
+#   sl.last_state False + sl.avg_state True. Under patching the head is sized
+#   num_patches*d_model only when (patching and not avg_state), while the
+#   last_state branch feeds it (B*C, d_model) -- so the shipped defaults
+#   (last_state True, avg_state False) are the one combination that crashes.
+#   Setting avg_state True alone also runs, but then the last hidden state goes
+#   through an average-state head whose positional encoding is replaced by a bare
+#   Linear, which is not the intended baseline. Set both explicitly. avg_state
+#   also keeps head_dim at d_model for both L192 and L336 instead of 24*d_model
+#   and 42*d_model, so the two windows compare like for like.
+#
+#   sl.revout MUST be True. RecurrentModel only denormalizes when revout is set;
+#   revin True with revout False would instance-normalize the input and never
+#   invert it. revin/revin_affine/revout all True matches DLinear, TSMixer and
+#   EMForecaster here.
+#
+# data.dataset / seq_len / pred_len / exp.id are set per run by
+# forecasting/grid.py (python main.py --grid --setup univariate_series).
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF"
+  model_id: "LSTM"
+  backbone_id: "LSTM"
+  learning_type: "sl"
+  id: ""
+  seed_list: [69421, 69422]
+  seed: 69421
+  mae: True
+  rank_verbose: False
+  task: "forecasting"
+  neptune: False
+
+data:
+  seq_load: True
+  dataset: "rf_emf_ptv2"
+  univariate: True
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 336
+  pred_len: 96
+  train_split: 0.7
+  val_split: 0.1
+  num_channels: 1
+  scale: True
+  patching: True
+  patch_dim: 16
+  patch_stride: 8
+
+ddp:
+  ddp: False
+  master_port: "11764"
+  find_unused_parameters: True
+
+sl:
+  optimizer: "adam"
+  dataset_class: "univariate_forecasting"
+  criterion: "MSE"
+  scheduler: "onecycle"
+  d_model: 32
+  num_enc_layers: 2
+  dropout: 0.3
+  bidirectional: False
+  head_type: "linear"
+  norm_mode: "layer"
+  last_state: False
+  avg_state: True
+  epochs: 100
+  batch_size: 512
+  lr: 1e-4
+  early_stopping: True
+  weight_decay: 1e-4
+  return_head: True
+  revin: True
+  revin_affine: True
+  revout: True
+  eps_revin: 1e-5
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False

@@ -141,6 +141,9 @@ def test_hybrid_models_excludes_arima_and_tsmixer():
     ids = {model_id for _, model_id, _ in grids.HYBRID_MODELS}
     assert "ARIMA" not in ids
     assert "TSMixer" not in ids
+    # PatchTST's constructor takes channel_independent and no cluster_assignment/
+    # k_clusters, so a k sweep would train the same model once per k.
+    assert "PatchTST" not in ids
     assert "DLinear" in ids
     assert "EMForecaster" in ids
     assert "RF_EMF_Transformer" in ids

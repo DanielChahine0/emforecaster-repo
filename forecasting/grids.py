@@ -12,9 +12,15 @@ Three grids share the same WINDOWS so their cells line up one-to-one:
                       and windows, averaged back into one number per cell. Driven
                       by forecasting/perchannel.py, not forecasting/grid.py.
 - "univariate_series" The original single-series sweep over the DET/PTV
-                      monitoring CSVs. Unchanged; it was renamed from
-                      "univariate" when that name was repurposed for the per-band
-                      grid above.
+                      monitoring CSVs. It was renamed from "univariate" when that
+                      name was repurposed for the per-band grid above.
+
+Since 2026-08-03 all three carry the same seven models -- EMForecaster, DLinear,
+PatchTST, TSMixer, Transformer, LSTM, ARIMA -- so a model's column exists in
+every table. The two per-band/joint grids share one model list outright
+(UNIVARIATE_MODELS is MV_MODELS); univariate_series keeps a separate list only
+because it runs a different package with different job configs, not because it is
+a different set of models.
 """
 
 import csv
@@ -36,12 +42,14 @@ SEED = 69421
 # picks forecasting.multivariate only on job_name.startswith("rf_emf_mv").
 #
 # PatchTST was dropped from the sweep on 2026-07-24 when LSTM and ARIMA were
-# added; its 12 completed multivariate cells stay on disk under
-# logs/multivariate/PatchTST/ and remain valid, they are simply no longer part of
-# the grid. Re-add the tuple here to bring it back for "multivariate" too --
-# it already runs in the per-band "univariate" grid below via PATCHTST_MODEL.
+# added, and put back on 2026-08-03 so all three grids carry the same seven
+# models. Its 12 pre-drop cells are NOT on disk any more -- commit e84faec4
+# deleted logs/multivariate/PatchTST/ along with the other three windows of every
+# model -- so these cells are unrun, not resumable. `git checkout e84faec4^ --
+# logs/multivariate` restores the old tree if the pre-drop numbers are wanted.
 MV_MODELS = [
     ("DLinear", "DLinear", "rf_emf_mv/dlinear"),
+    ("PatchTST", "PatchTST", "rf_emf_mv/patchtst"),
     ("TSMixer", "TSMixer", "rf_emf_mv/tsmixer"),
     ("Transformer", "RF_EMF_Transformer", "rf_emf_mv/transformer"),
     ("EMForecaster", "EMForecaster", "rf_emf_mv/emforecaster"),
@@ -56,27 +64,48 @@ MV_MODELS = [
 ]
 MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
 
-# PatchTST kept out of MV_MODELS (so the joint "multivariate" grid stays as
-# dropped on 2026-07-24) but included in the per-band "univariate" grid, which
-# reuses this same rf_emf_mv/patchtst job config one band at a time.
-PATCHTST_MODEL = ("PatchTST", "PatchTST", "rf_emf_mv/patchtst")
-UNIVARIATE_MODELS = [MV_MODELS[0], PATCHTST_MODEL] + MV_MODELS[1:]
+# The per-band grid runs exactly the joint grid's models, one band at a time, off
+# the very same rf_emf_mv/* job configs. Aliased rather than copied so the two can
+# never drift: a model added to one is added to both, and the cells stay
+# comparable one-to-one.
+UNIVARIATE_MODELS = MV_MODELS
 
 # The k-cluster hybrid head (forecasting/multivariate/layers/clustered_head.py):
 # partitions channels into k clusters and mixes channels only within a cluster,
-# instead of the fully joint or fully channel-independent extremes. ARIMA has no
-# backbone/head concept (classical per-series fit) and TSMixer's backbone already
-# mixes all channels densely in every layer regardless of any hybrid setting, so
-# a clustered head on top of it would only restrict the final readout, not the
-# actual information flow -- both are excluded here.
-HYBRID_MODELS = [m for m in MV_MODELS if m[1] not in ("ARIMA", "TSMixer")]
+# instead of the fully joint or fully channel-independent extremes. Three models
+# are excluded. ARIMA has no backbone/head concept (classical per-series fit).
+# TSMixer's backbone already mixes all channels densely in every layer regardless
+# of any hybrid setting, so a clustered head on top of it would only restrict the
+# final readout, not the actual information flow. PatchTST's constructor takes
+# `channel_independent` and no cluster_assignment/k_clusters at all
+# (multivariate/utils/models.py), so a k sweep would silently train the same
+# model four times and write four identical-but-for-the-tag cells.
+HYBRID_MODELS = [
+    m for m in MV_MODELS if m[1] not in ("ARIMA", "TSMixer", "PatchTST")
+]
 
+# The single-series counterpart list. Job names here are "rf_emf/*", NOT
+# "rf_emf_mv/*": this grid is the only one that runs the forecasting.univariate
+# package (grid.py::SETUP_PACKAGE), which resolves its configs under
+# forecasting/univariate/jobs/exp/ and uses that package's Experiment. There is no
+# per-model package selection, so an rf_emf_mv/* job name here would not resolve.
+#
+# LSTM and ARIMA joined on 2026-08-03, matching the seven models the other two
+# grids carry. Both needed a backport into the univariate package first (the
+# "LSTM" model_id alias, models/arima.py, the exp.no_train path); see the headers
+# of forecasting/univariate/jobs/exp/rf_emf/{lstm,arima}/args.yaml.
 SERIES_MODELS = [
     ("DLinear", "DLinear", "rf_emf/dlinear"),
     ("PatchTST", "PatchTST", "rf_emf/patchtst"),
     ("TSMixer", "TSMixer", "rf_emf/tsmixer"),
     ("Transformer", "RF_EMF_Transformer", "rf_emf/baselines/transformer"),
     ("EMForecaster", "EMForecaster", "rf_emf/emforecaster"),
+    # RecurrentModel(backbone_id="LSTM") under the "LSTM" alias -- the same model
+    # the other two grids run, NOT the rf_emf/baselines/lstm config beside it
+    # (model_id RF_EMF_LSTM), which is the frozen batch-axis baseline that
+    # produced the published "LSTM (1997)" column. Do not merge the two columns.
+    ("LSTM", "LSTM", "rf_emf/lstm"),
+    ("ARIMA", "ARIMA", "rf_emf/arima"),
 ]
 SERIES_DATASETS = ["rf_emf_det", "rf_emf_ptv", "rf_emf_ptv2"]
 

@@ -62,12 +62,12 @@ def test_grid_model_ids_match_job_configs():
             assert args.exp.model_id == model_id, f"{setup} {job}: {args.exp.model_id} != {model_id}"
 
 
-# multivariate is MV_MODELS (6 models x 3 datasets x 4 windows). The per-band
-# univariate grid runs those same six plus PatchTST, which was dropped from the
-# joint sweep on 2026-07-24 but still runs one band at a time, so it is one model
-# wider. univariate_series has its own 5-model list. Spelled out rather than
-# derived from len(models), so a model silently dropped from a grid fails here.
-EXPECTED_CELLS = {"multivariate": 72, "univariate": 84, "univariate_series": 60}
+# All three grids run the same seven models (EMForecaster, DLinear, PatchTST,
+# TSMixer, Transformer, LSTM, ARIMA) over 3 datasets x 4 windows since
+# 2026-08-03, when PatchTST went back into the joint sweep and LSTM + ARIMA were
+# backported into the univariate package. Spelled out rather than derived from
+# len(models), so a model silently dropped from a grid fails here.
+EXPECTED_CELLS = {"multivariate": 84, "univariate": 84, "univariate_series": 84}
 
 
 def test_grid_cell_counts():
@@ -82,7 +82,7 @@ def test_grid_does_not_use_the_batch_axis_lstm():
     # over the DataLoader batch axis and squeezes a (B, 1, O) forecast against a
     # (B, 1, O) target. It stays reachable because it produced the published
     # single-series column, so guard against it drifting back into a sweep.
-    for setup in ("multivariate", "univariate"):
+    for setup in ("multivariate", "univariate", "univariate_series"):
         ids = {model_id for _, model_id, _ in grids.GRIDS[setup]["models"]}
         assert "RF_EMF_LSTM" not in ids, f"{setup} must use 'LSTM', not RF_EMF_LSTM"
         assert "LSTM" in ids
@@ -103,16 +103,43 @@ def test_model_tuples_are_label_id_job():
 def test_univariate_grid_mirrors_multivariate_cells():
     # The per-band grid is only interpretable if its cells line up with the joint
     # grid's, so every multivariate model/dataset/window must have a per-band
-    # counterpart. PatchTST is the one deliberate extra: it left the joint sweep
-    # on 2026-07-24 but still runs per band, so it has no multivariate cell
-    # beside it and every other per-band model does.
+    # counterpart and vice versa. The two share one model list outright
+    # (UNIVARIATE_MODELS is MV_MODELS), which is what this pins down.
     uni, mv = grids.GRIDS["univariate"], grids.GRIDS["multivariate"]
-    assert [m for m in uni["models"] if m in mv["models"]] == mv["models"]
-    assert [m for m in uni["models"] if m not in mv["models"]] == [grids.PATCHTST_MODEL]
+    assert uni["models"] == mv["models"]
     assert uni["datasets"] == mv["datasets"]
     assert uni["windows"] == mv["windows"]
     assert uni["per_channel"] is True
     assert not mv.get("per_channel")
+
+
+def test_univariate_series_lstm_config_settings_that_must_not_drift():
+    # The three settings the job config header calls correctness requirements.
+    # patching False makes recurrent.py set input_size = num_channels and die on
+    # the (B, 1, L) batch; the shipped last_state/avg_state defaults are the one
+    # combination whose head is mis-sized; revout False instance-normalizes the
+    # input and never inverts it, which does not raise, it just returns
+    # normalized forecasts.
+    load_config, _ = grid.setup_modules("univariate_series")
+    args = load_config(grid.args_path("univariate_series", "rf_emf/lstm"))
+    assert args.data.patching is True
+    assert (args.sl.last_state, args.sl.avg_state) == (False, True)
+    assert args.sl.revin is True and args.sl.revout is True
+    assert args.exp.backbone_id == "LSTM"
+
+
+def test_univariate_series_arima_is_a_no_train_cell():
+    # Without no_train the epoch loop would try to backward through a detached
+    # forecast; with sklearn instead of no_train, test() would return before any
+    # conformal code, write no resume marker, and the cell would re-run forever.
+    load_config, _ = grid.setup_modules("univariate_series")
+    args = load_config(grid.args_path("univariate_series", "rf_emf/arima"))
+    assert args.exp.no_train is True
+    assert args.exp.sklearn is False
+    assert args.sl.scheduler == "None"  # nothing to build against a null optimizer
+    # The arima: block must be registered on the config or pydantic drops it
+    # silently and the model would be built with the class defaults.
+    assert (args.arima.p, args.arima.d, args.arima.q) == (1, 0, 1)
 
 
 def test_univariate_series_keeps_single_series_datasets():
