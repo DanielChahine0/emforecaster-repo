@@ -316,25 +316,33 @@ class Doc:
 
 # ---------------------------------------------------------------- per-root tables
 
-def metric_rows(cells, models, row_keys, conf, attr, fmt, bold_best: bool) -> list[list[str]]:
+def mark_ranks(strs: list[str], vals: list[Optional[float]]) -> None:
+    """Bold the lowest value in the row and underline the runner-up, in place."""
+    ranked = sorted((v, i) for i, v in enumerate(vals) if v is not None)
+    if ranked:
+        best = ranked[0][1]
+        strs[best] = f"**{strs[best]}**"
+    if len(ranked) > 1:
+        second = ranked[1][1]
+        strs[second] = f"<u>{strs[second]}</u>"
+
+
+def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool) -> list[list[str]]:
     rows = []
     for ds, sl, pl in row_keys:
         vals = [getattr(cells.get((m, ds, sl, pl, conf)), attr, None) for m in models]
         strs = [fmt(v) for v in vals]
-        if bold_best:
-            populated = [(i, v) for i, v in enumerate(vals) if v is not None]
-            if populated:
-                best = min(populated, key=lambda p: p[1])[0]
-                strs[best] = f"**{strs[best]}**"
+        if mark_best:
+            mark_ranks(strs, vals)
         rows.append([dataset_label(ds), str(sl), str(pl)] + strs)
     return rows
 
 
-def metric_table(cells, models, row_keys, conf, attr, fmt, bold_best=True) -> list[str]:
+def metric_table(cells, models, row_keys, conf, attr, fmt, mark_best=True) -> list[str]:
     return md_table(
         ["Dataset", "$L$", "$O$"] + [model_label(m) for m in models],
         "lrr" + "r" * len(models),
-        metric_rows(cells, models, row_keys, conf, attr, fmt, bold_best),
+        metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best),
     )
 
 
@@ -411,8 +419,8 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
         row_keys = row_keys_for(cells, conf)
 
         doc.group("Forecast accuracy" + suffix)
-        doc.para("**Bold** marks the best (lowest) value in each row, among populated cells. "
-                 f"`{MISSING}` means the run was not logged.")
+        doc.para("**Bold** marks the best (lowest) value in each row and <u>underline</u> the "
+                 f"runner-up, among populated cells. `{MISSING}` means the run was not logged.")
         doc.table("MSE — `sl_test/loss`",
                   metric_table(cells, models, row_keys, conf, "mse", num_fmt(4)))
         if has_metric(cells, models, row_keys, conf, "mae"):
@@ -420,7 +428,7 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
                       metric_table(cells, models, row_keys, conf, "mae", num_fmt(4)))
 
         doc.group("Training cost" + suffix)
-        doc.para("**Bold** marks the fastest model in each row."
+        doc.para("**Bold** marks the fastest model in each row, <u>underline</u> the runner-up."
                  + (" ARIMA is not gradient-trained, so it logs no training time or epochs."
                     if "ARIMA" in models else ""))
         doc.table("Total training time — `parameters/running_time`",
@@ -438,14 +446,14 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
                      "is actually met.")
             if has_metric(cells, models, row_keys, True, "ic"):
                 doc.table("Marginal coverage % — `sl_test/ic`",
-                          metric_table(cells, models, row_keys, True, "ic", num_fmt(2), bold_best=False))
+                          metric_table(cells, models, row_keys, True, "ic", num_fmt(2), mark_best=False))
             if has_metric(cells, models, row_keys, True, "jc"):
                 doc.table("Joint coverage % — `sl_test/jc`",
-                          metric_table(cells, models, row_keys, True, "jc", num_fmt(2), bold_best=False))
+                          metric_table(cells, models, row_keys, True, "jc", num_fmt(2), mark_best=False))
             if has_metric(cells, models, row_keys, True, "interval_width"):
                 doc.table("Mean interval width — `sl_test/interval_width_mean`",
                           metric_table(cells, models, row_keys, True, "interval_width",
-                                       num_fmt(3), bold_best=False))
+                                       num_fmt(3), mark_best=False))
 
     sizes = model_size_table(cells, models)
     if sizes:
