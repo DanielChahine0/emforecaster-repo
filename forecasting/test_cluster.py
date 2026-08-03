@@ -114,22 +114,22 @@ def test_compute_channel_clusters_returns_valid_labels():
 # ---------------------------------------------------------------------------
 
 
-def test_hybrid_config_defaults_are_disabled():
+def test_cluster_config_defaults_are_disabled():
     args = Global()
-    assert args.hybrid.enabled is False
-    assert args.hybrid.k_clusters == 1
-    assert args.hybrid.cluster_assignment == []
+    assert args.cluster.enabled is False
+    assert args.cluster.k_clusters == 1
+    assert args.cluster.cluster_assignment == []
 
 
-def test_hybrid_yaml_block_populates_config():
+def test_cluster_yaml_block_populates_config():
     # Guards the exact silent-drop foot-gun the repo's own `arima:` comment
     # warns about in config.py: forgetting to register a section on Global
     # means pydantic's extra='ignore' drops it with no error.
-    data = {"hybrid": {"enabled": True, "k_clusters": 5, "cluster_seed": 123}}
+    data = {"cluster": {"enabled": True, "k_clusters": 5, "cluster_seed": 123}}
     args = Global(**data)
-    assert args.hybrid.enabled is True
-    assert args.hybrid.k_clusters == 5
-    assert args.hybrid.cluster_seed == 123
+    assert args.cluster.enabled is True
+    assert args.cluster.k_clusters == 5
+    assert args.cluster.cluster_seed == 123
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +137,8 @@ def test_hybrid_yaml_block_populates_config():
 # ---------------------------------------------------------------------------
 
 
-def test_hybrid_models_excludes_arima_and_tsmixer():
-    ids = {model_id for _, model_id, _ in grids.HYBRID_MODELS}
+def test_cluster_models_excludes_arima_and_tsmixer():
+    ids = {model_id for _, model_id, _ in grids.CLUSTER_MODELS}
     assert "ARIMA" not in ids
     assert "TSMixer" not in ids
     # PatchTST's constructor takes channel_independent and no cluster_assignment/
@@ -150,49 +150,49 @@ def test_hybrid_models_excludes_arima_and_tsmixer():
     assert "LSTM" in ids
 
 
-def test_hybrid_grid_job_configs_resolve():
-    load_config, _ = grid.setup_modules("hybrid")
-    for label, model_id, job in grids.GRIDS["hybrid"]["models"]:
-        args = load_config(grid.args_path("hybrid", job))
-        assert args.exp.model_id == model_id, f"hybrid {job}: {args.exp.model_id} != {model_id}"
+def test_cluster_grid_job_configs_resolve():
+    load_config, _ = grid.setup_modules("cluster")
+    for label, model_id, job in grids.GRIDS["cluster"]["models"]:
+        args = load_config(grid.args_path("cluster", job))
+        assert args.exp.model_id == model_id, f"cluster {job}: {args.exp.model_id} != {model_id}"
 
 
-def test_hybrid_grid_uses_multivariate_package_and_log_setup():
-    assert grid.SETUP_PACKAGE["hybrid"] == "multivariate"
-    assert grid.LOG_SETUP["hybrid"] == "hybrid"
+def test_cluster_grid_uses_multivariate_package_and_log_setup():
+    assert grid.SETUP_PACKAGE["cluster"] == "multivariate"
+    assert grid.LOG_SETUP["cluster"] == "cluster"
 
 
 def test_cell_done_round_trips_with_k_tag(tmp_path):
-    run_dir = grid.build_run_dir("hybrid", "DLinear", "ED2022", 192, 96,
+    run_dir = grid.build_run_dir("cluster", "DLinear", "ED2022", 192, 96,
                                  conf_on=True, logs_dir=str(tmp_path), tag="k3")
     seed_dir = os.path.join(run_dir, str(grid.SEED))
     os.makedirs(seed_dir)
     with open(os.path.join(seed_dir, "log.json"), "w") as f:
         json.dump({"sl_test/interval_width_mean": 0.1}, f)
 
-    assert grid.cell_done("hybrid", "DLinear", "ED2022", 192, 96,
+    assert grid.cell_done("cluster", "DLinear", "ED2022", 192, 96,
                           logs_dir=str(tmp_path), tag="k3") is True
     # A different k must not be considered done.
-    assert grid.cell_done("hybrid", "DLinear", "ED2022", 192, 96,
+    assert grid.cell_done("cluster", "DLinear", "ED2022", 192, 96,
                           logs_dir=str(tmp_path), tag="k5") is False
 
 
-def test_run_grid_dry_run_lists_all_hybrid_cells(tmp_path):
-    failed = grid.run_grid("hybrid", dry_run=True, logs_dir=str(tmp_path),
+def test_run_grid_dry_run_lists_all_cluster_cells(tmp_path):
+    failed = grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
                            windows=[(336, 96)])
     assert failed == []
 
 
 def test_select_k_values_defaults_to_the_grid(tmp_path):
-    assert grids.select_k_values(None, grids.GRIDS["hybrid"]["k_values"]) == [2, 3, 5, 9]
-    assert grids.select_k_values("", grids.GRIDS["hybrid"]["k_values"]) == [2, 3, 5, 9]
+    assert grids.select_k_values(None, grids.GRIDS["cluster"]["k_values"]) == [2, 3, 5, 9]
+    assert grids.select_k_values("", grids.GRIDS["cluster"]["k_values"]) == [2, 3, 5, 9]
     # A grid with no k dimension stays k-less, which is what tells run_grid to
     # leave k out of its cells entirely.
     assert grids.select_k_values(None, grids.GRIDS["multivariate"].get("k_values")) is None
 
 
 def test_select_k_values_parses_single_and_list():
-    ks = grids.GRIDS["hybrid"]["k_values"]
+    ks = grids.GRIDS["cluster"]["k_values"]
     assert grids.select_k_values("5", ks) == [5]
     assert grids.select_k_values("3,2", ks) == [2, 3]        # sorted
     assert grids.select_k_values("2,2,3", ks) == [2, 3]      # deduped
@@ -201,12 +201,12 @@ def test_select_k_values_parses_single_and_list():
 def test_select_k_values_allows_off_grid_k():
     # k=1 is deliberately not in the sweep; --k 1 must still reach it, since that
     # is the whole point of being able to run the endpoints as one-offs.
-    assert 1 not in grids.GRIDS["hybrid"]["k_values"]
-    assert grids.select_k_values("1", grids.GRIDS["hybrid"]["k_values"]) == [1]
+    assert 1 not in grids.GRIDS["cluster"]["k_values"]
+    assert grids.select_k_values("1", grids.GRIDS["cluster"]["k_values"]) == [1]
 
 
 def test_select_k_values_rejects_bad_values():
-    ks = grids.GRIDS["hybrid"]["k_values"]
+    ks = grids.GRIDS["cluster"]["k_values"]
     for bad in ("0", "-3", "two", "2,x", ","):
         with pytest.raises(ValueError):
             grids.select_k_values(bad, ks)
@@ -218,25 +218,25 @@ def test_select_k_values_rejects_k_on_a_grid_without_one():
 
 
 def test_run_grid_k_values_override_restricts_the_cells(tmp_path, capsys):
-    grid.run_grid("hybrid", dry_run=True, logs_dir=str(tmp_path),
+    grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
                   windows=[(336, 96)], k_values=[1])
     out = capsys.readouterr().out
     assert "k=1" in out
-    for k in grids.GRIDS["hybrid"]["k_values"]:
+    for k in grids.GRIDS["cluster"]["k_values"]:
         assert f"k={k}" not in out
     # one cell per model x dataset, and no k dimension left over
-    assert out.count("[DRY ]") == len(grids.HYBRID_MODELS) * len(grids.MV_DATASETS)
+    assert out.count("[DRY ]") == len(grids.CLUSTER_MODELS) * len(grids.MV_DATASETS)
 
 
 def test_run_grid_without_k_values_runs_the_whole_sweep(tmp_path, capsys):
-    grid.run_grid("hybrid", dry_run=True, logs_dir=str(tmp_path),
+    grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
                   windows=[(336, 96)], k_values=None)
     out = capsys.readouterr().out
-    assert out.count("[DRY ]") == (len(grids.HYBRID_MODELS) * len(grids.MV_DATASETS)
-                                   * len(grids.GRIDS["hybrid"]["k_values"]))
+    assert out.count("[DRY ]") == (len(grids.CLUSTER_MODELS) * len(grids.MV_DATASETS)
+                                   * len(grids.GRIDS["cluster"]["k_values"]))
 
 
-def test_non_hybrid_grids_unaffected_by_k_dimension(tmp_path):
+def test_non_cluster_grids_unaffected_by_k_dimension(tmp_path):
     # multivariate/univariate_series have no k_values key, so run_grid's k
     # dimension must be a no-op for them (cell count, tags, everything unchanged).
     assert "k_values" not in grids.GRIDS["multivariate"]
@@ -252,7 +252,7 @@ def test_non_hybrid_grids_unaffected_by_k_dimension(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_emforecaster_hybrid_forward_shape():
+def test_emforecaster_cluster_forward_shape():
     from forecasting.multivariate.models.emforecaster import EMForecaster
 
     args = Global()
@@ -285,7 +285,7 @@ def test_emforecaster_hybrid_forward_shape():
     assert not hasattr(model, "base_model")
 
 
-def test_emforecaster_default_path_unaffected_by_hybrid_kwargs():
+def test_emforecaster_default_path_unaffected_by_cluster_kwargs():
     from forecasting.multivariate.models.emforecaster import EMForecaster
 
     args = Global()
@@ -311,7 +311,7 @@ def test_emforecaster_default_path_unaffected_by_hybrid_kwargs():
     assert model(x).shape == (2, 1, 8)
 
 
-def test_recurrent_model_hybrid_forward_shape():
+def test_recurrent_model_cluster_forward_shape():
     from forecasting.multivariate.models.recurrent import RecurrentModel
 
     num_channels = 5
@@ -342,7 +342,7 @@ def test_recurrent_model_hybrid_forward_shape():
     assert out.shape == (2, num_channels, pred_len)
 
 
-def test_recurrent_model_hybrid_rejects_mlp_head():
+def test_recurrent_model_cluster_rejects_mlp_head():
     from forecasting.multivariate.models.recurrent import RecurrentModel
 
     with pytest.raises(NotImplementedError):
@@ -362,7 +362,7 @@ def test_recurrent_model_hybrid_rejects_mlp_head():
         )
 
 
-def test_dlinear_hybrid_forward_shape():
+def test_dlinear_cluster_forward_shape():
     from forecasting.multivariate.models.dlinear import DLinear
 
     num_channels = 4
@@ -380,7 +380,7 @@ def test_dlinear_hybrid_forward_shape():
     assert out.shape == (2, num_channels, pred_len)
 
 
-def test_rf_emf_transformer_hybrid_forward_shape():
+def test_rf_emf_transformer_cluster_forward_shape():
     from forecasting.multivariate.models.rf_emf_baselines import Transformer
 
     num_channels = 4

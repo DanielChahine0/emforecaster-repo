@@ -114,8 +114,8 @@ class Transformer(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=2)
         self.conv2 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=1)
 
-        self.hybrid = cluster_assignment is not None
-        if self.hybrid:
+        self.clustered = cluster_assignment is not None
+        if self.clustered:
             self.head = ClusteredHead(cluster_assignment, k_clusters, seq_len, pred_len)
         else:
             self.fc2 = nn.Linear(seq_len, pred_len)
@@ -154,7 +154,7 @@ class Transformer(nn.Module):
         x = self.conv2(x)
         x = self.act(x)  # (B*C, seq_len, 1) for d_model == 2
 
-        if self.hybrid:
+        if self.clustered:
             # Unfold the channels back out BEFORE the head: the clustered head
             # needs to see all channels in a cluster simultaneously, unlike
             # fc2 which runs on the folded (B*C, seq_len) tensor.

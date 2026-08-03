@@ -1205,16 +1205,16 @@ def get_loaders(
             # CSV and re-derives train_data from scratch on every call (train, val,
             # test loader_types), so only compute when empty to avoid a KMeans
             # refit potentially disagreeing across calls.
-            if args.hybrid.enabled and not args.hybrid.cluster_assignment:
+            if args.cluster.enabled and not args.cluster.cluster_assignment:
                 from forecasting.multivariate.utils.clustering import (
                     compute_channel_clusters,
                 )
 
-                args.hybrid.cluster_assignment = compute_channel_clusters(
+                args.cluster.cluster_assignment = compute_channel_clusters(
                     train_data,
-                    k=args.hybrid.k_clusters,
-                    method=args.hybrid.cluster_method,
-                    seed=args.hybrid.cluster_seed,
+                    k=args.cluster.k_clusters,
+                    method=args.cluster.cluster_method,
+                    seed=args.cluster.cluster_seed,
                 )
     else:
         raise ValueError(f"Invalid dataset name: {args.data.dataset}")

@@ -775,11 +775,11 @@ class ModernTCN(BaseModel):
     )
 
 
-class Hybrid(BaseModel):
+class Cluster(BaseModel):
     enabled: bool = Field(
         default=False,
         description=(
-            "Whether to use the k-cluster hybrid channel-grouping head. When False, "
+            "Whether to use the k-cluster channel-grouping head. When False, "
             "every model behaves exactly as before this feature was added. When "
             "True, the model's final per-channel head is replaced by k_clusters "
             "group-specific heads, each mixing only the channels assigned to its "
@@ -789,7 +789,7 @@ class Hybrid(BaseModel):
     )
     k_clusters: int = Field(
         default=1,
-        description="Number of channel clusters for the hybrid head. Only used when hybrid.enabled=True.",
+        description="Number of channel clusters for the clustered head. Only used when cluster.enabled=True.",
     )
     cluster_method: str = Field(
         default="kmeans",
@@ -831,7 +831,7 @@ class Global(BaseModel):
     # block silently, with no error and no warning.
     arima: ARIMA = ARIMA()
     conf: Conformal = Conformal()
-    hybrid: Hybrid = Hybrid()
+    cluster: Cluster = Cluster()
 
 
 def load_config(file_path: str) -> Global:

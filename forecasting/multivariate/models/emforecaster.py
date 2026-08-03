@@ -87,7 +87,7 @@ class EMForecaster(nn.Module):
         self.patch_dim = patch_dim
         self.patching_on = patching_on
         self.return_head = return_head
-        self.hybrid = cluster_assignment is not None
+        self.clustered = cluster_assignment is not None
 
         if self.patching_on:
             if patch_stride == -1:
@@ -140,10 +140,10 @@ class EMForecaster(nn.Module):
         else:
             self.patch_norm = nn.Identity()
 
-        # Base model / hybrid head. The clustered head replaces base_model
-        # entirely when hybrid mode is enabled -- base_model is never built in
+        # Base model / clustered head. The clustered head replaces base_model
+        # entirely when clustered mode is enabled -- base_model is never built in
         # that case, since it's structurally single-channel (see forward()).
-        if self.hybrid:
+        if self.clustered:
             self.clustered_head = ClusteredHead(
                 cluster_assignment,
                 k_clusters,
@@ -201,7 +201,7 @@ class EMForecaster(nn.Module):
             # # Project + Positional Encoding
             x = x + self.pos_enc  # (B*C, 1, num_patches * patch_embed_dim)
 
-            if self.hybrid:
+            if self.clustered:
                 # Unfold the channels back out BEFORE the head: the clustered
                 # head needs to see all channels in a cluster simultaneously,
                 # unlike base_model which is structurally single-channel.

@@ -148,11 +148,11 @@ class RecurrentModel(nn.Module):
 
         head_dim = 2 * head_dim if bidirectional else head_dim
 
-        self.hybrid = cluster_assignment is not None
-        if self.hybrid:
+        self.clustered = cluster_assignment is not None
+        if self.clustered:
             if head_type != "linear":
                 raise NotImplementedError(
-                    "hybrid k-cluster head only supports head_type='linear'"
+                    "k-cluster head only supports head_type='linear'"
                 )
             self.head = ClusteredHead(cluster_assignment, k_clusters, head_dim, pred_len)
         elif head_type == "linear":

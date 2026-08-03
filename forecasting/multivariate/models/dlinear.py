@@ -35,9 +35,9 @@ class DLinear(nn.Module):
             num_classes (int): Number of classes for classification task.
             moving_avg (int): Window size of moving average.
             individual (bool): Whether shared model among different variates. Ignored
-                when cluster_assignment is given (hybrid mode).
+                when cluster_assignment is given (clustered mode).
             cluster_assignment (Optional[List[int]]): Per-channel cluster id for the
-                hybrid k-cluster head. When given, replaces the individual/shared
+                k-cluster head. When given, replaces the individual/shared
                 head choice with k_clusters group-specific heads.
             k_clusters (int): Number of clusters when cluster_assignment is given.
         """
@@ -57,9 +57,9 @@ class DLinear(nn.Module):
         self.decomposition = series_decomp(moving_avg)
         self.individual = individual
         self.channels = num_channels
-        self.hybrid = cluster_assignment is not None
+        self.clustered = cluster_assignment is not None
 
-        if self.hybrid:
+        if self.clustered:
             self.seasonal_head = ClusteredHead(
                 cluster_assignment, k_clusters, self.seq_len, self.pred_len
             )
@@ -102,7 +102,7 @@ class DLinear(nn.Module):
         seasonal_init, trend_init = seasonal_init.permute(0, 2, 1), trend_init.permute(
             0, 2, 1
         )
-        if self.hybrid:
+        if self.clustered:
             seasonal_output = self.seasonal_head(seasonal_init)
             trend_output = self.trend_head(trend_init)
         elif self.individual:

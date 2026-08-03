@@ -14,8 +14,8 @@ def _fake_load_config(path):
                                  pin_memory=False)
     conf = types.SimpleNamespace(conf=False, alpha=0.0)
     sl = types.SimpleNamespace(batch_size=0)
-    hybrid = types.SimpleNamespace(enabled=False, k_clusters=0)
-    return types.SimpleNamespace(exp=exp, data=data, conf=conf, sl=sl, hybrid=hybrid)
+    cluster = types.SimpleNamespace(enabled=False, k_clusters=0)
+    return types.SimpleNamespace(exp=exp, data=data, conf=conf, sl=sl, cluster=cluster)
 
 
 def _fake_experiment(on_run):

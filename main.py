@@ -118,7 +118,7 @@ def prompt_setup():
     while True:
         ans = input(
             "Run [u]nivariate (one model per band), [m]ultivariate (one model per "
-            "cell), [s]eries (DET/PTV single-series), or [h]ybrid (k-cluster "
+            "cell), [s]eries (DET/PTV single-series), or [c]luster (k-cluster "
             "channel grouping) grid? "
         ).strip().lower()
         if ans in ("u", "uni", "univariate"):
@@ -127,9 +127,9 @@ def prompt_setup():
             return "multivariate"
         if ans in ("s", "series", "univariate_series"):
             return "univariate_series"
-        if ans in ("h", "hybrid"):
-            return "hybrid"
-        print("Please enter 'u', 'm', 's', or 'h'.")
+        if ans in ("c", "cluster"):
+            return "cluster"
+        print("Please enter 'u', 'm', 's', or 'c'.")
 
 if __name__ == "__main__":
     # Non-hyperparameter tuning
@@ -140,13 +140,13 @@ if __name__ == "__main__":
     parser.add_argument("--grid", action="store_true",
                         help="Run a full model x dataset x window grid instead of one job.")
     parser.add_argument("--setup",
-                        choices=["univariate", "multivariate", "univariate_series", "hybrid"],
+                        choices=["univariate", "multivariate", "univariate_series", "cluster"],
                         default=None,
                         help="Grid setup. 'univariate' trains one model per frequency "
                              "band on the multivariate datasets and averages the bands; "
                              "'multivariate' trains one model per cell over all bands; "
                              "'univariate_series' is the DET/PTV single-series sweep; "
-                             "'hybrid' trains one model per cell with a k-cluster "
+                             "'cluster' trains one model per cell with a k-cluster "
                              "channel-grouping head, sweeping k in addition to model/"
                              "dataset/window. If omitted in grid mode, you are prompted.")
     parser.add_argument("--dry_run", action="store_true",
@@ -160,7 +160,7 @@ if __name__ == "__main__":
                              "or 'L336_O96'; comma-separate for several. Omit to "
                              "run every window.")
     parser.add_argument("--k", type=str, default=None,
-                        help="Hybrid grid only: restrict to specific cluster "
+                        help="Cluster grid only: restrict to specific cluster "
                              "count(s) instead of every k in the grid. A single "
                              "value ('5') or a comma-separated list ('1,2'). A k "
                              "outside the grid's own k_values is allowed, so "

@@ -91,9 +91,9 @@ def get_model(args, generator=torch.Generator()):
             last_state=args.sl.last_state,
             avg_state=args.sl.avg_state,
             cluster_assignment=(
-                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+                args.cluster.cluster_assignment if args.cluster.enabled else None
             ),
-            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
+            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
     elif args.exp.model_id == "Linear":
         model = Linear(
@@ -112,9 +112,9 @@ def get_model(args, generator=torch.Generator()):
             individual=args.dlinear.individual,
             return_head=args.sl.return_head,
             cluster_assignment=(
-                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+                args.cluster.cluster_assignment if args.cluster.enabled else None
             ),
-            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
+            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
     elif args.exp.model_id == "EMForecaster":
         model = EMForecaster(
@@ -137,9 +137,9 @@ def get_model(args, generator=torch.Generator()):
             independent_patching=args.sl.independent_patching,
             pos_enc=args.sl.pos_enc,
             cluster_assignment=(
-                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+                args.cluster.cluster_assignment if args.cluster.enabled else None
             ),
-            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
+            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
 
     elif args.exp.model_id == "ModernTCN":
@@ -247,9 +247,9 @@ def get_model(args, generator=torch.Generator()):
             revin_affine=args.sl.revin_affine,
             eps_revin=args.sl.eps_revin,
             cluster_assignment=(
-                args.hybrid.cluster_assignment if args.hybrid.enabled else None
+                args.cluster.cluster_assignment if args.cluster.enabled else None
             ),
-            k_clusters=args.hybrid.k_clusters if args.hybrid.enabled else 1,
+            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
     elif args.exp.model_id == "ARIMA":
         model = ARIMAForecaster(

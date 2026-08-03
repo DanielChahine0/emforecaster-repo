@@ -3,14 +3,14 @@
 
     python results/extract_results.py --logs-root logs/multivariate
     python results/extract_results.py --logs-root "logs/univariate (per channel)" --output out.md
-    python results/extract_results.py --logs-root logs/hybrid
+    python results/extract_results.py --logs-root logs/cluster
     python results/extract_results.py   # no --logs-root: processes every logs/* subdirectory
 
-Hybrid runs (forecasting/grids.py GRIDS["hybrid"]) sweep a k-cluster dimension on
+Cluster runs (forecasting/grids.py GRIDS["cluster"]) sweep a k-cluster dimension on
 top of the usual (model, dataset, L, O) grid, so k is part of a cell's identity
 here: without it the four k values of one cell would be averaged into a single
 meaningless number. It shows up as an extra column, and only for trees that have
-it -- every non-hybrid tree's tables are byte-for-byte what they were before.
+it -- every non-cluster tree's tables are byte-for-byte what they were before.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ MISSING = "-"
 _TIME_RE = re.compile(
     r"^(?:(?P<hr>\d+)h(?:r|rs)?\s*)?(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
 _CHANNEL_RE = re.compile(r"^ch(\d+)$")
-# The run-dir tag forecasting/grid.py stamps on a hybrid cell (exp.id = "k3").
+# The run-dir tag forecasting/grid.py stamps on a cluster cell (exp.id = "k3").
 _K_RE = re.compile(r"^k(\d+)$")
 
 
@@ -105,7 +105,7 @@ class Run:
     jc: Optional[float]
     interval_width: Optional[float]
     channel: Optional[int]
-    # Number of hybrid channel clusters, or None for an ordinary (non-hybrid) run.
+    # Number of channel clusters, or None for an ordinary (non-cluster) run.
     k: Optional[int]
     seed: Optional[str]
     path: Path
@@ -186,12 +186,12 @@ def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
             if m:
                 k = int(m.group(1))
         # The logged value wins over the path tag; k_clusters is only meaningful
-        # when hybrid.enabled, since it defaults to 1 on every ordinary run.
-        if d.get("parameters/hybrid/enabled"):
-            k = d.get("parameters/hybrid/k_clusters", k)
+        # when cluster.enabled, since it defaults to 1 on every ordinary run.
+        if d.get("parameters/cluster/enabled"):
+            k = d.get("parameters/cluster/k_clusters", k)
         elif k is not None:
             print(f"WARNING: {log_path} sits under a 'k{k}' directory but "
-                  f"parameters/hybrid/enabled is not set; treating it as k={k}", file=sys.stderr)
+                  f"parameters/cluster/enabled is not set; treating it as k={k}", file=sys.stderr)
 
         seed = log_path.parent.name if log_path.parent.name.isdigit() else None
 
@@ -209,7 +209,7 @@ def mean_of(runs: list[Run], attr: str) -> Optional[float]:
 def group_runs(runs: list[Run]) -> dict[tuple, list[Run]]:
     # k is last so the existing positional reads of a cell key (key[0] is the
     # model, key[4] the conformal flag) keep working; it is None for every
-    # non-hybrid run, which leaves those trees grouped exactly as before.
+    # non-cluster run, which leaves those trees grouped exactly as before.
     groups: dict[tuple, list[Run]] = defaultdict(list)
     for r in runs:
         groups[(r.model, r.dataset, r.seq_len, r.pred_len, r.conf, r.k)].append(r)
@@ -346,7 +346,7 @@ def mark_ranks(strs: list[str], vals: list[Optional[float]]) -> None:
 
 
 def shows_k(row_keys: list[tuple]) -> bool:
-    """Whether this section needs a k column at all (hybrid trees only)."""
+    """Whether this section needs a k column at all (cluster trees only)."""
     return any(k is not None for _, _, _, k in row_keys)
 
 
@@ -357,7 +357,7 @@ def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool) -> li
         vals = [getattr(cells.get((m, ds, sl, pl, conf, k)), attr, None) for m in models]
         strs = [fmt(v) for v in vals]
         if mark_best:
-            # Ranked within one k: the models of a hybrid row compete at the same
+            # Ranked within one k: the models of a cluster row compete at the same
             # cluster count, not against the other k's of the same window.
             mark_ranks(strs, vals)
         head = [dataset_label(ds), str(sl), str(pl)]
@@ -382,7 +382,7 @@ def has_metric(cells, models, row_keys, conf, attr) -> bool:
 
 
 def variant_label(m: str, k: Optional[int]) -> str:
-    """Model name, disambiguated by cluster count on a hybrid tree."""
+    """Model name, disambiguated by cluster count on a cluster tree."""
     return model_label(m) if k is None else f"{model_label(m)} (k={k})"
 
 
@@ -393,7 +393,7 @@ def model_variants(keys, models) -> list[tuple[str, Optional[int]]]:
 
 
 def epoch_summary_table(runs, models, conf) -> list[str]:
-    # Split by k as well as model: a hybrid head's cost is dominated by its
+    # Split by k as well as model: a clustered head's cost is dominated by its
     # largest cluster, so pooling k=2 with k=9 would report neither.
     rows = []
     for m, k in model_variants({(r.model, None, None, None, None, r.k) for r in runs}, models):
@@ -644,19 +644,19 @@ DEFAULT_TABLES_FILE = Path(__file__).resolve().parent / "tables.md"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
 MULTIVARIATE_TITLE = "Multivariate"
-HYBRID_TITLE = "Hybrid (k-Cluster)"
+CLUSTER_TITLE = "Cluster (k-Grouped Channels)"
 COMPARISON_TITLE = "Multivariate vs Univariate"
 ROOT_TITLES = {
     "univariate": "Univariate Series",
     "univariate (per channel)": "Univariate (Per Channel)",
     "multivariate": MULTIVARIATE_TITLE,
-    "hybrid": HYBRID_TITLE,
+    "cluster": CLUSTER_TITLE,
 }
 SECTION_ORDER = [
     "Univariate Series",
     "Univariate (Per Channel)",
     MULTIVARIATE_TITLE,
-    HYBRID_TITLE,
+    CLUSTER_TITLE,
     COMPARISON_TITLE,
 ]
 # compact forms used as column headers in the side-by-side comparison
@@ -783,12 +783,12 @@ def main() -> None:
 
     by_title = {title: cells for title, _, cells in loaded}
     mv_cells = by_title.get(MULTIVARIATE_TITLE)
-    # The hybrid tree is deliberately not a right-hand side here: its cells carry a
+    # The cluster tree is deliberately not a right-hand side here: its cells carry a
     # k the univariate trees have no counterpart for, and this section's framing
-    # ("Δ is the univariate value") does not describe a hybrid-vs-joint delta. Its
-    # own '# Hybrid (k-Cluster)' section above carries the numbers.
+    # ("Δ is the univariate value") does not describe a cluster-vs-joint delta. Its
+    # own '# Cluster (k-Grouped Channels)' section above carries the numbers.
     uv_roots = [(t, c) for t, c in by_title.items()
-                if t not in (MULTIVARIATE_TITLE, HYBRID_TITLE)]
+                if t not in (MULTIVARIATE_TITLE, CLUSTER_TITLE)]
     if mv_cells and uv_roots:
         comparison = render_comparison(COMPARISON_TITLE, MULTIVARIATE_TITLE, mv_cells, uv_roots)
         if comparison:

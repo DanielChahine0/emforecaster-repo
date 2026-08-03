@@ -1,0 +1,34 @@
+{
+  "setup": "multivariate",
+  "finished": "2026-08-03_16-22-33",
+  "seeds": [
+    69421
+  ],
+  "k_values": null,
+  "passed": [
+    "[ 4/21] PatchTST     ED2022/L336/O96",
+    "[ 5/21] PatchTST     UH2022/L336/O96",
+    "[ 6/21] PatchTST     EMF_2023_university_5_with_PTV/L336/O96"
+  ],
+  "skipped": [
+    "[ 1/21] DLinear      ED2022/L336/O96",
+    "[ 2/21] DLinear      UH2022/L336/O96",
+    "[ 3/21] DLinear      EMF_2023_university_5_with_PTV/L336/O96",
+    "[ 7/21] TSMixer      ED2022/L336/O96",
+    "[ 8/21] TSMixer      UH2022/L336/O96",
+    "[ 9/21] TSMixer      EMF_2023_university_5_with_PTV/L336/O96",
+    "[10/21] Transformer  ED2022/L336/O96",
+    "[11/21] Transformer  UH2022/L336/O96",
+    "[12/21] Transformer  EMF_2023_university_5_with_PTV/L336/O96",
+    "[13/21] EMForecaster ED2022/L336/O96",
+    "[14/21] EMForecaster UH2022/L336/O96",
+    "[15/21] EMForecaster EMF_2023_university_5_with_PTV/L336/O96",
+    "[16/21] LSTM         ED2022/L336/O96",
+    "[17/21] LSTM         UH2022/L336/O96",
+    "[18/21] LSTM         EMF_2023_university_5_with_PTV/L336/O96",
+    "[19/21] ARIMA        ED2022/L336/O96",
+    "[20/21] ARIMA        UH2022/L336/O96",
+    "[21/21] ARIMA        EMF_2023_university_5_with_PTV/L336/O96"
+  ],
+  "failed": []
+}

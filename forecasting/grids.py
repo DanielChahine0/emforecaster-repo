@@ -4,7 +4,7 @@ Each model entry is (display_label, on-disk model_id, job_name). The on-disk
 model_id can differ from the label (the Transformer's is RF_EMF_Transformer) and
 drives the run directory, so it must match the model's args.yaml exactly.
 
-Three grids share the same WINDOWS so their cells line up one-to-one:
+Four grids share the same WINDOWS so their cells line up one-to-one:
 
 - "multivariate"      One model per cell, forecasting all 27/29 bands jointly.
 - "univariate"        The per-band counterpart of the multivariate sweep: one
@@ -14,8 +14,12 @@ Three grids share the same WINDOWS so their cells line up one-to-one:
 - "univariate_series" The original single-series sweep over the DET/PTV
                       monitoring CSVs. It was renamed from "univariate" when that
                       name was repurposed for the per-band grid above.
+- "cluster"           The multivariate sweep with the model's head replaced by k
+                      per-cluster heads, each mixing only the channels in its own
+                      cluster. Adds a k dimension (k_values) to every cell; four
+                      of the seven models, since three have no head to cluster.
 
-Since 2026-08-03 all three carry the same seven models -- EMForecaster, DLinear,
+The first three carry the same seven models since 2026-08-03 -- EMForecaster, DLinear,
 PatchTST, TSMixer, Transformer, LSTM, ARIMA -- so a model's column exists in
 every table. The two per-band/joint grids share one model list outright
 (UNIVARIATE_MODELS is MV_MODELS); univariate_series keeps a separate list only
@@ -70,17 +74,17 @@ MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
 # comparable one-to-one.
 UNIVARIATE_MODELS = MV_MODELS
 
-# The k-cluster hybrid head (forecasting/multivariate/layers/clustered_head.py):
+# The k-cluster head (forecasting/multivariate/layers/clustered_head.py):
 # partitions channels into k clusters and mixes channels only within a cluster,
 # instead of the fully joint or fully channel-independent extremes. Three models
 # are excluded. ARIMA has no backbone/head concept (classical per-series fit).
 # TSMixer's backbone already mixes all channels densely in every layer regardless
-# of any hybrid setting, so a clustered head on top of it would only restrict the
+# of any cluster setting, so a clustered head on top of it would only restrict the
 # final readout, not the actual information flow. PatchTST's constructor takes
 # `channel_independent` and no cluster_assignment/k_clusters at all
 # (multivariate/utils/models.py), so a k sweep would silently train the same
 # model four times and write four identical-but-for-the-tag cells.
-HYBRID_MODELS = [
+CLUSTER_MODELS = [
     m for m in MV_MODELS if m[1] not in ("ARIMA", "TSMixer", "PatchTST")
 ]
 
@@ -125,7 +129,7 @@ GRIDS = {
         "models": SERIES_MODELS, "datasets": SERIES_DATASETS, "windows": WINDOWS,
         "alpha": 0.1,
     },
-    # k-cluster hybrid channel grouping. Same models/datasets/windows spirit as
+    # k-cluster channel grouping. Same models/datasets/windows spirit as
     # "multivariate", plus a k_values sweep dimension. k=1 (fully joint) and
     # k=num_channels (one independently-trained head per channel) are
     # deliberately excluded from the main sweep: neither is a parametric match
@@ -133,8 +137,8 @@ GRIDS = {
     # (ClusteredHead's per-channel heads are independently trained, not
     # weight-tied like today's channel-independent heads), so treat them as
     # separate one-off sanity checks rather than grid cells.
-    "hybrid": {
-        "models": HYBRID_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
+    "cluster": {
+        "models": CLUSTER_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
         "alpha": 0.1, "k_values": [2, 3, 5, 9],
     },
 }
@@ -234,7 +238,7 @@ def select_seeds(spec):
 
 
 def select_k_values(spec, available):
-    """The cluster counts a hybrid grid sweeps, for a --k value.
+    """The cluster counts a cluster grid sweeps, for a --k value.
 
     `spec` None/empty -> `available` unchanged (None for a grid with no k
     dimension, which is what tells run_grid not to add k to its cells at all).
@@ -243,7 +247,7 @@ def select_k_values(spec, available):
 
     Unlike select_windows, a requested k need NOT be one of the grid's own
     k_values: the endpoints k=1 and k=num_channels are deliberately outside the
-    sweep (see GRIDS["hybrid"]) precisely so they can be run as one-offs, and
+    sweep (see GRIDS["cluster"]) precisely so they can be run as one-offs, and
     '--k 1' has to reach them without editing this file. run_grid logs any such
     off-grid value so it is visible in the run's own output.
 
@@ -256,7 +260,7 @@ def select_k_values(spec, available):
     if not available:
         raise ValueError(
             "--k only applies to a grid with a k dimension (currently just "
-            "'hybrid'); this grid has none"
+            "'cluster'); this grid has none"
         )
     ks = []
     for token in str(spec).split(","):

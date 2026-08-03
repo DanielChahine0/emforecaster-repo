@@ -34,15 +34,15 @@ MARKER = "sl_test/interval_width_mean"
 OOM_RETRIES = 2
 
 
-def _memory_profile(model_id, dataset, seq_len, hybrid_k=None):
+def _memory_profile(model_id, dataset, seq_len, cluster_k=None):
     """(batch_size, accum_steps) override for known memory-heavy cells, or None."""
-    if hybrid_k is not None and model_id in {"EMForecaster", "LSTM"}:
+    if cluster_k is not None and model_id in {"EMForecaster", "LSTM"}:
         # ClusteredHead's per-cluster Linear(size*F, size*pred_len) scales with
         # cluster-size^2, so at small k the head alone can dwarf the rest of the
         # model. This only helps activation memory -- if a cell still OOMs after
         # retries, the head's weights/optimizer state (not activations) are
         # likely the cause, and the fix is excluding that cell from the sweep
-        # (see forecasting/grids.py's GRIDS["hybrid"] k_values note), not a
+        # (see forecasting/grids.py's GRIDS["cluster"] k_values note), not a
         # smaller batch size.
         return 64, 8
     if model_id == "EMForecaster" and (
@@ -62,7 +62,7 @@ SETUP_PACKAGE = {
     "multivariate": "multivariate",
     "univariate": "multivariate",
     "univariate_series": "univariate",
-    "hybrid": "multivariate",
+    "cluster": "multivariate",
 }
 
 # Grid name -> the <setup> folder its runs land in under logs/. The names differ
@@ -74,7 +74,7 @@ LOG_SETUP = {
     "multivariate": "multivariate",
     "univariate": PER_CHANNEL_SETUP,
     "univariate_series": "univariate",
-    "hybrid": "hybrid",
+    "cluster": "cluster",
 }
 
 
@@ -131,7 +131,7 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     windows overrides the grid's window list (already validated by the caller);
     None runs all of them. seeds is the list of seeds each cell is trained on
     (also caller-validated); None means just SEED, the pre---seeds behaviour.
-    k_values overrides a hybrid grid's cluster counts (also caller-validated);
+    k_values overrides a cluster grid's cluster counts (also caller-validated);
     None means the grid's own k_values, i.e. the pre---k behaviour.
     """
     console = Console()
@@ -152,7 +152,7 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     grid_k = grid_def.get("k_values")
     k_values = grid_k if k_values is None else list(k_values)
     # --k may ask for a k outside the declared sweep on purpose (k=1 and
-    # k=num_channels are excluded from GRIDS["hybrid"] as one-off sanity checks).
+    # k=num_channels are excluded from GRIDS["cluster"] as one-off sanity checks).
     # Say so, so an off-grid cell is never mistaken for part of the sweep when
     # the results are read back later.
     off_grid = [k for k in (k_values or []) if k not in (grid_k or [])]
@@ -214,10 +214,10 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
             if k is not None:
                 # Must come after the args.exp.id = "" reset above, or different
                 # k's would collide in the same log directory.
-                args.hybrid.enabled = True
-                args.hybrid.k_clusters = k
+                args.cluster.enabled = True
+                args.cluster.k_clusters = k
                 args.exp.id = run_tag
-            profile = _memory_profile(model_id, dataset, seq_len, hybrid_k=k)
+            profile = _memory_profile(model_id, dataset, seq_len, cluster_k=k)
             if profile is not None:
                 args.sl.batch_size, args.sl.accum_steps = profile
                 console.log(
@@ -267,7 +267,7 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
         "setup": setup,
         "finished": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         "seeds": seeds,
-        # None on every non-hybrid grid; recorded so a --k run's report says which
+        # None on every non-cluster grid; recorded so a --k run's report says which
         # cluster counts it actually covered rather than implying the full sweep.
         "k_values": k_values,
         "passed": passed,
