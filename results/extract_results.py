@@ -3,7 +3,14 @@
 
     python results/extract_results.py --logs-root logs/multivariate
     python results/extract_results.py --logs-root "logs/univariate (per channel)" --output out.md
-    python results/extract_results.py   # no --logs-root: rebuild every section of results/tables.md
+    python results/extract_results.py --logs-root logs/hybrid
+    python results/extract_results.py   # no --logs-root: processes every logs/* subdirectory
+
+Hybrid runs (forecasting/grids.py GRIDS["hybrid"]) sweep a k-cluster dimension on
+top of the usual (model, dataset, L, O) grid, so k is part of a cell's identity
+here: without it the four k values of one cell would be averaged into a single
+meaningless number. It shows up as an extra column, and only for trees that have
+it -- every non-hybrid tree's tables are byte-for-byte what they were before.
 """
 
 from __future__ import annotations
@@ -38,12 +45,14 @@ DATASET_DISPLAY = {
 }
 DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
 
-MISSING = "—"
+MISSING = "-"
 
 # format is "<N>s", "<N>min <N>s" or "<N>hr <N>min <N>s"
 _TIME_RE = re.compile(
     r"^(?:(?P<hr>\d+)h(?:r|rs)?\s*)?(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
 _CHANNEL_RE = re.compile(r"^ch(\d+)$")
+# The run-dir tag forecasting/grid.py stamps on a hybrid cell (exp.id = "k3").
+_K_RE = re.compile(r"^k(\d+)$")
 
 
 def parse_running_time(raw: Optional[str]) -> Optional[float]:
@@ -96,6 +105,8 @@ class Run:
     jc: Optional[float]
     interval_width: Optional[float]
     channel: Optional[int]
+    # Number of hybrid channel clusters, or None for an ordinary (non-hybrid) run.
+    k: Optional[int]
     seed: Optional[str]
     path: Path
 
@@ -166,16 +177,27 @@ def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
             v = d.get("sl_test/interval_width_mean")
             interval_width = v[0] if v else None
 
-        channel = None
+        channel = k = None
         for part in log_path.parts:
             m = _CHANNEL_RE.fullmatch(part)
             if m:
                 channel = int(m.group(1))
+            m = _K_RE.fullmatch(part)
+            if m:
+                k = int(m.group(1))
+        # The logged value wins over the path tag; k_clusters is only meaningful
+        # when hybrid.enabled, since it defaults to 1 on every ordinary run.
+        if d.get("parameters/hybrid/enabled"):
+            k = d.get("parameters/hybrid/k_clusters", k)
+        elif k is not None:
+            print(f"WARNING: {log_path} sits under a 'k{k}' directory but "
+                  f"parameters/hybrid/enabled is not set; treating it as k={k}", file=sys.stderr)
+
         seed = log_path.parent.name if log_path.parent.name.isdigit() else None
 
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
                          running_time, per_epoch, num_params, ic, jc, interval_width,
-                         channel, seed, log_path))
+                         channel, k, seed, log_path))
     return runs
 
 
@@ -185,9 +207,12 @@ def mean_of(runs: list[Run], attr: str) -> Optional[float]:
 
 
 def group_runs(runs: list[Run]) -> dict[tuple, list[Run]]:
+    # k is last so the existing positional reads of a cell key (key[0] is the
+    # model, key[4] the conformal flag) keep working; it is None for every
+    # non-hybrid run, which leaves those trees grouped exactly as before.
     groups: dict[tuple, list[Run]] = defaultdict(list)
     for r in runs:
-        groups[(r.model, r.dataset, r.seq_len, r.pred_len, r.conf)].append(r)
+        groups[(r.model, r.dataset, r.seq_len, r.pred_len, r.conf, r.k)].append(r)
     return groups
 
 
@@ -220,13 +245,12 @@ def diagnose(runs: list[Run], cells: dict[tuple, Cell]) -> None:
             continue
         lo, hi = min(times), max(times)
         if lo > 0 and hi / lo >= 3:
-            model, dataset, seq_len, pred_len, conf = key
-            print(f"WARNING: wide running_time spread for {model}/{dataset} L{seq_len}_O{pred_len} "
-                  f"conf={conf}: {[format_seconds(t) for t in times]} -- possible contended/throttled "
-                  f"outlier seed; consider --exclude", file=sys.stderr)
+            model, dataset, seq_len, pred_len, conf, k = key
+            k_txt = f" k={k}" if k is not None else ""
+            print(f"WARNING: wide running_time spread for {model}/{dataset} L{seq_len}_O{pred_len}"
+                  f"{k_txt} conf={conf}: {[format_seconds(t) for t in times]} -- possible "
+                  f"contended/throttled outlier seed; consider --exclude", file=sys.stderr)
 
-
-# ---------------------------------------------------------------- ordering
 
 def model_rank(m: str) -> tuple:
     return (0, MODEL_ORDER.index(m)) if m in MODEL_ORDER else (1, m)
@@ -256,11 +280,15 @@ def display_rank(label: str) -> tuple:
 
 
 def row_keys_for(cells: dict[tuple, Cell], conf: bool) -> list[tuple]:
-    keys = {(ds, sl, pl) for (_, ds, sl, pl, c) in cells if c == conf}
-    return sorted(keys, key=lambda k: (dataset_rank(k[0]), k[1], k[2]))
+    """The (dataset, L, O, k) row identity of every cell in this conformal section."""
+    keys = {(ds, sl, pl, k) for (_, ds, sl, pl, c, k) in cells if c == conf}
+    return sorted(keys, key=lambda r: (dataset_rank(r[0]), r[1], r[2],
+                                       -1 if r[3] is None else r[3]))
 
 
-# ---------------------------------------------------------------- markdown
+def setting_label(sl: int, pl: int) -> str:
+    return f"L{sl}/O{pl}"
+
 
 def fmt_num(v: Optional[float], decimals: int) -> str:
     return f"{v:.{decimals}f}" if v is not None else MISSING
@@ -271,8 +299,7 @@ def num_fmt(decimals: int) -> Callable[[Optional[float]], str]:
 
 
 def md_table(headers: list[str], aligns: str, rows: list[list[str]]) -> list[str]:
-    """`aligns` is one char per column: 'l' or 'r'."""
-    rule = {"l": ":---", "r": "---:"}
+    rule = {"l": ":---", "r": "---:"}   # aligns is one char per column
     return (
         ["| " + " | ".join(headers) + " |",
          "|" + "|".join(rule[a] for a in aligns) + "|"]
@@ -281,8 +308,6 @@ def md_table(headers: list[str], aligns: str, rows: list[list[str]]) -> list[str
 
 
 class Doc:
-    """Markdown builder that keeps heading levels and numbering consistent."""
-
     def __init__(self, title: str):
         self.lines = [f"# {title}", ""]
         self.group_no = 0
@@ -291,12 +316,8 @@ class Doc:
     def para(self, text: str) -> None:
         self.lines.extend([text, ""])
 
-    def quote(self, items: list[tuple[str, str]]) -> None:
-        for i, (label, value) in enumerate(items):
-            if i:
-                self.lines.append(">")
-            self.lines.append(f"> **{label}** · {value}")
-        self.lines.append("")
+    def preamble(self, items: list[tuple[str, str]]) -> None:
+        self.lines.extend([f"- {label}: {value}" for label, value in items] + [""])
 
     def group(self, title: str) -> None:
         self.group_no += 1
@@ -314,10 +335,7 @@ class Doc:
         return "\n".join(self.lines).rstrip("\n") + "\n"
 
 
-# ---------------------------------------------------------------- per-root tables
-
 def mark_ranks(strs: list[str], vals: list[Optional[float]]) -> None:
-    """Bold the lowest value in the row and underline the runner-up, in place."""
     ranked = sorted((v, i) for i, v in enumerate(vals) if v is not None)
     if ranked:
         best = ranked[0][1]
@@ -327,71 +345,97 @@ def mark_ranks(strs: list[str], vals: list[Optional[float]]) -> None:
         strs[second] = f"<u>{strs[second]}</u>"
 
 
+def shows_k(row_keys: list[tuple]) -> bool:
+    """Whether this section needs a k column at all (hybrid trees only)."""
+    return any(k is not None for _, _, _, k in row_keys)
+
+
 def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool) -> list[list[str]]:
+    show_k = shows_k(row_keys)
     rows = []
-    for ds, sl, pl in row_keys:
-        vals = [getattr(cells.get((m, ds, sl, pl, conf)), attr, None) for m in models]
+    for ds, sl, pl, k in row_keys:
+        vals = [getattr(cells.get((m, ds, sl, pl, conf, k)), attr, None) for m in models]
         strs = [fmt(v) for v in vals]
         if mark_best:
+            # Ranked within one k: the models of a hybrid row compete at the same
+            # cluster count, not against the other k's of the same window.
             mark_ranks(strs, vals)
-        rows.append([dataset_label(ds), str(sl), str(pl)] + strs)
+        head = [dataset_label(ds), str(sl), str(pl)]
+        if show_k:
+            head.append(MISSING if k is None else str(k))
+        rows.append(head + strs)
     return rows
 
 
 def metric_table(cells, models, row_keys, conf, attr, fmt, mark_best=True) -> list[str]:
+    show_k = shows_k(row_keys)
     return md_table(
-        ["Dataset", "$L$", "$O$"] + [model_label(m) for m in models],
-        "lrr" + "r" * len(models),
+        ["Dataset", "$L$", "$O$"] + (["$k$"] if show_k else []) + [model_label(m) for m in models],
+        "lrr" + ("r" if show_k else "") + "r" * len(models),
         metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best),
     )
 
 
 def has_metric(cells, models, row_keys, conf, attr) -> bool:
-    return any(getattr(cells.get((m, ds, sl, pl, conf)), attr, None) is not None
-               for m in models for ds, sl, pl in row_keys)
+    return any(getattr(cells.get((m, ds, sl, pl, conf, k)), attr, None) is not None
+               for m in models for ds, sl, pl, k in row_keys)
+
+
+def variant_label(m: str, k: Optional[int]) -> str:
+    """Model name, disambiguated by cluster count on a hybrid tree."""
+    return model_label(m) if k is None else f"{model_label(m)} (k={k})"
+
+
+def model_variants(keys, models) -> list[tuple[str, Optional[int]]]:
+    """Every (model, k) pair present, in model order then ascending k."""
+    return sorted({(m, k) for (m, _, _, _, _, k) in keys if m in models},
+                  key=lambda v: (model_rank(v[0]), -1 if v[1] is None else v[1]))
 
 
 def epoch_summary_table(runs, models, conf) -> list[str]:
+    # Split by k as well as model: a hybrid head's cost is dominated by its
+    # largest cluster, so pooling k=2 with k=9 would report neither.
     rows = []
-    for m in models:
-        vals = [r.per_epoch for r in runs if r.model == m and r.conf == conf and r.per_epoch is not None]
+    for m, k in model_variants({(r.model, None, None, None, None, r.k) for r in runs}, models):
+        vals = [r.per_epoch for r in runs
+                if r.model == m and r.k == k and r.conf == conf and r.per_epoch is not None]
         if vals:
-            rows.append((m, statistics.mean(vals), len(vals)))
+            rows.append((variant_label(m, k), statistics.mean(vals), len(vals)))
     return md_table(
-        ["Model", "Mean / epoch", "Projected 100 epochs", "Runs"],
+        ["Model", "Mean / epoch", "Estimation for 100 ep", "Runs"],
         "lrrr",
-        [[model_label(m), format_seconds_fine(mean), f"~{format_seconds(mean * 100)}", str(n)]
-         for m, mean, n in sorted(rows, key=lambda r: r[1])],
+        [[label, format_seconds_fine(mean), f"~{format_seconds(mean * 100)}", str(n)]
+         for label, mean, n in sorted(rows, key=lambda r: r[1])],
     )
 
 
 def model_size_table(cells, models) -> list[str]:
-    settings = sorted({(sl, pl) for (_, _, sl, pl, _) in cells})
+    settings = sorted({(sl, pl) for (_, _, sl, pl, _, _) in cells})
     rows = []
-    for m in models:
+    for m, k in model_variants(cells, models):
         row = []
         for sl, pl in settings:
-            found = next((c.num_params for (mm, _, ssl, ppl, _), c in cells.items()
-                          if mm == m and ssl == sl and ppl == pl and c.num_params), None)
+            found = next((c.num_params for (mm, _, ssl, ppl, _, kk), c in cells.items()
+                          if mm == m and kk == k and ssl == sl and ppl == pl and c.num_params), None)
             row.append(f"{found:,}" if found else MISSING)
         if any(v != MISSING for v in row):
-            rows.append([model_label(m)] + row)
+            rows.append([variant_label(m, k)] + row)
     if not rows:
         return []
-    return md_table(["Model"] + [f"L{sl} → O{pl}" for sl, pl in settings], "l" + "r" * len(settings), rows)
+    return md_table(["Model"] + [setting_label(sl, pl) for sl, pl in settings],
+                    "l" + "r" * len(settings), rows)
 
 
 def coverage_summary(runs: list[Run], cells: dict[tuple, Cell]) -> str:
     per_channel = runs and all(r.channel is not None for r in runs)
     ns = sorted({c.n for c in cells.values()})
-    span = f"**{ns[0]}**" if len(ns) == 1 else f"**{min(ns)}–{max(ns)}**"
+    span = f"**{ns[0]}**" if len(ns) == 1 else f"**{min(ns)}-{max(ns)}**"
     if per_channel:
         seeds = sorted({c.n_seeds for c in cells.values() if c.n_seeds})
         seed_txt = (f"{seeds[0]} seed" if len(seeds) == 1 and seeds[0] == 1
-                    else f"{min(seeds)}–{max(seeds)} seeds" if seeds else "unknown seed count")
-        return (f"{len(runs)} logs · each table cell is a mean over {span} single-channel runs "
-                f"({seed_txt} per channel)")
-    return f"{len(runs)} logs · each table cell averages {span} replicate run(s)"
+                    else f"{min(seeds)}-{max(seeds)} seeds" if seeds else "unknown seed count")
+        return f"{len(runs)} logs; each cell is a mean over {span} single-channel runs ({seed_txt} each)"
+    return f"{len(runs)} logs; each cell averages {span} replicate run(s)"
 
 
 def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
@@ -400,79 +444,82 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
     settings = sorted({(r.seq_len, r.pred_len) for r in runs})
     datasets = sorted({r.dataset for r in runs}, key=dataset_rank)
 
+    ks = sorted({r.k for r in runs if r.k is not None})
+
     doc = Doc(title)
-    doc.quote([
+    items = [
         ("Models", ", ".join(model_label(m) for m in models)),
         ("Datasets", ", ".join(dataset_label(d) for d in datasets)),
-        ("Grid", ", ".join(f"L{sl} → O{pl}" for sl, pl in settings)),
-        ("Runs", coverage_summary(runs, cells)),
-        ("Conformal prediction",
-         "on for every run" if confs == [True] else
-         "off for every run" if confs == [False] else
-         "reported separately below for runs with and without it"),
-    ])
+        ("Grid", ", ".join(setting_label(sl, pl) for sl, pl in settings)),
+    ]
+    if ks:
+        items.append(("Channel clusters",
+                      f"k = {', '.join(str(k) for k in ks)} "
+                      f"(each k is its own cell, never averaged together)"))
+    items.append(("Runs", coverage_summary(runs, cells)))
+    items.append(("Conformal prediction",
+                  "on for every run" if confs == [True] else
+                  "off for every run" if confs == [False] else
+                  "reported separately below"))
+    doc.preamble(items)
 
     for conf in confs:
         suffix = ""
         if len(confs) > 1:
-            suffix = " — with conformal prediction" if conf else " — without conformal prediction"
+            suffix = " (with conformal prediction)" if conf else " (without conformal prediction)"
         row_keys = row_keys_for(cells, conf)
 
         doc.group("Forecast accuracy" + suffix)
-        doc.para("**Bold** marks the best (lowest) value in each row and <u>underline</u> the "
-                 f"runner-up, among populated cells. `{MISSING}` means the run was not logged.")
-        doc.table("MSE — `sl_test/loss`",
+        doc.para(f"**Bold** = best (lowest) in the row, <u>underline</u> = runner-up. "
+                 f"`{MISSING}` = not logged.")
+        doc.table("MSE (`sl_test/loss`)",
                   metric_table(cells, models, row_keys, conf, "mse", num_fmt(4)))
         if has_metric(cells, models, row_keys, conf, "mae"):
-            doc.table("MAE — `sl_test/mae`",
+            doc.table("MAE (`sl_test/mae`)",
                       metric_table(cells, models, row_keys, conf, "mae", num_fmt(4)))
 
         doc.group("Training cost" + suffix)
-        doc.para("**Bold** marks the fastest model in each row, <u>underline</u> the runner-up."
-                 + (" ARIMA is not gradient-trained, so it logs no training time or epochs."
+        doc.para("**Bold** = fastest in the row, <u>underline</u> = runner-up."
+                 + (f" `{MISSING}` = not logged (ARIMA is not gradient-trained)."
                     if "ARIMA" in models else ""))
-        doc.table("Total training time — `parameters/running_time`",
+        doc.table("Total training time (`parameters/running_time`)",
                   metric_table(cells, models, row_keys, conf, "running_time", format_seconds))
-        doc.table("Per-epoch training time — `running_time / len(sl_train/loss)`",
+        doc.table("Per-epoch training time (`running_time / len(sl_train/loss)`)",
                   metric_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine))
         doc.table("Mean epoch cost by model", epoch_summary_table(runs, models, conf),
-                  note="Averaged over every run of that model in this section, all datasets and "
-                       "settings pooled.")
+                  note="Pooled over every run of that model in this section.")
 
         if conf:
             doc.group("Conformal prediction")
-            doc.para("Nothing is bolded here: the best coverage is the one closest to the target, "
-                     "not the highest, and a narrower interval only helps when the target coverage "
-                     "is actually met.")
+            doc.para('Not marked -- "best" coverage means closest to the target, not highest, and '
+                     "a narrower interval only counts if that target is met.")
             if has_metric(cells, models, row_keys, True, "ic"):
-                doc.table("Marginal coverage % — `sl_test/ic`",
+                doc.table("Marginal coverage % (`sl_test/ic`)",
                           metric_table(cells, models, row_keys, True, "ic", num_fmt(2), mark_best=False))
             if has_metric(cells, models, row_keys, True, "jc"):
-                doc.table("Joint coverage % — `sl_test/jc`",
+                doc.table("Joint coverage % (`sl_test/jc`)",
                           metric_table(cells, models, row_keys, True, "jc", num_fmt(2), mark_best=False))
             if has_metric(cells, models, row_keys, True, "interval_width"):
-                doc.table("Mean interval width — `sl_test/interval_width_mean`",
+                doc.table("Mean interval width (`sl_test/interval_width_mean`)",
                           metric_table(cells, models, row_keys, True, "interval_width",
                                        num_fmt(3), mark_best=False))
 
     sizes = model_size_table(cells, models)
     if sizes:
+        by = "(model, k, L, O)" if ks else "(model, L, O)"
         doc.group("Model size")
-        doc.table("Trainable weights — `parameters/sl/num_params`", sizes,
-                  note="Multivariate models size with the channel count, so a value can vary by "
-                       "dataset as well as by (model, $L$, $O$); this table shows the first value "
-                       "found per (model, $L$, $O$).")
+        doc.table("Trainable weights (`parameters/sl/num_params`)", sizes,
+                  note=f"For multivariate logs this varies by dataset (different channel counts), "
+                       f"not just by {by}; shown here is the first value found per {by}.")
 
     return doc.render()
 
 
-# ---------------------------------------------------------------- comparison
-
 def canonical_cells(cells: dict[tuple, Cell]) -> dict[tuple, Cell]:
-    """Re-key cells by display name so `RF_EMF_Transformer` and `Transformer` line up."""
+    # re-key by display name so RF_EMF_Transformer and Transformer line up
     out: dict[tuple, Cell] = {}
-    for (m, ds, sl, pl, conf), cell in sorted(cells.items(), key=lambda kv: model_rank(kv[0][0])):
-        out.setdefault((model_label(m), ds, sl, pl, conf), cell)
+    for (m, ds, sl, pl, conf, k), cell in sorted(cells.items(), key=lambda kv: model_rank(kv[0][0])):
+        out.setdefault((model_label(m), ds, sl, pl, conf, k), cell)
     return out
 
 
@@ -488,7 +535,7 @@ def fmt_delta(value: float, decimals: int, unit: str) -> str:
 
 
 def pair_rows(keys, left, right, attr, fmt, lower_is_better: bool, delta: str):
-    rows, wins = [], [0, 0, 0]  # left, right, tie
+    rows, wins = [], [0, 0, 0]
     for key in keys:
         a = getattr(left.get(key), attr, None)
         b = getattr(right.get(key), attr, None)
@@ -505,7 +552,7 @@ def pair_rows(keys, left, right, attr, fmt, lower_is_better: bool, delta: str):
                     sa, wins[0] = f"**{sa}**", wins[0] + 1
                 else:
                     wins[2] += 1
-        model, ds, sl, pl, _ = key
+        model, ds, sl, pl = key[0], key[1], key[2], key[3]
         rows.append([dataset_label(ds), str(sl), str(pl), model, sa, sb, sd])
     return rows, wins
 
@@ -528,13 +575,12 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
 
     left = short_label(mv_title)
     doc = Doc(title)
-    doc.quote([
+    doc.preamble([
         ("Compares", " · ".join(f"{left} vs {short_label(label)}" for label, _, _ in matched)),
-        ("Matched on", "(dataset, $L$, $O$, model, conformal setting) — only cells present in "
-                       "both trees appear below"),
-        ("Reading Δ", f"Δ is the univariate value relative to {left}, so a negative Δ favours the "
-                      "univariate pipeline; **bold** marks the better of the two wherever lower "
-                      "is unambiguously better"),
+        ("Matched on", "(dataset, L, O, model, conformal setting); only cells present in both "
+                       "trees appear below"),
+        ("Delta", f"Δ is the univariate value relative to {left}, so negative Δ means the "
+                  "univariate value is lower; **bold** = better of the two where lower is better"),
     ])
 
     all_wins: list[tuple[str, str, list[int]]] = []
@@ -542,18 +588,17 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
         right = short_label(label)
         pair = f"{left} vs {right}"
 
-        doc.group(f"Accuracy — {pair}")
+        doc.group(f"Forecast accuracy ({pair})")
         doc.para(f"{len(keys)} matched cells, from `{mv_title}` and `{label}`.")
-        for metric, attr, decimals in [("MSE — `sl_test/loss`", "mse", 4),
-                                       ("MAE — `sl_test/mae`", "mae", 4)]:
+        for name, log_key, attr, decimals in [("MSE", "sl_test/loss", "mse", 4),
+                                              ("MAE", "sl_test/mae", "mae", 4)]:
             table, wins = pair_table(keys, mv, uv, left, right, attr, num_fmt(decimals))
-            doc.table(metric, table)
-            all_wins.append((right, metric.split(" —")[0], wins))
+            doc.table(f"{name} (`{log_key}`)", table)
+            all_wins.append((right, name, wins))
 
-        doc.group(f"Training cost — {pair}")
+        doc.group(f"Training cost ({pair})")
         doc.para(f"`{right}` is the mean cost of one channel's model; `all channels` multiplies it "
-                 "by the channel count, which is what the whole forecast costs when every channel "
-                 f"needs its own model. Δ compares that total against {left}.")
+                 f"by the channel count. Δ compares that total against {left}.")
         rows = []
         for key in keys:
             a = getattr(mv.get(key), "running_time", None)
@@ -561,28 +606,28 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
             chans = getattr(uv.get(key), "n_channels", None)
             total = b * chans if b is not None and chans else None
             sd = fmt_delta((total - a) / a * 100, 1, "%") if a and total is not None else MISSING
-            model, ds, sl, pl, _ = key
+            model, ds, sl, pl = key[0], key[1], key[2], key[3]
             rows.append([dataset_label(ds), str(sl), str(pl), model, format_seconds(a),
                          format_seconds(b), str(chans) if chans else MISSING,
                          format_seconds(total), sd])
-        doc.table("Total training time — `parameters/running_time`",
+        doc.table("Total training time (`parameters/running_time`)",
                   md_table(["Dataset", "$L$", "$O$", "Model", left, right,
                             "Channels", "All channels", "Δ"], "lrrlrrrrr", rows))
 
-        conformal = [k for k in keys if k[4]]
+        conformal = [key for key in keys if key[4]]  # key[4] is the conf flag, not k
         if conformal:
-            doc.group(f"Conformal prediction — {pair}")
-            doc.para("Δ is in percentage points for coverage and relative for interval width. "
-                     "Coverage is not bolded: closest to target wins, not highest.")
-            for metric, attr, decimals, lower, kind in [
-                ("Marginal coverage % — `sl_test/ic`", "ic", 2, False, "pp"),
-                ("Joint coverage % — `sl_test/jc`", "jc", 2, False, "pp"),
-                ("Mean interval width — `sl_test/interval_width_mean`", "interval_width", 3, True, "pct"),
+            doc.group(f"Conformal prediction ({pair})")
+            doc.para("Δ is in percentage points for coverage, relative for interval width. "
+                     'Coverage is not marked -- "best" means closest to the target.')
+            for name, log_key, attr, decimals, lower, kind in [
+                ("Marginal coverage %", "sl_test/ic", "ic", 2, False, "pp"),
+                ("Joint coverage %", "sl_test/jc", "jc", 2, False, "pp"),
+                ("Mean interval width", "sl_test/interval_width_mean", "interval_width", 3, True, "pct"),
             ]:
-                if any(getattr(mv.get(k), attr, None) is not None for k in conformal):
+                if any(getattr(mv.get(key), attr, None) is not None for key in conformal):
                     table, wins = pair_table(conformal, mv, uv, left, right, attr,
                                              num_fmt(decimals), lower_is_better=lower, delta=kind)
-                    doc.table(metric, table)
+                    doc.table(f"{name} (`{log_key}`)", table)
                     if lower:
                         all_wins.append((right, "Interval width", wins))
 
@@ -591,39 +636,35 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
               md_table(["Comparison", "Metric", left, "Univariate", "Tie"], "llrrr",
                        [[f"{left} vs {label}", metric, str(w[0]), str(w[1]), str(w[2])]
                         for label, metric, w in all_wins]),
-              note="How many matched cells each pipeline wins, counted only for the metrics where "
-                   "lower is unambiguously better.")
+              note="How many matched cells each pipeline wins, counted only where lower is better.")
     return doc.render()
 
-
-# ---------------------------------------------------------------- file I/O
 
 DEFAULT_TABLES_FILE = Path(__file__).resolve().parent / "tables.md"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
 MULTIVARIATE_TITLE = "Multivariate"
+HYBRID_TITLE = "Hybrid (k-Cluster)"
 COMPARISON_TITLE = "Multivariate vs Univariate"
 ROOT_TITLES = {
     "univariate": "Univariate Series",
     "univariate (per channel)": "Univariate (Per Channel)",
     "multivariate": MULTIVARIATE_TITLE,
+    "hybrid": HYBRID_TITLE,
 }
+SECTION_ORDER = [
+    "Univariate Series",
+    "Univariate (Per Channel)",
+    MULTIVARIATE_TITLE,
+    HYBRID_TITLE,
+    COMPARISON_TITLE,
+]
 # compact forms used as column headers in the side-by-side comparison
 SHORT_TITLES = {
     "Univariate Series": "Univariate series",
     "Univariate (Per Channel)": "Per-channel",
     MULTIVARIATE_TITLE: "Multivariate",
 }
-
-
-def short_label(title: str) -> str:
-    return SHORT_TITLES.get(title, title)
-SECTION_ORDER = [
-    "Univariate Series",
-    "Univariate (Per Channel)",
-    MULTIVARIATE_TITLE,
-    COMPARISON_TITLE,
-]
 # headings written by older versions of this script
 HEADING_ALIASES = {
     "Univariate": "Univariate Series",
@@ -632,6 +673,10 @@ HEADING_ALIASES = {
 
 # only top-level '# ' headings; everything a report emits is '##' or deeper
 _SECTION_RE = re.compile(r"^# (.+)$", re.MULTILINE)
+
+
+def short_label(title: str) -> str:
+    return SHORT_TITLES.get(title, title)
 
 
 def derive_heading(logs_root: Path) -> str:
@@ -738,7 +783,12 @@ def main() -> None:
 
     by_title = {title: cells for title, _, cells in loaded}
     mv_cells = by_title.get(MULTIVARIATE_TITLE)
-    uv_roots = [(t, c) for t, c in by_title.items() if t != MULTIVARIATE_TITLE]
+    # The hybrid tree is deliberately not a right-hand side here: its cells carry a
+    # k the univariate trees have no counterpart for, and this section's framing
+    # ("Δ is the univariate value") does not describe a hybrid-vs-joint delta. Its
+    # own '# Hybrid (k-Cluster)' section above carries the numbers.
+    uv_roots = [(t, c) for t, c in by_title.items()
+                if t not in (MULTIVARIATE_TITLE, HYBRID_TITLE)]
     if mv_cells and uv_roots:
         comparison = render_comparison(COMPARISON_TITLE, MULTIVARIATE_TITLE, mv_cells, uv_roots)
         if comparison:
