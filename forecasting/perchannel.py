@@ -250,25 +250,29 @@ def aggregate_cell(model_id, dataset, seq_len, pred_len, num_channels, seed=SEED
 
 
 def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="logs",
-                         windows=None, seeds=None):
+                         windows=None, seeds=None, models=None, datasets=None):
     """Run every band of every cell, then aggregate. Returns the failed bands.
 
     windows overrides the grid's window list (already validated by the caller);
     None runs all of them. seeds is the list of seeds each band is trained on
     (also caller-validated); None means just SEED, the pre---seeds behaviour.
     Note that a seed here multiplies *band* runs, not cells: a second seed on the
-    full grid is another 27/29 trainings per cell.
+    full grid is another 27/29 trainings per cell. models and datasets restrict
+    the sweep to a subset of the grid's own (also caller-validated); None means
+    all of them.
     """
     console = Console()
     grid_def = GRIDS[setup]
     alpha = grid_def["alpha"]
     windows = grid_def["windows"] if windows is None else windows
     seeds = [SEED] if seeds is None else list(seeds)
-    channels_by_dataset = {d: dataset_num_channels(d) for d in grid_def["datasets"]}
+    models = grid_def["models"] if models is None else list(models)
+    datasets = grid_def["datasets"] if datasets is None else list(datasets)
+    channels_by_dataset = {d: dataset_num_channels(d) for d in datasets}
 
     cells = [(m, d, w)
-             for m in grid_def["models"]
-             for d in grid_def["datasets"]
+             for m in models
+             for d in datasets
              for w in windows]
 
     # Flatten every (seed, cell, band) into one work list so the pool stays

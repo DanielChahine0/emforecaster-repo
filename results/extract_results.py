@@ -403,8 +403,8 @@ def model_variants(keys, models) -> list[tuple[str, Optional[int]]]:
 
 
 def epoch_summary_table(runs, models, conf) -> list[str]:
-    # Split by k as well as model: a clustered head's cost is dominated by its
-    # largest cluster, so pooling k=2 with k=9 would report neither.
+    # Split by k as well as model: CCM builds k parallel per-cluster layers, so
+    # epoch cost grows with k and pooling k=2 with k=9 would report neither.
     rows = []
     for m, k in model_variants({(r.model, None, None, None, None, r.k) for r in runs}, models):
         vals = [r.per_epoch for r in runs

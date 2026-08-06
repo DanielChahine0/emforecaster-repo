@@ -14,10 +14,12 @@ Four grids share the same WINDOWS so their cells line up one-to-one:
 - "univariate_series" The original single-series sweep over the DET/PTV
                       monitoring CSVs. It was renamed from "univariate" when that
                       name was repurposed for the per-band grid above.
-- "cluster"           The multivariate sweep with the model's head replaced by k
-                      per-cluster heads, each mixing only the channels in its own
-                      cluster. Adds a k dimension (k_values) to every cell; four
-                      of the seven models, since three have no head to cluster.
+- "cluster"           The multivariate sweep run through CCM (Channel Clustering
+                      Module, NeurIPS 2024), whose learned soft channel clustering
+                      replaces the model's ordinary head. Adds a k dimension
+                      (k_values) to every cell; four models, since CCM ships
+                      wrappers for exactly four. See CLUSTER_MODELS below and
+                      forecasting/multivariate/models/ccm.py.
 
 The first three carry the same seven models since 2026-08-03 -- EMForecaster, DLinear,
 PatchTST, TSMixer, Transformer, LSTM, ARIMA -- so a model's column exists in
@@ -74,18 +76,32 @@ MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
 # comparable one-to-one.
 UNIVARIATE_MODELS = MV_MODELS
 
-# The k-cluster head (forecasting/multivariate/layers/clustered_head.py):
-# partitions channels into k clusters and mixes channels only within a cluster,
-# instead of the fully joint or fully channel-independent extremes. Three models
-# are excluded. ARIMA has no backbone/head concept (classical per-series fit).
-# TSMixer's backbone already mixes all channels densely in every layer regardless
-# of any cluster setting, so a clustered head on top of it would only restrict the
-# final readout, not the actual information flow. PatchTST's constructor takes
-# `channel_independent` and no cluster_assignment/k_clusters at all
-# (multivariate/utils/models.py), so a k sweep would silently train the same
-# model four times and write four identical-but-for-the-tag cells.
+# The CCM cluster grid (forecasting/multivariate/models/ccm.py). CCM assigns
+# channels to k clusters with a learned, soft, sinkhorn-normalized assignment and
+# mixes k parallel per-cluster layers by it, rather than partitioning channels up
+# front. The clustering is threaded through the backbone, not bolted onto the
+# output, so a model is only in this grid if CCM implements it.
+#
+# That is exactly these four: DLinear, PatchTST, TSMixer and TimesNet are the
+# wrappers in TimeSeriesCCM-main/models/. EMForecaster, Transformer, LSTM and
+# ARIMA have no upstream counterpart -- clustering them would mean an adaptation
+# of our own rather than the paper's method, so they are out. CCMForecaster
+# raises on any model_id outside this set instead of silently building something
+# else.
+#
+# Two consequences worth knowing when reading the results:
+#   - This list is NOT a subset of MV_MODELS. TimesNet has a job config
+#     (rf_emf_mv/timesnet) and runs fine, but it is not in the multivariate grid,
+#     so its cluster cells have no same-window multivariate baseline to sit
+#     beside. Add TimesNet to MV_MODELS if that comparison is wanted.
+#   - The set changed on 2026-08-06, when CCM replaced the KMeans-partition head.
+#     PatchTST and TSMixer were excluded under the old head and are back;
+#     EMForecaster and LSTM were included and are gone.
 CLUSTER_MODELS = [
-    m for m in MV_MODELS if m[1] not in ("ARIMA", "TSMixer", "PatchTST")
+    ("DLinear", "DLinear", "rf_emf_mv/dlinear"),
+    ("PatchTST", "PatchTST", "rf_emf_mv/patchtst"),
+    ("TSMixer", "TSMixer", "rf_emf_mv/tsmixer"),
+    ("TimesNet", "TimesNet", "rf_emf_mv/timesnet"),
 ]
 
 # The single-series counterpart list. Job names here are "rf_emf/*", NOT
@@ -129,14 +145,12 @@ GRIDS = {
         "models": SERIES_MODELS, "datasets": SERIES_DATASETS, "windows": WINDOWS,
         "alpha": 0.1,
     },
-    # k-cluster channel grouping. Same models/datasets/windows spirit as
-    # "multivariate", plus a k_values sweep dimension. k=1 (fully joint) and
-    # k=num_channels (one independently-trained head per channel) are
-    # deliberately excluded from the main sweep: neither is a parametric match
-    # for any existing baseline already in the multivariate/univariate grids
-    # (ClusteredHead's per-channel heads are independently trained, not
-    # weight-tied like today's channel-independent heads), so treat them as
-    # separate one-off sanity checks rather than grid cells.
+    # CCM channel clustering. Same datasets/windows as "multivariate", plus a
+    # k_values sweep dimension. k=1 (every channel in one cluster) and
+    # k=num_channels (one cluster per channel) are deliberately outside the
+    # sweep: they are the degenerate ends of the soft assignment rather than
+    # interesting cluster counts, and --k reaches them for a one-off sanity
+    # check without editing this list.
     "cluster": {
         "models": CLUSTER_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
         "alpha": 0.1, "k_values": [2, 3, 5, 9],
@@ -235,6 +249,74 @@ def select_seeds(spec):
     if count < 1:
         raise ValueError(f"--seeds must be at least 1, got {count}")
     return [SEED + i for i in range(count)]
+
+
+def select_models(spec, available):
+    """The models from `available` selected by `spec`, in grid order.
+
+    `spec` None/empty -> all of them. Otherwise a comma-separated list of either
+    display labels or on-disk model_ids, matched case-insensitively, so
+    '--model dlinear', '--model DLinear' and '--model RF_EMF_Transformer' all
+    work. Matching both names matters because the two differ for the Transformer
+    (label "Transformer", model_id "RF_EMF_Transformer"), and the model_id is
+    what appears in the logs/ path the user is usually reading from.
+
+    Raises ValueError on a name not in this grid, so a typo (or a model that
+    belongs to a different grid) is a clean error rather than a silently empty
+    sweep.
+    """
+    if not spec:
+        return list(available)
+    requested = [t.strip().lower() for t in str(spec).split(",") if t.strip()]
+    if not requested:
+        raise ValueError("empty --model value")
+    selected, missing = [], []
+    for name in dict.fromkeys(requested):
+        hit = [m for m in available if name in (m[0].lower(), m[1].lower())]
+        if hit:
+            selected.extend(hit)
+        else:
+            missing.append(name)
+    if missing:
+        have = ", ".join(sorted({m[1] for m in available}))
+        raise ValueError(
+            f"model(s) {', '.join(missing)} not in this grid (has: {have})"
+        )
+    # Grid order, deduped: two spellings of one model must not plan it twice.
+    return [m for m in available if m in set(selected)]
+
+
+def select_datasets(spec, available):
+    """The datasets from `available` selected by `spec`, in grid order.
+
+    `spec` None/empty -> all of them. Otherwise a comma-separated list matched
+    case-insensitively against both the dataset name and its logs/ folder slug,
+    so '--dataset ED2022', '--dataset ed2022' and '--dataset emf2023' (the slug
+    for EMF_2023_university_5_with_PTV) all work. The slug form is accepted
+    because it is what the logs/ tree shows, and typing the full name of the
+    emf2023 dataset is otherwise error-prone.
+    """
+    if not spec:
+        return list(available)
+    requested = [t.strip().lower() for t in str(spec).split(",") if t.strip()]
+    if not requested:
+        raise ValueError("empty --dataset value")
+    from forecasting.run_path import dataset_slug
+
+    selected, missing = [], []
+    for name in dict.fromkeys(requested):
+        hit = [d for d in available
+               if name in (d.lower(), dataset_slug(d).lower())]
+        if hit:
+            selected.extend(hit)
+        else:
+            missing.append(name)
+    if missing:
+        have = ", ".join(f"{d} ({dataset_slug(d)})" for d in available)
+        raise ValueError(
+            f"dataset(s) {', '.join(missing)} not in this grid (has: {have})"
+        )
+    return [d for d in available if d in set(selected)]
 
 
 def select_k_values(spec, available):

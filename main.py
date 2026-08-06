@@ -118,8 +118,8 @@ def prompt_setup():
     while True:
         ans = input(
             "Run [u]nivariate (one model per band), [m]ultivariate (one model per "
-            "cell), [s]eries (DET/PTV single-series), or [c]luster (k-cluster "
-            "channel grouping) grid? "
+            "cell), [s]eries (DET/PTV single-series), or [c]luster (CCM channel "
+            "clustering) grid? "
         ).strip().lower()
         if ans in ("u", "uni", "univariate"):
             return "univariate"
@@ -146,14 +146,30 @@ if __name__ == "__main__":
                              "band on the multivariate datasets and averages the bands; "
                              "'multivariate' trains one model per cell over all bands; "
                              "'univariate_series' is the DET/PTV single-series sweep; "
-                             "'cluster' trains one model per cell with a k-cluster "
-                             "channel-grouping head, sweeping k in addition to model/"
+                             "'cluster' runs the same cells through CCM's learned "
+                             "channel clustering, sweeping k in addition to model/"
                              "dataset/window. If omitted in grid mode, you are prompted.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Grid mode only: list cells and targets without training.")
     parser.add_argument("--jobs", type=int, default=8,
                         help="Per-channel grid only: how many band trainings run "
                              "concurrently (default 8). Lower it if the GPU OOMs.")
+    parser.add_argument("--model", type=str, default=None,
+                        help="Grid mode only: restrict to specific model(s) "
+                             "instead of every model in the grid. Comma-separated, "
+                             "matched case-insensitively against either the "
+                             "display label or the on-disk model_id, so "
+                             "'--model dlinear' and '--model RF_EMF_Transformer' "
+                             "both work. Useful for a trial run: the cells it "
+                             "keeps are exactly the cells the full sweep would "
+                             "have run, so the results drop into the same tables.")
+    parser.add_argument("--dataset", type=str, default=None,
+                        help="Grid mode only: restrict to specific dataset(s) "
+                             "instead of all three. Comma-separated, matched "
+                             "case-insensitively against either the dataset name "
+                             "or its logs/ folder slug, so '--dataset ED2022', "
+                             "'--dataset ed2022' and '--dataset emf2023' (for "
+                             "EMF_2023_university_5_with_PTV) all work.")
     parser.add_argument("--window", type=str, default=None,
                         help="Grid mode only: restrict to specific window(s) "
                              "instead of all four. Format 'LxO' (e.g. '336x96') "
@@ -164,10 +180,8 @@ if __name__ == "__main__":
                              "count(s) instead of every k in the grid. A single "
                              "value ('5') or a comma-separated list ('1,2'). A k "
                              "outside the grid's own k_values is allowed, so "
-                             "'--k 1' runs the fully joint head without editing "
-                             "forecasting/grids.py; k must be <= the dataset's "
-                             "channel count (27 or 29) or the cell fails at model "
-                             "build with an empty cluster.")
+                             "'--k 1' runs the degenerate one-cluster case "
+                             "without editing forecasting/grids.py.")
     parser.add_argument("--seeds", type=str, default=None,
                         help="Grid mode only: how many seeds to train each cell "
                              "on (default 1). A count counts up from 69421, so "
@@ -186,15 +200,18 @@ if __name__ == "__main__":
         print("Running in venv test mode")
         # Add any venv test specific code here
     elif args.grid or args.job_name is None:
-        from forecasting.grids import (GRIDS, select_k_values, select_seeds,
+        from forecasting.grids import (GRIDS, select_datasets, select_k_values,
+                                       select_models, select_seeds,
                                        select_windows)
         setup = args.setup or prompt_setup()
-        # Validate --window/--seeds/--k against this grid up front so a typo is a
+        # Validate every selector against this grid up front so a typo is a
         # clean error, not a mid-run traceback (or a silently empty sweep).
         try:
             windows = select_windows(args.window, GRIDS[setup]["windows"])
             seeds = select_seeds(args.seeds)
             k_values = select_k_values(args.k, GRIDS[setup].get("k_values"))
+            models = select_models(args.model, GRIDS[setup]["models"])
+            datasets = select_datasets(args.dataset, GRIDS[setup]["datasets"])
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(2)
@@ -204,11 +221,13 @@ if __name__ == "__main__":
             from forecasting.perchannel import run_per_channel_grid
             failed = run_per_channel_grid(setup=setup, jobs=args.jobs,
                                           dry_run=args.dry_run, windows=windows,
-                                          seeds=seeds)
+                                          seeds=seeds, models=models,
+                                          datasets=datasets)
         else:
             from forecasting.grid import run_grid
             failed = run_grid(setup, dry_run=args.dry_run, windows=windows,
-                              seeds=seeds, k_values=k_values)
+                              seeds=seeds, k_values=k_values, models=models,
+                              datasets=datasets)
         sys.exit(1 if failed else 0)
     else:
         if args.ablation is not None:

@@ -776,36 +776,45 @@ class ModernTCN(BaseModel):
 
 
 class Cluster(BaseModel):
+    """CCM channel clustering (forecasting/multivariate/models/ccm.py).
+
+    When enabled, the whole network is replaced by CCM's own implementation of
+    it, imported from the vendored TimeSeriesCCM-main/ tree. Channels are
+    assigned to k clusters by a learned, soft, sinkhorn-normalized assignment
+    against trainable cluster embeddings, and k parallel Linear layers are mixed
+    by that assignment. Only DLinear, PatchTST, TSMixer and TimesNet have
+    upstream CCM wrappers; any other model_id is rejected at model build.
+
+    This replaced a static KMeans-partition head on 2026-08-06. That version
+    precomputed a hard channel partition from the training split's correlation
+    matrix and gave each group its own Linear; it produced the k1/k9 cells in
+    commits 2ebc7f08 and 3d2de887, which were deleted in f24cf7a2. Those runs are
+    not resumable against this config -- the cluster_method / cluster_seed /
+    cluster_assignment fields they recorded no longer exist.
+    """
+
     enabled: bool = Field(
         default=False,
         description=(
-            "Whether to use the k-cluster channel-grouping head. When False, "
-            "every model behaves exactly as before this feature was added. When "
-            "True, the model's final per-channel head is replaced by k_clusters "
-            "group-specific heads, each mixing only the channels assigned to its "
-            "own cluster (k=1 is fully joint, k=num_channels gives each channel its "
-            "own independently-trained head)."
+            "Whether to run the CCM channel-clustering model instead of the "
+            "model_id's ordinary implementation. When False, every model behaves "
+            "exactly as it does in the multivariate grid."
         ),
     )
     k_clusters: int = Field(
         default=1,
-        description="Number of channel clusters for the clustered head. Only used when cluster.enabled=True.",
-    )
-    cluster_method: str = Field(
-        default="kmeans",
-        description="Clustering method used to assign channels to clusters. Options: 'kmeans'.",
-    )
-    cluster_seed: int = Field(
-        default=69421,
-        description="Random seed for the clustering algorithm. Matches the grid's SEED constant (forecasting/grid.py) for determinism.",
-    )
-    cluster_assignment: List[int] = Field(
-        default=[],
         description=(
-            "Cluster id (0..k_clusters-1) assigned to each channel, in the same "
-            "channel order as sl_test/mse_per_channel. Empty until populated by the "
-            "dataloader from the training split; persisted here so it round-trips "
-            "into the run's resolved args.yaml for reproducibility."
+            "Number of channel clusters (upstream's n_cluster). Only used when "
+            "cluster.enabled=True. Set per cell by the grid's --k sweep."
+        ),
+    )
+    beta: float = Field(
+        default=0.3,
+        description=(
+            "Weight on CCM's auxiliary similarity loss: total = forecast_loss + "
+            "beta * similarity_loss. Upstream's default. Set to 0 to train the "
+            "clustered architecture on the forecast loss alone, which leaves the "
+            "cluster assignment unconstrained by the data's channel similarity."
         ),
     )
 

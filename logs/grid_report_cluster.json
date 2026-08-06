@@ -1,0 +1,30 @@
+{
+  "setup": "cluster",
+  "finished": "2026-08-06_12-14-30",
+  "seeds": [
+    69421
+  ],
+  "k_values": [
+    1,
+    2,
+    4,
+    6
+  ],
+  "models": [
+    "DLinear"
+  ],
+  "datasets": [
+    "ED2022"
+  ],
+  "windows": [
+    "L336_O96"
+  ],
+  "passed": [
+    "[ 1/4] DLinear      ED2022/L336/O96 k=1",
+    "[ 2/4] DLinear      ED2022/L336/O96 k=2",
+    "[ 3/4] DLinear      ED2022/L336/O96 k=4",
+    "[ 4/4] DLinear      ED2022/L336/O96 k=6"
+  ],
+  "skipped": [],
+  "failed": []
+}

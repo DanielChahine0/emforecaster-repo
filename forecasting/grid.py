@@ -34,28 +34,17 @@ MARKER = "sl_test/interval_width_mean"
 OOM_RETRIES = 2
 
 
-def _memory_profile(model_id, dataset, seq_len, cluster_k=None):
-    """(batch_size, accum_steps) override for known memory-heavy cells, or None."""
-    if cluster_k is not None and model_id == "EMForecaster":
-        # ClusteredHead's per-cluster Linear(size*F, size*pred_len) scales with
-        # cluster-size^2, so at small k the head alone can dwarf the rest of the
-        # model -- but it shrinks back out of the way as k grows, and only the
-        # small-k end needs the 8-way micro-step split (measured peak on a
-        # 27-channel L336_O96 cell: 15.6 GiB at k=2 vs 7.9 GiB at k=9). The
-        # effective batch is 512 either way: exp.py scales the loss by
-        # 1/accum_steps and steps the scheduler once per optimizer step, so
-        # batch x accum is an equivalence class and this is purely a speed knob,
-        # not a change to the optimization trajectory.
-        #
-        # This only helps activation memory -- if a cell still OOMs after
-        # retries, the head's weights/optimizer state (not activations) are
-        # likely the cause, and the fix is excluding that cell from the sweep
-        # (see forecasting/grids.py's GRIDS["cluster"] k_values note), not a
-        # smaller batch size.
-        return (64, 8) if cluster_k <= 3 else (128, 4)
-    # LSTM is deliberately absent from the clause above: its clustered head peaks
-    # at 0.4 GiB even at batch 64 / k=9, so clamping it only bought micro-steps
-    # (24.1 vs 12.5 ms per 512 examples at batch 64 vs the config's 512).
+def _memory_profile(model_id, dataset, seq_len):
+    """(batch_size, accum_steps) override for known memory-heavy cells, or None.
+
+    No cluster-grid entry, deliberately. CCM adds k parallel per-cluster layers,
+    so cost does grow with k, but from a small base: measured backward peak at 27
+    channels / L336_O96 / batch 512, k=2 -> k=9, is DLinear 1.05 -> 1.26 GiB,
+    PatchTST 3.15 -> 3.19, TSMixer 1.54 -> 1.82, TimesNet 2.11 -> 2.27, against a
+    31.3 GiB card. Every cluster cell therefore runs at its job config's own batch
+    size, matching the multivariate cell it is compared against, and OOM_RETRIES
+    still covers a co-tenant squeezing the card.
+    """
     if model_id == "EMForecaster" and (
         seq_len >= 336 or dataset == "EMF_2023_university_5_with_PTV"
     ):
@@ -134,7 +123,7 @@ def _cleanup():
 
 
 def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
-             k_values=None):
+             k_values=None, models=None, datasets=None):
     """Run every cell of the grid for one setup. Returns the list of failed runs.
 
     logs_dir only affects the resume check; Experiment.run() always writes under
@@ -144,11 +133,17 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     (also caller-validated); None means just SEED, the pre---seeds behaviour.
     k_values overrides a cluster grid's cluster counts (also caller-validated);
     None means the grid's own k_values, i.e. the pre---k behaviour.
+    models and datasets restrict the sweep to a subset of the grid's own (also
+    caller-validated); None means all of them. Each is a plain filter -- the
+    cells it keeps are byte-for-byte the cells the full sweep would have run, so
+    a trial run's results drop straight into the full grid's tables.
     """
     console = Console()
     grid_def = GRIDS[setup]
     windows = grid_def["windows"] if windows is None else windows
     seeds = [SEED] if seeds is None else list(seeds)
+    models = grid_def["models"] if models is None else list(models)
+    datasets = grid_def["datasets"] if datasets is None else list(datasets)
     if grid_def.get("per_channel"):
         # A per-band cell is many runs, not one, and needs the process pool in
         # forecasting/perchannel.py. Fail loudly instead of silently training the
@@ -172,14 +167,14 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
                     f"{setup} grid's k_values {grid_k}; running as a one-off")
     if k_values:
         cells = [(m, d, w, k)
-                 for m in grid_def["models"]
-                 for d in grid_def["datasets"]
+                 for m in models
+                 for d in datasets
                  for w in windows
                  for k in k_values]
     else:
         cells = [(m, d, w, None)
-                 for m in grid_def["models"]
-                 for d in grid_def["datasets"]
+                 for m in models
+                 for d in datasets
                  for w in windows]
     # Seed-major, not cell-major: an interrupted multi-seed sweep then leaves a
     # complete grid at one seed rather than the first few cells with error bars
@@ -228,7 +223,14 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
                 args.cluster.enabled = True
                 args.cluster.k_clusters = k
                 args.exp.id = run_tag
-            profile = _memory_profile(model_id, dataset, seq_len, cluster_k=k)
+                # CCM rebinds module attributes inside forward (cluster_prob
+                # every pass, cluster_emb on training passes), which torch.compile
+                # cannot trace stably -- it graph-breaks each step and can capture
+                # a stale cluster_emb. hardware.normalize_config turns compile on
+                # for PatchTST, which IS in this grid, so switch it back off here
+                # rather than relying on the per-model default.
+                args.exp.compile = False
+            profile = _memory_profile(model_id, dataset, seq_len)
             if profile is not None:
                 args.sl.batch_size, args.sl.accum_steps = profile
                 console.log(
@@ -281,6 +283,11 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
         # None on every non-cluster grid; recorded so a --k run's report says which
         # cluster counts it actually covered rather than implying the full sweep.
         "k_values": k_values,
+        # Same reason: a --model/--dataset/--window trial run writes a report at
+        # the same path as a full sweep, so the report has to say what it covered.
+        "models": [model_id for _, model_id, _ in models],
+        "datasets": list(datasets),
+        "windows": [f"L{s}_O{p}" for s, p in windows],
         "passed": passed,
         "skipped": skipped,
         "failed": failed,

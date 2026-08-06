@@ -37,6 +37,7 @@ from forecasting.multivariate.utils.models import (
     get_optim,
     get_scheduler,
     compute_loss,
+    compute_aux_loss,
     model_update,
     forward_pass,
 )
@@ -186,14 +187,6 @@ class Experiment:
             self.args.data.seq_len = loaders[-1]
             self.logger["parameters/data/seq_len"] = loaders[-1]
             self.print_master(f"Sequence set to the median: {self.args.data.seq_len}.")
-
-        # init_logger() dumps args.yaml before dataloading runs, so the
-        # cluster.cluster_assignment computed inside get_loaders() (unlike
-        # num_channels, not trivially re-derivable without re-running the
-        # clustering) would otherwise always serialize as []. Re-dump once it's
-        # populated so the persisted args.yaml is reproducible.
-        if self.args.cluster.enabled and self.args.cluster.cluster_assignment:
-            global_to_yaml(self.args, os.path.join(self.log_dir, "args.yaml"))
 
     def free_memory(self):
         for k in ["train", "val", "test"]:
@@ -479,6 +472,7 @@ class Experiment:
         for epoch in range(eval(f"self.args.{flag}.epochs")):
             model.train()
             total_loss = torch.tensor(0.0, device=self.device)
+            total_aux_loss = torch.tensor(0.0, device=self.device)
             running_loss = torch.tensor(0.0, device=self.device)
             running_num_examples = torch.tensor(0.0, device=self.device)
             start_time = time.time()
@@ -491,20 +485,32 @@ class Experiment:
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
                 )
+                # Extra objective terms that are not a function of the
+                # predictions -- currently only CCM's similarity loss. Kept out
+                # of `loss` on purpose: `loss` is what gets logged and what
+                # selects the best epoch, and it has to stay the forecast loss so
+                # a cluster cell is comparable to every other cell. self.model
+                # (eager), not self.model_fwd: it reads module attributes the
+                # torch.compile wrapper does not forward.
+                aux_loss = compute_aux_loss(self.model, batch, self.args, self.device)
 
                 # Metrics
                 num_batch_examples = batch[0].shape[0]  # perf: plain int; int * device-tensor stays on-device and skips a per-step host->device copy
                 total_loss += loss * num_batch_examples
                 running_loss += loss * num_batch_examples
                 running_num_examples += num_batch_examples
+                if aux_loss is not None:
+                    total_aux_loss += aux_loss.detach() * num_batch_examples
 
                 # Update model parameters. The backward loss is scaled by the
                 # accumulation factor so summed micro-batch gradients match the
                 # full-batch gradient; logging above uses the unscaled loss.
                 alpha = next(ema) if ema else 0.966
                 do_step = ((i + 1) % accum_steps == 0) or (i + 1) == num_batches
+                step_loss = loss if aux_loss is None else loss + aux_loss
                 model_update(
-                    model, loss / accum_steps, optimizer, model_id, alpha, step=do_step
+                    model, step_loss / accum_steps, optimizer, model_id, alpha,
+                    step=do_step,
                 )
 
                 # Periodic Logging
@@ -543,6 +549,12 @@ class Experiment:
             )
             epoch_logger(self.args, self.logger, f"{flag}_train/loss", epoch_loss)
             epoch_logger(self.args, self.logger, f"{flag}_train/epoch_time", epoch_time)
+            # Only on a run that has an auxiliary term (CCM), so every other
+            # run's log.json keeps exactly the keys it had before. This is the
+            # curve to watch to see whether the cluster assignment converged.
+            if self.args.cluster.enabled and self.args.cluster.beta:
+                epoch_logger(self.args, self.logger, f"{flag}_train/similarity_loss",
+                             total_aux_loss.item() / num_examples)
 
             # <--------------- Validation --------------->
             if val_loader:
@@ -984,7 +996,11 @@ class Experiment:
                 all_ch_ids.append(ch_ids)
                 all_u.append(u)
 
-                # Loss
+                # Loss. Forecast loss only, including on a cluster run: this
+                # feeds stats["loss"], which is both the reported
+                # {flag}_{val,test}/loss and the best-model / early-stopping
+                # metric. See compute_aux_loss for why the similarity term is
+                # deliberately not in it.
                 loss = compute_loss(
                     output, batch, criterion, model_id, self.args, self.device
                 )

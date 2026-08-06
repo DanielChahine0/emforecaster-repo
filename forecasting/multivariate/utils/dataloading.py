@@ -1199,23 +1199,10 @@ def get_loaders(
         # difference across the Italy datasets automatically.
         if not args.data.univariate:
             args.data.num_channels = int(train_data.shape[0])
-
-            # Cluster assignment must be computed once from the training split and
-            # reused identically at train/val/test time. get_loaders() re-reads the
-            # CSV and re-derives train_data from scratch on every call (train, val,
-            # test loader_types), so only compute when empty to avoid a KMeans
-            # refit potentially disagreeing across calls.
-            if args.cluster.enabled and not args.cluster.cluster_assignment:
-                from forecasting.multivariate.utils.clustering import (
-                    compute_channel_clusters,
-                )
-
-                args.cluster.cluster_assignment = compute_channel_clusters(
-                    train_data,
-                    k=args.cluster.k_clusters,
-                    method=args.cluster.cluster_method,
-                    seed=args.cluster.cluster_seed,
-                )
+            # No cluster assignment is precomputed here. CCM learns the channel
+            # assignment inside the model, from each batch, rather than fitting a
+            # fixed partition on the training split up front; args.data.num_channels
+            # above is all the cluster path needs from the loader.
     else:
         raise ValueError(f"Invalid dataset name: {args.data.dataset}")
 

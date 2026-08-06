@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 from forecasting.multivariate.layers.patchtst.enc_block import _MultiheadAttention
 from forecasting.multivariate.layers.patchtst.revin import RevIN
-from forecasting.multivariate.layers.clustered_head import ClusteredHead
 
 
 class MLP(nn.Module):
@@ -99,8 +98,6 @@ class Transformer(nn.Module):
         revin=False,
         revin_affine=True,
         eps_revin=1e-5,
-        cluster_assignment: Optional[List[int]] = None,
-        k_clusters: int = 1,
     ):
         super(Transformer, self).__init__()
         self.enc = nn.ModuleList(
@@ -114,11 +111,7 @@ class Transformer(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=2)
         self.conv2 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=1)
 
-        self.clustered = cluster_assignment is not None
-        if self.clustered:
-            self.head = ClusteredHead(cluster_assignment, k_clusters, seq_len, pred_len)
-        else:
-            self.fc2 = nn.Linear(seq_len, pred_len)
+        self.fc2 = nn.Linear(seq_len, pred_len)
 
         # RevIN parity with every other model in the benchmark: without
         # per-window renormalization this tanh-bounded backbone cannot track the
@@ -154,21 +147,10 @@ class Transformer(nn.Module):
         x = self.conv2(x)
         x = self.act(x)  # (B*C, seq_len, 1) for d_model == 2
 
-        if self.clustered:
-            # Unfold the channels back out BEFORE the head: the clustered head
-            # needs to see all channels in a cluster simultaneously, unlike
-            # fc2 which runs on the folded (B*C, seq_len) tensor.
-            x = x.squeeze(-1).reshape(B, C, L)  # (B, C, seq_len)
-            x = self.head(x)  # (B, C, pred_len)
-            if self.revin is not None:
-                x = x.reshape(B * C, -1)
-                x = self.revin(x, "denorm").reshape(B, C, -1)
-            return x
-        else:
-            x = self.fc2(x.squeeze(-1))  # (B*C, seq_len) -> (B*C, pred_len)
-            if self.revin is not None:
-                x = self.revin(x, "denorm").reshape(B * C, -1)
-            return x.reshape(B, C, -1)  # (B*C, pred_len) -> (B, C, pred_len)
+        x = self.fc2(x.squeeze(-1))  # (B*C, seq_len) -> (B*C, pred_len)
+        if self.revin is not None:
+            x = self.revin(x, "denorm").reshape(B * C, -1)
+        return x.reshape(B, C, -1)  # (B*C, pred_len) -> (B, C, pred_len)
 
 
 if __name__ == "__main__":

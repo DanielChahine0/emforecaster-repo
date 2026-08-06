@@ -23,6 +23,7 @@ from forecasting.multivariate.models.timesnet import TimesNet
 from forecasting.multivariate.models.tsmixer import TSMixer
 from forecasting.multivariate.models.emforecaster import EMForecaster
 from forecasting.multivariate.models.arima import ARIMAForecaster
+from forecasting.multivariate.models.ccm import CCMForecaster
 
 # Unsupervised models
 from tslearn.neighbors import KNeighborsTimeSeriesClassifier
@@ -41,6 +42,15 @@ from forecasting import hardware
 
 
 def get_model(args, generator=torch.Generator()):
+    # The cluster grid swaps the whole network for CCM's own implementation of
+    # it (forecasting/multivariate/models/ccm.py), so this branch comes before
+    # the model_id dispatch rather than passing cluster kwargs down into each
+    # model. Everything else about the run -- data, optimizer, conformal
+    # recalibration, logging -- is unchanged, so a cluster cell differs from its
+    # multivariate counterpart only in the model.
+    if args.cluster.enabled:
+        return CCMForecaster(args)
+
     if args.exp.model_id == "PatchTST":
         model = PatchTST(
             num_enc_layers=args.sl.num_enc_layers,
@@ -90,10 +100,6 @@ def get_model(args, generator=torch.Generator()):
             eps_revin=args.sl.eps_revin,
             last_state=args.sl.last_state,
             avg_state=args.sl.avg_state,
-            cluster_assignment=(
-                args.cluster.cluster_assignment if args.cluster.enabled else None
-            ),
-            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
     elif args.exp.model_id == "Linear":
         model = Linear(
@@ -111,10 +117,6 @@ def get_model(args, generator=torch.Generator()):
             moving_avg=args.dlinear.moving_avg,
             individual=args.dlinear.individual,
             return_head=args.sl.return_head,
-            cluster_assignment=(
-                args.cluster.cluster_assignment if args.cluster.enabled else None
-            ),
-            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
     elif args.exp.model_id == "EMForecaster":
         model = EMForecaster(
@@ -136,10 +138,6 @@ def get_model(args, generator=torch.Generator()):
             patch_embed_dim=args.sl.patch_embed_dim,
             independent_patching=args.sl.independent_patching,
             pos_enc=args.sl.pos_enc,
-            cluster_assignment=(
-                args.cluster.cluster_assignment if args.cluster.enabled else None
-            ),
-            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
 
     elif args.exp.model_id == "ModernTCN":
@@ -246,10 +244,6 @@ def get_model(args, generator=torch.Generator()):
             revin=args.sl.revin,
             revin_affine=args.sl.revin_affine,
             eps_revin=args.sl.eps_revin,
-            cluster_assignment=(
-                args.cluster.cluster_assignment if args.cluster.enabled else None
-            ),
-            k_clusters=args.cluster.k_clusters if args.cluster.enabled else 1,
         )
     elif args.exp.model_id == "ARIMA":
         model = ARIMAForecaster(
@@ -451,6 +445,39 @@ def prepare_output_and_target(output, target, args, device):
     target = target.long() if args.open_neuro.task == "multi" else target.float()
 
     return out, target
+
+
+def compute_aux_loss(model, batch, args, device):
+    """Extra training-objective terms that are not a function of (output, target).
+
+    CCM is the only such case: its objective is the forecast loss plus a
+    beta-weighted similarity loss over the cluster assignment the model just
+    produced, so this term has to reach back into the module rather than read the
+    predictions.
+
+    Deliberately kept OUT of compute_loss, and so out of the reported
+    {flag}_train/loss, {flag}_val/loss and {flag}_test/loss, and out of the
+    best-model / early-stopping metric. The similarity term is a regularizer on
+    the assignment, and at 27 channels it is orders of magnitude larger than the
+    forecast MSE (measured: |similarity| ~ 15-250 against an MSE ~ 0.5). Folding
+    it into the selection metric hands model choice to the regularizer: on an
+    ED2022 L336_O96 sweep it early-stopped k=2 at epoch 27 having selected epoch
+    7, while the plain DLinear baseline kept improving for all 100. It would also
+    make a cluster cell's loss incomparable to every other cell in every grid.
+
+    Upstream (Exp_CCM.train) does early-stop on the combined value; this is a
+    deliberate divergence, and the term is still trained on -- see the caller in
+    exp/exp.py, which adds it to the backward loss and logs it separately as
+    {flag}_train/similarity_loss.
+
+    Returns None when there is no such term, so the caller can skip the add.
+    """
+    if not args.cluster.enabled or not args.cluster.beta:
+        return None
+    ccm = model.module if hasattr(model, "module") else model
+    if ccm is None or not hasattr(ccm, "similarity_loss"):
+        return None
+    return args.cluster.beta * ccm.similarity_loss(hardware.to_device(batch[0], device))
 
 
 def compute_loss(output, batch, criterion, model_id, args, device):

@@ -29,6 +29,10 @@ numba = "0.61.2"
 llvmlite = "0.44.0"
 
 # Models / time series
+# einops is a dependency of the vendored CCM layers under TimeSeriesCCM-main/
+# (models/layers.py, models/attention.py, models/patch_layer.py), which the
+# cluster grid imports directly. See forecasting/multivariate/utils/ccm_upstream.py.
+einops = "0.8.2"
 mambapy = "1.2.0"
 tslearn = "0.6.4"
 statsmodels = "0.14.6"
