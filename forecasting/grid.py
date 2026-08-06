@@ -36,15 +36,26 @@ OOM_RETRIES = 2
 
 def _memory_profile(model_id, dataset, seq_len, cluster_k=None):
     """(batch_size, accum_steps) override for known memory-heavy cells, or None."""
-    if cluster_k is not None and model_id in {"EMForecaster", "LSTM"}:
+    if cluster_k is not None and model_id == "EMForecaster":
         # ClusteredHead's per-cluster Linear(size*F, size*pred_len) scales with
         # cluster-size^2, so at small k the head alone can dwarf the rest of the
-        # model. This only helps activation memory -- if a cell still OOMs after
+        # model -- but it shrinks back out of the way as k grows, and only the
+        # small-k end needs the 8-way micro-step split (measured peak on a
+        # 27-channel L336_O96 cell: 15.6 GiB at k=2 vs 7.9 GiB at k=9). The
+        # effective batch is 512 either way: exp.py scales the loss by
+        # 1/accum_steps and steps the scheduler once per optimizer step, so
+        # batch x accum is an equivalence class and this is purely a speed knob,
+        # not a change to the optimization trajectory.
+        #
+        # This only helps activation memory -- if a cell still OOMs after
         # retries, the head's weights/optimizer state (not activations) are
         # likely the cause, and the fix is excluding that cell from the sweep
         # (see forecasting/grids.py's GRIDS["cluster"] k_values note), not a
         # smaller batch size.
-        return 64, 8
+        return (64, 8) if cluster_k <= 3 else (128, 4)
+    # LSTM is deliberately absent from the clause above: its clustered head peaks
+    # at 0.4 GiB even at batch 64 / k=9, so clamping it only bought micro-steps
+    # (24.1 vs 12.5 ms per 512 examples at batch 64 vs the config's 512).
     if model_id == "EMForecaster" and (
         seq_len >= 336 or dataset == "EMF_2023_university_5_with_PTV"
     ):

@@ -11,6 +11,11 @@ top of the usual (model, dataset, L, O) grid, so k is part of a cell's identity
 here: without it the four k values of one cell would be averaged into a single
 meaningless number. It shows up as an extra column, and only for trees that have
 it -- every non-cluster tree's tables are byte-for-byte what they were before.
+
+The last section, '# Ultimate Comparison', puts every pipeline (per-channel,
+multivariate, and one column per cluster count) into a single MSE / MAE /
+training-time table at ULTIMATE_SETTING, the one window all of them share. It
+needs every logs/ subdirectory, so it is only built on a no---logs-root run.
 """
 
 from __future__ import annotations
@@ -46,6 +51,11 @@ DATASET_DISPLAY = {
 DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
 
 MISSING = "-"
+
+# The single (L, O) window the '# Ultimate Comparison' section is built for. The
+# cluster grid only sweeps this one, so it is the only window where per-channel,
+# multivariate and clustered runs can all be put in the same row.
+ULTIMATE_SETTING = (336, 96)
 
 # format is "<N>s", "<N>min <N>s" or "<N>hr <N>min <N>s"
 _TIME_RE = re.compile(
@@ -640,24 +650,157 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
     return doc.render()
 
 
+@dataclass
+class Pipeline:
+    """One row-group of the ultimate table: a whole training strategy.
+
+    `cells` is always display-name-keyed (canonical_cells), so RF_EMF_Transformer
+    and Transformer line up across trees. `k` selects one cluster count out of a
+    cluster tree and is None for the trees that have no k dimension.
+    """
+    label: str
+    cells: dict[tuple, Cell]
+    k: Optional[int] = None
+    per_channel: bool = False
+
+
+def pipeline_value(p: Pipeline, model: str, ds: str, sl: int, pl: int,
+                   conf: bool, attr: str) -> Optional[float]:
+    cell = p.cells.get((model, ds, sl, pl, conf, p.k))
+    v = getattr(cell, attr, None)
+    if v is not None and p.per_channel and attr == "running_time":
+        # One per-channel log is one channel's model; the strategy's real cost is
+        # all C of them, which is what the other pipelines' single run competes with.
+        return v * cell.n_channels if cell.n_channels else None
+    return v
+
+
+def ultimate_axes(pipelines: list[Pipeline], sl: int, pl: int,
+                  conf: bool) -> tuple[list[str], list[str]]:
+    """The (models, datasets) any pipeline covers at this window, in report order."""
+    keys = [key for p in pipelines for key in p.cells
+            if key[2] == sl and key[3] == pl and key[4] == conf and key[5] == p.k]
+    return (sorted({key[0] for key in keys}, key=display_rank),
+            sorted({key[1] for key in keys}, key=dataset_rank))
+
+
+def ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt) -> list[list[str]]:
+    rows = []
+    for ds in datasets:
+        for p in pipelines:
+            vals = [pipeline_value(p, m, ds, sl, pl, conf, attr) for m in models]
+            if all(v is None for v in vals):
+                continue
+            strs = [fmt(v) for v in vals]
+            # Ranked across the row, i.e. model vs model under one strategy; the
+            # strategies are compared by reading down a dataset block instead.
+            mark_ranks(strs, vals)
+            rows.append([dataset_label(ds), p.label] + strs)
+    return rows
+
+
+def ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt) -> list[str]:
+    rows = ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt)
+    if not rows:
+        return []
+    return md_table(["Dataset", "Pipeline"] + models, "ll" + "r" * len(models), rows)
+
+
+def channel_counts(pipelines, datasets, sl, pl, conf) -> str:
+    """'ED2022 C=27, ...' for the per-channel pipeline, for the cost-table note."""
+    counts = {}
+    for p in pipelines:
+        if not p.per_channel:
+            continue
+        for (_, ds, ssl, ppl, c, k), cell in p.cells.items():
+            if (ssl, ppl, c, k) == (sl, pl, conf, p.k) and cell.n_channels:
+                counts[ds] = max(counts.get(ds, 0), cell.n_channels)
+    return ", ".join(f"{dataset_label(ds)} C={counts[ds]}"
+                     for ds in datasets if ds in counts)
+
+
+def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
+    sl, pl = ULTIMATE_SETTING
+    axes = [(conf,) + ultimate_axes(pipelines, sl, pl, conf) for conf in (False, True)]
+    axes = [a for a in axes if a[1]]
+    if not axes:
+        return ""
+
+    doc = Doc(title)
+    items = [
+        ("Configuration", f"{setting_label(sl, pl)} only -- the one window every pipeline shares"),
+        ("Pipelines", " · ".join(p.label for p in pipelines)),
+        ("Datasets", ", ".join(dataset_label(d) for d in axes[0][2])),
+        ("Models", ", ".join(axes[0][1])),
+    ]
+    if any(p.k == 1 for p in pipelines):
+        items.append(
+            ("Caveat", f"`Cluster (k=1)` is not a re-run of "
+                       f"`{short_label(MULTIVARIATE_TITLE)}` -- it still replaces the model's own "
+                       f"head with one channel-mixing ClusteredHead, which changes the weight "
+                       f"count (see each tree's Model size table). Every row is a whole strategy, "
+                       f"not the same network under a different loader."))
+    items.append(
+        ("Conformal prediction",
+         "on for every run" if [a[0] for a in axes] == [True] else
+         "off for every run" if [a[0] for a in axes] == [False] else
+         "reported separately below"))
+    doc.preamble(items)
+
+    for conf, models, datasets in axes:
+        suffix = ""
+        if len(axes) > 1:
+            suffix = " (with conformal prediction)" if conf else " (without conformal prediction)"
+
+        doc.group("Every pipeline side by side" + suffix)
+        doc.para(f"Read **across** a row to rank the models under one pipeline "
+                 f"(**bold** = best, <u>underline</u> = runner-up); read **down** a dataset "
+                 f"block to see what the same model does per channel, jointly, or with a "
+                 f"k-cluster head. `{MISSING}` = that combination was not run "
+                 f"(the cluster grid only covers the four models that have a head to cluster).")
+
+        for name, log_key, attr, fmt in [("MSE", "sl_test/loss", "mse", num_fmt(4)),
+                                         ("MAE", "sl_test/mae", "mae", num_fmt(4))]:
+            table = ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt)
+            if table:
+                doc.table(f"{name} (`{log_key}`)", table)
+
+        table = ultimate_table(pipelines, models, datasets, sl, pl, conf,
+                               "running_time", format_seconds)
+        if table:
+            chans = channel_counts(pipelines, datasets, sl, pl, conf)
+            doc.table("Total training time (`parameters/running_time`)", table,
+                      note=f"Cost of the whole strategy, so the per-channel row is the mean "
+                           f"single-channel run times the channel count"
+                           + (f" ({chans})" if chans else "") + "; every other row is one "
+                           f"model's single training run. ARIMA is not gradient-trained and "
+                           f"logs no time.")
+
+    return doc.render()
+
+
 DEFAULT_TABLES_FILE = Path(__file__).resolve().parent / "tables.md"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
+UNIVARIATE_SERIES_TITLE = "Univariate Series"
+PER_CHANNEL_TITLE = "Univariate (Per Channel)"
 MULTIVARIATE_TITLE = "Multivariate"
 CLUSTER_TITLE = "Cluster (k-Grouped Channels)"
 COMPARISON_TITLE = "Multivariate vs Univariate"
+ULTIMATE_TITLE = "Ultimate Comparison"
 ROOT_TITLES = {
-    "univariate": "Univariate Series",
-    "univariate (per channel)": "Univariate (Per Channel)",
+    "univariate": UNIVARIATE_SERIES_TITLE,
+    "univariate (per channel)": PER_CHANNEL_TITLE,
     "multivariate": MULTIVARIATE_TITLE,
     "cluster": CLUSTER_TITLE,
 }
 SECTION_ORDER = [
-    "Univariate Series",
-    "Univariate (Per Channel)",
+    UNIVARIATE_SERIES_TITLE,
+    PER_CHANNEL_TITLE,
     MULTIVARIATE_TITLE,
     CLUSTER_TITLE,
     COMPARISON_TITLE,
+    ULTIMATE_TITLE,
 ]
 # compact forms used as column headers in the side-by-side comparison
 SHORT_TITLES = {
@@ -677,6 +820,33 @@ _SECTION_RE = re.compile(r"^# (.+)$", re.MULTILINE)
 
 def short_label(title: str) -> str:
     return SHORT_TITLES.get(title, title)
+
+
+def build_pipelines(by_title: dict[str, dict[tuple, Cell]]) -> list[Pipeline]:
+    """The ultimate table's rows, ordered least to most channel mixing.
+
+    Empty unless at least two of the three trees were loaded -- one cluster tree
+    alone yields several pipelines (one per k), and a k-only table is what the
+    '# Cluster (k-Grouped Channels)' section already is.
+
+    The univariate-series tree is deliberately absent: its cells are whole-dataset
+    RSS series over a different set of datasets, so it shares no (dataset, model)
+    identity with the others and would only ever add empty rows.
+    """
+    if len([t for t in (PER_CHANNEL_TITLE, CLUSTER_TITLE, MULTIVARIATE_TITLE)
+            if t in by_title]) < 2:
+        return []
+    pipelines = []
+    if PER_CHANNEL_TITLE in by_title:
+        pipelines.append(Pipeline("Per-channel", canonical_cells(by_title[PER_CHANNEL_TITLE]),
+                                  per_channel=True))
+    if CLUSTER_TITLE in by_title:
+        cluster = canonical_cells(by_title[CLUSTER_TITLE])
+        for k in sorted({key[5] for key in cluster if key[5] is not None}):
+            pipelines.append(Pipeline(f"Cluster (k={k})", cluster, k=k))
+    if MULTIVARIATE_TITLE in by_title:
+        pipelines.append(Pipeline("Multivariate", canonical_cells(by_title[MULTIVARIATE_TITLE])))
+    return pipelines
 
 
 def derive_heading(logs_root: Path) -> str:
@@ -796,9 +966,18 @@ def main() -> None:
         else:
             print("WARNING: no (dataset, L, O, model) cells shared between the multivariate and "
                   "univariate trees; skipping the comparison section", file=sys.stderr)
-    elif len(loaded) < 2:
-        print(f"NOTE: '{COMPARISON_TITLE}' needs every logs/ subdirectory; run without "
-              f"--logs-root to rebuild it.", file=sys.stderr)
+
+    pipelines = build_pipelines(by_title)
+    ultimate = render_ultimate(ULTIMATE_TITLE, pipelines) if pipelines else ""
+    if ultimate:
+        updates.append((ULTIMATE_TITLE, ultimate))
+    elif pipelines:
+        print(f"WARNING: no pipeline has {setting_label(*ULTIMATE_SETTING)} cells; "
+              f"skipping the '{ULTIMATE_TITLE}' section", file=sys.stderr)
+
+    if len(loaded) < 2:
+        print(f"NOTE: '{COMPARISON_TITLE}' and '{ULTIMATE_TITLE}' need every logs/ "
+              f"subdirectory; run without --logs-root to rebuild them.", file=sys.stderr)
 
     for title, replaced in upsert_sections(DEFAULT_TABLES_FILE, updates):
         print(f"{'Updated' if replaced else 'Added'} '# {title}' section in {DEFAULT_TABLES_FILE}.",
