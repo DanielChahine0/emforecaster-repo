@@ -151,9 +151,22 @@ if __name__ == "__main__":
                              "dataset/window. If omitted in grid mode, you are prompted.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Grid mode only: list cells and targets without training.")
-    parser.add_argument("--jobs", type=int, default=8,
-                        help="Per-channel grid only: how many band trainings run "
-                             "concurrently (default 8). Lower it if the GPU OOMs.")
+    parser.add_argument("--jobs", type=int, default=None,
+                        help="How many trainings run concurrently, each in its "
+                             "own subprocess. On the per-channel grid this is "
+                             "band trainings (default 8). On every other grid it "
+                             "is whole cells (default 1, i.e. the in-process "
+                             "sequential driver). Expect well under a linear "
+                             "speedup: measured on the RTX 5090, --jobs 4 on a "
+                             "DLinear/PatchTST/TSMixer cluster sweep slowed each "
+                             "cell 3.15x and netted only 1.2x, because these "
+                             "models issue many small kernels and concurrent "
+                             "processes just time-slice the GPU. Cheap models "
+                             "(DLinear) parallelize better than heavy ones "
+                             "(PatchTST). Also size it by the PEAK memory of the "
+                             "heaviest model in the sweep: EMForecaster and the "
+                             "Transformer need most of the card for one cell, so "
+                             "keep --jobs at 1-2 on a grid containing them.")
     parser.add_argument("--model", type=str, default=None,
                         help="Grid mode only: restrict to specific model(s) "
                              "instead of every model in the grid. Comma-separated, "
@@ -219,7 +232,11 @@ if __name__ == "__main__":
         # the process-pool driver rather than the in-process cell loop.
         if GRIDS[setup].get("per_channel"):
             from forecasting.perchannel import run_per_channel_grid
-            failed = run_per_channel_grid(setup=setup, jobs=args.jobs,
+            # The two drivers have different sensible defaults: a band is a
+            # fraction of a cell, so the per-channel pool has always run 8 wide,
+            # while a whole cell defaults to the sequential in-process path.
+            failed = run_per_channel_grid(setup=setup,
+                                          jobs=8 if args.jobs is None else args.jobs,
                                           dry_run=args.dry_run, windows=windows,
                                           seeds=seeds, models=models,
                                           datasets=datasets)
@@ -227,7 +244,8 @@ if __name__ == "__main__":
             from forecasting.grid import run_grid
             failed = run_grid(setup, dry_run=args.dry_run, windows=windows,
                               seeds=seeds, k_values=k_values, models=models,
-                              datasets=datasets)
+                              datasets=datasets,
+                              jobs=1 if args.jobs is None else args.jobs)
         sys.exit(1 if failed else 0)
     else:
         if args.ablation is not None:

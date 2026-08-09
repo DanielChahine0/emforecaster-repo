@@ -375,11 +375,11 @@ For multivariate logs this varies by dataset (different channel counts), not jus
 
 # Cluster (k-Grouped Channels)
 
-- Models: EMForecaster (2025), DLinear (2023), Transformer (2017), LSTM (1997)
-- Datasets: ED2022, UH2022, EMF2023 (University-5 w/ PTV)
+- Models: DLinear (2023)
+- Datasets: ED2022
 - Grid: L336/O96
-- Channel clusters: k = 1, 9 (each k is its own cell, never averaged together)
-- Runs: 21 logs; each cell averages **1** replicate run(s)
+- Channel clusters: k = 1, 2, 3, 4, 6 (each k is its own cell, never averaged together)
+- Runs: 5 logs; each cell averages **1** replicate run(s)
 - Conformal prediction: on for every run
 
 ## 1 · Forecast accuracy
@@ -388,25 +388,23 @@ For multivariate logs this varies by dataset (different channel counts), not jus
 
 ### 1.1 · MSE (`sl_test/loss`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | 0.6641 | <u>0.5541</u> | **0.5449** |
-| ED2022 | 336 | 96 | 9 | <u>0.4905</u> | 0.5923 | **0.4873** | 0.5499 |
-| UH2022 | 336 | 96 | 1 | - | 1.4913 | <u>1.3022</u> | **1.2336** |
-| UH2022 | 336 | 96 | 9 | <u>1.1838</u> | 1.3412 | **1.1533** | 1.1938 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | 1.7097 | <u>1.6641</u> | **1.5251** |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 1.5190 | 1.6135 | **1.5091** | <u>1.5132</u> |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | **0.6028** |
+| ED2022 | 336 | 96 | 2 | **0.5750** |
+| ED2022 | 336 | 96 | 3 | **0.5695** |
+| ED2022 | 336 | 96 | 4 | **0.5695** |
+| ED2022 | 336 | 96 | 6 | **0.5768** |
 
 ### 1.2 · MAE (`sl_test/mae`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | 0.5021 | <u>0.3956</u> | **0.3949** |
-| ED2022 | 336 | 96 | 9 | <u>0.3505</u> | 0.4254 | **0.3480** | 0.3967 |
-| UH2022 | 336 | 96 | 1 | - | 0.6552 | <u>0.5179</u> | **0.4947** |
-| UH2022 | 336 | 96 | 9 | <u>0.4688</u> | 0.5568 | **0.4655** | 0.4916 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | 0.5965 | <u>0.5562</u> | **0.4652** |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 0.4629 | 0.5033 | **0.4555** | <u>0.4590</u> |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | **0.4207** |
+| ED2022 | 336 | 96 | 2 | **0.4048** |
+| ED2022 | 336 | 96 | 3 | **0.4015** |
+| ED2022 | 336 | 96 | 4 | **0.4027** |
+| ED2022 | 336 | 96 | 6 | **0.4076** |
 
 ## 2 · Training cost
 
@@ -414,25 +412,23 @@ For multivariate logs this varies by dataset (different channel counts), not jus
 
 ### 2.1 · Total training time (`parameters/running_time`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | **1m 9s** | 13m 44s | <u>2m 8s</u> |
-| ED2022 | 336 | 96 | 9 | 7m 10s | **1m 2s** | 23m 53s | <u>1m 31s</u> |
-| UH2022 | 336 | 96 | 1 | - | **1m 21s** | 13m 53s | <u>2m 4s</u> |
-| UH2022 | 336 | 96 | 9 | 9m 0s | **1m 14s** | 16m 15s | <u>1m 50s</u> |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | **2m 27s** | 13m 1s | <u>3m 15s</u> |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 17m 56s | **2m 5s** | 33m 1s | <u>3m 17s</u> |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | **54s** |
+| ED2022 | 336 | 96 | 2 | **56s** |
+| ED2022 | 336 | 96 | 3 | **53s** |
+| ED2022 | 336 | 96 | 4 | **57s** |
+| ED2022 | 336 | 96 | 6 | **56s** |
 
 ### 2.2 · Per-epoch training time (`running_time / len(sl_train/loss)`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | **0.7s** | 15.3s | <u>1.3s</u> |
-| ED2022 | 336 | 96 | 9 | 13.0s | **0.6s** | 15.4s | <u>0.9s</u> |
-| UH2022 | 336 | 96 | 1 | - | **0.8s** | 18.9s | <u>1.2s</u> |
-| UH2022 | 336 | 96 | 9 | 16.9s | **0.7s** | 19.9s | <u>1.1s</u> |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | **1.7s** | 37.2s | <u>2.1s</u> |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 32.6s | **1.2s** | 38.8s | <u>2.0s</u> |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | **0.5s** |
+| ED2022 | 336 | 96 | 2 | **0.6s** |
+| ED2022 | 336 | 96 | 3 | **0.5s** |
+| ED2022 | 336 | 96 | 4 | **0.6s** |
+| ED2022 | 336 | 96 | 6 | **0.6s** |
 
 ### 2.3 · Mean epoch cost by model
 
@@ -440,13 +436,11 @@ Pooled over every run of that model in this section.
 
 | Model | Mean / epoch | Estimation for 100 ep | Runs |
 |:---|---:|---:|---:|
-| DLinear (2023) (k=9) | 0.9s | ~1m 27s | 3 |
-| DLinear (2023) (k=1) | 1.1s | ~1m 46s | 3 |
-| LSTM (1997) (k=9) | 1.3s | ~2m 13s | 3 |
-| LSTM (1997) (k=1) | 1.5s | ~2m 33s | 3 |
-| EMForecaster (2025) (k=9) | 20.8s | ~34m 44s | 3 |
-| Transformer (2017) (k=1) | 23.8s | ~39m 39s | 3 |
-| Transformer (2017) (k=9) | 24.7s | ~41m 12s | 3 |
+| DLinear (2023) (k=3) | 0.5s | ~54s | 1 |
+| DLinear (2023) (k=1) | 0.5s | ~54s | 1 |
+| DLinear (2023) (k=2) | 0.6s | ~56s | 1 |
+| DLinear (2023) (k=4) | 0.6s | ~57s | 1 |
+| DLinear (2023) (k=6) | 0.6s | ~58s | 1 |
 
 ## 3 · Conformal prediction
 
@@ -454,36 +448,33 @@ Not marked -- "best" coverage means closest to the target, not highest, and a na
 
 ### 3.1 · Marginal coverage % (`sl_test/ic`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | 87.37 | 85.08 | 84.95 |
-| ED2022 | 336 | 96 | 9 | 85.43 | 84.08 | 85.74 | 85.33 |
-| UH2022 | 336 | 96 | 1 | - | 82.12 | 85.95 | 87.15 |
-| UH2022 | 336 | 96 | 9 | 86.92 | 85.76 | 86.21 | 85.97 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | 94.76 | 90.87 | 90.55 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 90.97 | 91.29 | 90.15 | 90.33 |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | 85.27 |
+| ED2022 | 336 | 96 | 2 | 85.00 |
+| ED2022 | 336 | 96 | 3 | 84.91 |
+| ED2022 | 336 | 96 | 4 | 85.06 |
+| ED2022 | 336 | 96 | 6 | 84.90 |
 
 ### 3.2 · Joint coverage % (`sl_test/jc`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | 5.25 | 14.69 | 15.19 |
-| ED2022 | 336 | 96 | 9 | 12.45 | 12.09 | 12.82 | 15.01 |
-| UH2022 | 336 | 96 | 1 | - | 1.07 | 9.24 | 9.37 |
-| UH2022 | 336 | 96 | 9 | 7.65 | 4.75 | 7.04 | 8.05 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | 19.27 | 16.39 | 16.42 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 14.60 | 19.16 | 11.80 | 11.64 |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | 14.04 |
+| ED2022 | 336 | 96 | 2 | 13.32 |
+| ED2022 | 336 | 96 | 3 | 13.22 |
+| ED2022 | 336 | 96 | 4 | 13.32 |
+| ED2022 | 336 | 96 | 6 | 13.06 |
 
 ### 3.3 · Mean interval width (`sl_test/interval_width_mean`)
 
-| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | DLinear (2023) | Transformer (2017) | LSTM (1997) |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| ED2022 | 336 | 96 | 1 | - | 1.917 | 1.531 | 1.510 |
-| ED2022 | 336 | 96 | 9 | 1.367 | 1.643 | 1.368 | 1.530 |
-| UH2022 | 336 | 96 | 1 | - | 2.112 | 1.785 | 1.768 |
-| UH2022 | 336 | 96 | 9 | 1.728 | 1.910 | 1.693 | 1.766 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 1 | - | 2.863 | 2.520 | 2.218 |
-| EMF2023 (University-5 w/ PTV) | 336 | 96 | 9 | 2.109 | 2.690 | 1.917 | 1.909 |
+| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1 | 1.636 |
+| ED2022 | 336 | 96 | 2 | 1.564 |
+| ED2022 | 336 | 96 | 3 | 1.547 |
+| ED2022 | 336 | 96 | 4 | 1.558 |
+| ED2022 | 336 | 96 | 6 | 1.570 |
 
 ## 4 · Model size
 
@@ -493,13 +484,11 @@ For multivariate logs this varies by dataset (different channel counts), not jus
 
 | Model | L336/O96 |
 |:---|---:|
-| EMForecaster (2025) (k=9) | 283,175,679 |
-| DLinear (2023) (k=1) | 47,034,432 |
-| DLinear (2023) (k=9) | 8,843,328 |
-| Transformer (2017) (k=1) | 23,857,602 |
-| Transformer (2017) (k=9) | 4,762,050 |
-| LSTM (1997) (k=1) | 2,259,638 |
-| LSTM (1997) (k=9) | 441,014 |
+| DLinear (2023) (k=1) | 150,976 |
+| DLinear (2023) (k=2) | 215,680 |
+| DLinear (2023) (k=3) | 280,384 |
+| DLinear (2023) (k=4) | 345,088 |
+| DLinear (2023) (k=6) | 474,496 |
 
 # Multivariate vs Univariate
 

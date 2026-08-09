@@ -1,30 +1,47 @@
 {
   "setup": "cluster",
-  "finished": "2026-08-06_12-14-30",
+  "finished": "2026-08-06_15-25-10",
   "seeds": [
     69421
   ],
   "k_values": [
-    1,
-    2,
     4,
     6
   ],
   "models": [
-    "DLinear"
+    "DLinear",
+    "PatchTST",
+    "TSMixer"
   ],
   "datasets": [
-    "ED2022"
+    "ED2022",
+    "UH2022",
+    "EMF_2023_university_5_with_PTV"
   ],
   "windows": [
     "L336_O96"
   ],
   "passed": [
-    "[ 1/4] DLinear      ED2022/L336/O96 k=1",
-    "[ 2/4] DLinear      ED2022/L336/O96 k=2",
-    "[ 3/4] DLinear      ED2022/L336/O96 k=4",
-    "[ 4/4] DLinear      ED2022/L336/O96 k=6"
+    "[ 4/18] DLinear      UH2022/L336/O96 k=6",
+    "[ 5/18] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=4",
+    "[ 6/18] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=6",
+    "[ 7/18] PatchTST     ED2022/L336/O96 k=4",
+    "[ 8/18] PatchTST     ED2022/L336/O96 k=6",
+    "[ 9/18] PatchTST     UH2022/L336/O96 k=4",
+    "[10/18] PatchTST     UH2022/L336/O96 k=6",
+    "[11/18] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=4",
+    "[12/18] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=6",
+    "[13/18] TSMixer      ED2022/L336/O96 k=4",
+    "[14/18] TSMixer      ED2022/L336/O96 k=6",
+    "[15/18] TSMixer      UH2022/L336/O96 k=4",
+    "[16/18] TSMixer      UH2022/L336/O96 k=6",
+    "[17/18] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=4",
+    "[18/18] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=6"
   ],
-  "skipped": [],
+  "skipped": [
+    "[ 1/18] DLinear      ED2022/L336/O96 k=4",
+    "[ 2/18] DLinear      ED2022/L336/O96 k=6",
+    "[ 3/18] DLinear      UH2022/L336/O96 k=4"
+  ],
   "failed": []
 }

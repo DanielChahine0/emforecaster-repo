@@ -1,14 +1,26 @@
-"""In-process driver for the conformal-prediction grid.
+"""Driver for the conformal-prediction grid.
 
-Replaces the bash runner: no sed, no subprocess. For each cell it loads the
-model's config, overrides the window/protocol fields in memory, applies the
-hardware profile, and calls Experiment(args).run(). Resume state is shared with
-the shell runners byte-for-byte via build_run_dir + the sl_test marker.
+Replaces the bash runner: no sed. For each cell it loads the model's config,
+overrides the window/protocol fields in memory, applies the hardware profile, and
+calls Experiment(args).run(). Resume state is shared with the shell runners
+byte-for-byte via build_run_dir + the sl_test marker.
+
+Two execution modes, same cells and same outputs either way:
+
+- jobs=1 (default) runs every cell in this process, one after another. Lowest
+  overhead and the easiest to read a traceback out of, so it stays the default.
+- jobs>1 runs each cell in its own `main.py <job> --ablation ...` subprocess,
+  `jobs` at a time, mirroring forecasting/perchannel.py. Read run_grid's `jobs`
+  note before reaching for it: the measured payoff on this hardware is much
+  smaller than the free VRAM suggests.
 """
 import gc
 import importlib
 import json
 import os
+import sys
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import matplotlib.pyplot as plt
@@ -111,6 +123,61 @@ def cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(SEED,),
     return True
 
 
+def cell_ablation(model_id, dataset, seq_len, pred_len, alpha, seed, k=None,
+                  run_tag="", workers=None):
+    """The --ablation payload that makes `main.py <job>` run exactly one cell.
+
+    Mirrors the in-process overrides in run_grid field for field, so a jobs>1 run
+    and a jobs=1 run produce byte-identical run directories. main() applies the
+    ablation after hardware.normalize_config, so anything set here wins over the
+    per-machine profile -- which is what lets exp.compile be forced off below.
+    """
+    ablation = {
+        "global.data.dataset": dataset,
+        "global.data.seq_len": seq_len,
+        "global.data.pred_len": pred_len,
+        "global.conf.conf": True,
+        "global.conf.alpha": alpha,
+        "global.exp.neptune": False,
+        # Without a distinct tag every k would overwrite the same run directory.
+        "global.exp.id": run_tag,
+        "global.exp.ablation_id": 1,
+        "global.exp.seed_list": [seed],
+        "global.exp.seed": seed,
+    }
+    if k is not None:
+        ablation["global.cluster.enabled"] = True
+        ablation["global.cluster.k_clusters"] = k
+        # Same reason as the in-process path: CCM rebinds module attributes
+        # inside forward, which torch.compile cannot trace stably.
+        ablation["global.exp.compile"] = False
+    if workers is not None:
+        ablation["global.data.num_workers"] = workers
+    profile = _memory_profile(model_id, dataset, seq_len)
+    if profile is not None:
+        ablation["global.sl.batch_size"], ablation["global.sl.accum_steps"] = profile
+    return ablation
+
+
+def run_cell_subprocess(job, ablation, threads=None):
+    """Train one cell in its own process. Returns (ok, error_tail)."""
+    cmd = [sys.executable, os.path.join(_REPO_ROOT, "main.py"), job,
+           "--ablation", json.dumps(ablation)]
+    env = dict(os.environ)
+    if threads is not None:
+        # Each worker would otherwise size its BLAS/OMP pools for the whole
+        # machine, so `jobs` processes fight over the same cores.
+        env["OMP_NUM_THREADS"] = str(threads)
+        env["MKL_NUM_THREADS"] = str(threads)
+    # Captured, not streamed: `jobs` processes writing to one terminal interleave
+    # into unreadable noise. Only the tail of a failure is surfaced.
+    proc = subprocess.run(cmd, cwd=_REPO_ROOT, capture_output=True, text=True,
+                          env=env)
+    if proc.returncode == 0:
+        return True, ""
+    return False, (proc.stderr or proc.stdout or "").strip()[-1200:]
+
+
 def _cleanup():
     # In-process hygiene the subprocess model got for free: close figures, drop
     # references, and bound the Inductor cache when compile is on.
@@ -123,7 +190,7 @@ def _cleanup():
 
 
 def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
-             k_values=None, models=None, datasets=None):
+             k_values=None, models=None, datasets=None, jobs=1):
     """Run every cell of the grid for one setup. Returns the list of failed runs.
 
     logs_dir only affects the resume check; Experiment.run() always writes under
@@ -137,6 +204,34 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     caller-validated); None means all of them. Each is a plain filter -- the
     cells it keeps are byte-for-byte the cells the full sweep would have run, so
     a trial run's results drop straight into the full grid's tables.
+
+    jobs>1 trains that many cells concurrently, each in its own subprocess (see
+    the module docstring). Expect much less than a linear speedup, and on a
+    GPU-heavy sweep expect almost none.
+
+    Measured on the RTX 5090, 15 cluster cells (DLinear/PatchTST/TSMixer over the
+    three datasets at L336_O96) at jobs=4 against the same cells run
+    sequentially: every cell slowed by a mean 3.15x per epoch, so four workers
+    netted 1.2x -- 29m23s against a ~35 min sequential projection. Per-model
+    slowdown at jobs=4 was DLinear 1.0-2.7x, TSMixer 3.0-3.5x, PatchTST 2.9-3.7x.
+
+    Free VRAM is not the signal to size this by, and neither is
+    `nvidia-smi utilization.gpu`: that reports the fraction of *time* a kernel was
+    resident, not occupancy, so the 52%/5-of-32-GiB reading during a sequential
+    sweep did not mean half the card was spare. These models issue many small
+    kernels, so concurrent processes mostly make CUDA time-slice between contexts.
+    Contention tracks how GPU-bound the model is -- a DLinear-only sweep still
+    parallelizes usefully, a PatchTST one does not.
+
+    Where jobs>1 does pay: cheap models, and sweeps whose wall clock is dominated
+    by the per-cell fixed cost (data loading, conformal recalibration, plotting),
+    which is ~28% of a DLinear cell (38.5s training inside a 53s cell).
+
+    Memory is a hard ceiling on top of that, sized by the *peak* of the heaviest
+    cell, not the average: EMForecaster and the Transformer are one to two orders
+    heavier than these (EMForecaster already needs the batch-128 profile above to
+    fit one cell), so jobs>2 on a grid containing them will OOM. The default of 1
+    keeps every existing invocation on the in-process path unchanged.
     """
     console = Console()
     grid_def = GRIDS[setup]
@@ -182,6 +277,10 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     # restarting picks up exactly where it stopped.
     runs = [(cell, seed) for seed in seeds for cell in cells]
     total = len(runs)
+
+    if jobs > 1 and not dry_run:
+        return _run_grid_parallel(setup, grid_def, runs, jobs, logs_dir, seeds,
+                                  k_values, models, datasets, windows, console)
 
     for n, (((label, model_id, job), dataset, (seq_len, pred_len), k), seed) in enumerate(runs, 1):
         k_suffix = f" k={k}" if k is not None else ""
@@ -265,6 +364,14 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
         finally:
             _cleanup()
 
+    _finish(setup, console, passed, skipped, failed, seeds, k_values, models,
+            datasets, windows, logs_dir, write=not dry_run)
+    return failed
+
+
+def _finish(setup, console, passed, skipped, failed, seeds, k_values, models,
+            datasets, windows, logs_dir, write=True):
+    """Print the summary and persist the run report. Shared by both modes."""
     console.log("")
     console.log(f"===== {setup} CP grid summary =====")
     console.log(f"  passed:  {len(passed)}")
@@ -292,8 +399,62 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
         "skipped": skipped,
         "failed": failed,
     }
-    if not dry_run:
+    if write:
         os.makedirs(logs_dir, exist_ok=True)
         with open(os.path.join(logs_dir, f"grid_report_{setup}.json"), "w") as f:
             json.dump(report, f, indent=2)
+
+
+def _run_grid_parallel(setup, grid_def, runs, jobs, logs_dir, seeds, k_values,
+                       models, datasets, windows, console):
+    """run_grid's jobs>1 path: one subprocess per cell, `jobs` at a time."""
+    alpha = grid_def["alpha"]
+    total = len(runs)
+    passed, skipped, failed = [], [], []
+
+    # Same split perchannel.py uses: divide the machine's cores between the
+    # workers so `jobs` processes do not each size their BLAS pool for all of it.
+    threads = max(1, (os.cpu_count() or 8) // jobs)
+
+    work = []
+    for n, (((label, model_id, job), dataset, (seq_len, pred_len), k), seed) in enumerate(runs, 1):
+        k_suffix = f" k={k}" if k is not None else ""
+        seed_suffix = f" seed={seed}" if len(seeds) > 1 else ""
+        cell_tag = (f"[{n:2d}/{total}] {label:<12} "
+                    f"{dataset}/L{seq_len}/O{pred_len}{k_suffix}{seed_suffix}")
+        run_tag = f"k{k}" if k is not None else ""
+        # Resume is checked up front, single-threaded, so a completed cell never
+        # occupies a worker slot and the [SKIP] lines stay in grid order.
+        if cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(seed,),
+                     logs_dir=logs_dir, tag=run_tag):
+            console.log(f"[SKIP] {cell_tag}")
+            skipped.append(cell_tag)
+            continue
+        work.append((cell_tag, model_id, job, dataset, seq_len, pred_len, k,
+                     run_tag, seed))
+
+    console.log(f"Running {len(work)} cells on {jobs} workers "
+                f"({threads} BLAS threads each).")
+
+    def _one(item):
+        cell_tag, model_id, job, dataset, seq_len, pred_len, k, run_tag, seed = item
+        ablation = cell_ablation(model_id, dataset, seq_len, pred_len, alpha,
+                                 seed, k=k, run_tag=run_tag)
+        ok, err = run_cell_subprocess(job, ablation, threads=threads)
+        return cell_tag, ok, err
+
+    # Threads, not processes: each one only blocks on subprocess.run, so the GIL
+    # is irrelevant and max_workers is exactly the training concurrency.
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        for cell_tag, ok, err in pool.map(_one, work):
+            if ok:
+                console.log(f"[ OK ] {cell_tag}")
+                passed.append(cell_tag)
+            else:
+                console.log(f"[FAIL] {cell_tag}")
+                console.log(err)
+                failed.append(cell_tag)
+
+    _finish(setup, console, passed, skipped, failed, seeds, k_values, models,
+            datasets, windows, logs_dir)
     return failed
