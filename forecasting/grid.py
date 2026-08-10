@@ -238,7 +238,10 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     windows = grid_def["windows"] if windows is None else windows
     seeds = [SEED] if seeds is None else list(seeds)
     models = grid_def["models"] if models is None else list(models)
-    datasets = grid_def["datasets"] if datasets is None else list(datasets)
+    if datasets is None:
+        datasets = grid_def.get("default_datasets", grid_def["datasets"])
+    else:
+        datasets = list(datasets)
     if grid_def.get("per_channel"):
         # A per-band cell is many runs, not one, and needs the process pool in
         # forecasting/perchannel.py. Fail loudly instead of silently training the
@@ -260,6 +263,14 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     if off_grid:
         console.log(f"[NOTE ] k={', '.join(str(k) for k in off_grid)} outside the "
                     f"{setup} grid's k_values {grid_k}; running as a one-off")
+    # --window is equally allowed to ask for a custom lookback/horizon outside
+    # the declared sweep (select_windows passes them through on purpose).
+    off_grid_w = [w for w in windows if w not in grid_def["windows"]]
+    if off_grid_w:
+        pretty = ", ".join(f"L{s}_O{p}" for s, p in off_grid_w)
+        have = ", ".join(f"L{s}_O{p}" for s, p in grid_def["windows"])
+        console.log(f"[NOTE ] window(s) {pretty} outside the {setup} grid's "
+                    f"windows ({have}); running as a one-off")
     if k_values:
         cells = [(m, d, w, k)
                  for m in models

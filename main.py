@@ -187,7 +187,10 @@ if __name__ == "__main__":
                         help="Grid mode only: restrict to specific window(s) "
                              "instead of all four. Format 'LxO' (e.g. '336x96') "
                              "or 'L336_O96'; comma-separate for several. Omit to "
-                             "run every window.")
+                             "run every window. A window outside the grid's own "
+                             "list is allowed, so '--window 720x96' runs a "
+                             "custom lookback as a one-off without editing "
+                             "forecasting/grids.py.")
     parser.add_argument("--k", type=str, default=None,
                         help="Cluster grid only: restrict to specific cluster "
                              "count(s) instead of every k in the grid. A single "
@@ -224,7 +227,13 @@ if __name__ == "__main__":
             seeds = select_seeds(args.seeds)
             k_values = select_k_values(args.k, GRIDS[setup].get("k_values"))
             models = select_models(args.model, GRIDS[setup]["models"])
-            datasets = select_datasets(args.dataset, GRIDS[setup]["datasets"])
+            # No --dataset: a grid may declare a narrower default sweep (the
+            # cluster grid defaults to ED2022) while --dataset still reaches
+            # everything in its "datasets" list.
+            datasets = (select_datasets(args.dataset, GRIDS[setup]["datasets"])
+                        if args.dataset
+                        else GRIDS[setup].get("default_datasets",
+                                              GRIDS[setup]["datasets"]))
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(2)

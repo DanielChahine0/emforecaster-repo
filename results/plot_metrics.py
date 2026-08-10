@@ -6,13 +6,16 @@ one line per dataset, so a panel reads as "how this metric moves across model
 generations, per dataset". Three panels - MSE, MAE, total training time - are
 emitted both as one combined strip and as standalone single figures, twice:
 ``figures/dataset split/`` keeps datasets as the lines with models along the
-x-axis, and ``figures/model split/`` flips the roles.
+x-axis, and ``figures/model split/`` flips the roles. The clustering study
+(k-grouped channels) instead puts the cluster count k on the x-axis and lands
+in ``figures/cluster/``.
 
 Usage
 -----
-    python3 plot_metrics.py                          # every section, PDF + PNG
+    python3 plot_metrics.py                          # every section, PNG
     python3 plot_metrics.py --section multivariate
     python3 plot_metrics.py --grid 336/96            # keep one (L, O) config
+    python3 plot_metrics.py --dataset ED2022         # keep one dataset (repeatable)
     python3 plot_metrics.py --mute DET               # gray one dataset as reference
     python3 plot_metrics.py --style paper            # IEEEtran column sizing
     python3 plot_metrics.py --list                   # show what was parsed
@@ -34,6 +37,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib import colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FixedLocator, FuncFormatter
 
@@ -41,29 +45,68 @@ from matplotlib.ticker import FixedLocator, FuncFormatter
 # Design tokens
 # --------------------------------------------------------------------------- #
 
-# Seven ordered slots, validated adjacent-pairs on a white surface: worst CVD
-# deltaE 10.0, worst normal-vision deltaE 21.4. The first three (coral / blue /
-# gold) are the dataset-split trio and also pass the stricter all-pairs check;
-# the gold sits below 3:1 contrast, so the legend and the paper's tables are the
-# relief. Uniform circle markers, like the reference - hue carries identity.
+# The five style-example colours - Verdigris, Burnt Peach, Charcoal Blue,
+# Sandy Brown, Tuscan Sun - ordered for contrast on a white surface. The
+# leading Verdigris / Burnt Peach / Charcoal trio is the dataset-split set and
+# passes the all-pairs check (deltaE >= 42.0, >= 28.0 under simulated CVD);
+# across all five, adjacent pairs hold deltaE >= 23.2 normal-vision, though the
+# twin ambers compress to 6.2 for deutan viewers - the legend and the paper's
+# tables are the relief. Sandy Brown and Tuscan Sun sit below 3:1 contrast.
+# Uniform circle markers, like the reference - hue carries identity, and
+# series past the fifth restate the wheel dashed-and-hollow (series_style).
 SERIES_COLORS = [
-    "#dd5732", "#2f74e6", "#eaa32b", "#199e70", "#4a3aa7", "#d55181", "#8f7a1e",
+    "#2a9d8f", "#e76f51", "#264653", "#f4a261", "#e9c46a",
 ]
-# A deliberately recessive bone step for a series named with --mute: it stays
+# A deliberately recessive mist step for a series named with --mute: it stays
 # legible and keeps its legend entry, but stops competing for attention.
-MUTED_COLOR = "#e3e0d3"
+MUTED_COLOR = "#d7e0e4"
 
-INK_PRIMARY = "#141413"
-INK_SECONDARY = "#52514e"
-INK_MUTED = "#8a8878"
-GRIDLINE = "#eae7dc"
-AXIS_RULE = "#141413"
+INK_PRIMARY = "#264653"
+INK_SECONDARY = "#54707e"
+INK_MUTED = "#8ba1ab"
+GRIDLINE = "#e4eaee"
+AXIS_RULE = "#264653"
 SURFACE = "#ffffff"
-LEGEND_FILL = "#fdfcf9"
-LEGEND_EDGE = "#ded9cb"
+LEGEND_FILL = "#fbfcfd"
+LEGEND_EDGE = "#d5dde2"
+
+
+def series_style(i: int) -> tuple[str, bool]:
+    """Colour and second-cycle flag for series ``i``.
+
+    The palette stays fixed at the five theme colours; a sixth or seventh
+    series repeats the wheel one step ahead - so the lead colour, the proposed
+    model's, never duplicates - and the True flag asks for a dashed line with a
+    hollow marker to carry the difference.
+    """
+    cycle, slot = divmod(i, len(SERIES_COLORS))
+    return SERIES_COLORS[(slot + cycle) % len(SERIES_COLORS)], cycle > 0
+
+
+def label_color(color: str) -> str:
+    """Darken a series colour until small bold text in it reads on white (3:1).
+
+    Lines and markers keep the true palette; only annotations pay the tax, so
+    the light saffron / sandy / sage slots stay legible as text.
+    """
+    rgb = np.array(mcolors.to_rgb(color))
+
+    def contrast(c: np.ndarray) -> float:
+        linear = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+        return 1.05 / (linear @ [0.2126, 0.7152, 0.0722] + 0.05)
+
+    while contrast(rgb) < 3.0:
+        rgb *= 0.97
+    return mcolors.to_hex(rgb)
+
 
 FONT_STACKS = {
-    "sans": ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+    # The reference figures set a Lato-like humanist sans; fall through to
+    # whatever of the family is installed.
+    "sans": [
+        "Lato", "Source Sans 3", "Source Sans Pro", "Open Sans", "Noto Sans",
+        "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans",
+    ],
     "serif": ["Times New Roman", "STIXGeneral", "Charter", "DejaVu Serif"],
 }
 
@@ -103,8 +146,8 @@ STYLES = {
         tick=10,
         legend=10.5,
         footnote=7.5,
-        line_width=2.4,
-        marker=10.0,
+        line_width=2.8,
+        marker=8.5,
     ),
     # IEEEtran: \columnwidth ~ 3.5in, \textwidth ~ 7.16in, no downscaling.
     "paper": Style(
@@ -118,8 +161,8 @@ STYLES = {
         tick=7,
         legend=7,
         footnote=5.6,
-        line_width=1.5,
-        marker=6.0,
+        line_width=1.8,
+        marker=5.0,
     ),
 }
 
@@ -173,6 +216,7 @@ class Record:
     model: str
     model_order: tuple[int, int]
     value: float
+    cluster: int | None = None  # k, in the k-grouped-channels tables only
 
 
 # Which subsection heading feeds which panel, its long-form title, and whether it
@@ -203,6 +247,14 @@ SECTION_ALIASES = {
     "perchannel": "Univariate (Per Channel)",
     "multivariate": "Multivariate",
 }
+
+# The k-grouped-channels study: the same shape plus a k column, so its figures
+# put the cluster count on the x-axis instead of the model generation.
+CLUSTER_SECTION = "Cluster (k-Grouped Channels)"
+
+# The clustering study reads on one dataset: its figures default to ED2022
+# (matching the sweep default in forecasting/grids.py), and --dataset overrides.
+CLUSTER_DEFAULT_DATASET = "ED2022"
 
 
 def parse_tables(path: Path) -> list[Record]:
@@ -241,15 +293,23 @@ def parse_tables(path: Path) -> list[Record]:
             header = cells
             continue
 
-        # Only the wide "Dataset | L | O | <one column per model>" tables. The
+        # Only the wide "Dataset | L | O | <one column per model>" tables, plus
+        # an optional k (cluster count) column before the models. The
         # comparison tree uses "Dataset | L | O | Model | ..." instead - skip it.
         if len(header) < 4 or header[0] != "Dataset" or header[1:3] != ["L", "O"]:
             continue
         if header[3] == "Model":
             continue
+        has_k = header[3] == "k"
+        if has_k and len(header) < 5:
+            continue
 
         dataset, lookback, horizon = cells[0], int(cells[1]), int(cells[2])
-        for col, (model, cell) in enumerate(zip(header[3:], cells[3:])):
+        cluster = int(cells[3]) if has_k else None
+        first_model = 4 if has_k else 3
+        for col, (model, cell) in enumerate(
+            zip(header[first_model:], cells[first_model:])
+        ):
             records.append(
                 Record(
                     section=section,
@@ -260,6 +320,7 @@ def parse_tables(path: Path) -> list[Record]:
                     model=model,
                     model_order=(model_rank(model), col),
                     value=parse_value(cell),
+                    cluster=cluster,
                 )
             )
 
@@ -284,6 +345,16 @@ def short_dataset(name: str) -> str:
 def model_year(name: str) -> str | None:
     found = re.search(r"\((\d{4})\)", name)
     return found.group(1) if found else None
+
+
+def pair_label(dataset: str, model: str, many_datasets: bool, many_models: bool) -> str:
+    """One legend entry per (dataset, model) line; a constant half drops out."""
+    parts = []
+    if many_datasets:
+        parts.append(short_dataset(dataset))
+    if many_models or not many_datasets:
+        parts.append(short_model(model))
+    return " · ".join(parts)
 
 
 @dataclass
@@ -320,6 +391,42 @@ def aggregate(records, section: str, metric: str, grid: str | None):
             ]
             values[dataset][model] = float(np.mean(cells)) if cells else float("nan")
     return models, datasets, values, configs
+
+
+def aggregate_clusters(records, section: str, metric: str, grid: str | None):
+    """Mean each (dataset, model, k) cell over the (L, O) configs still in play."""
+    rows = [
+        r
+        for r in records
+        if r.section == section and r.metric == metric and r.cluster is not None
+    ]
+    if grid:
+        lookback, horizon = (int(v) for v in grid.lower().replace("l", "").split("/"))
+        rows = [r for r in rows if r.lookback == lookback and r.horizon == horizon]
+    if not rows:
+        return [], [], {}, []
+
+    ks = sorted({r.cluster for r in rows})
+    models = [m for _, m in sorted({(r.model_order, r.model) for r in rows})]
+    datasets = list(dict.fromkeys(r.dataset for r in rows))  # table order
+    pairs = [(d, m) for d in datasets for m in models]
+    configs = sorted({(r.lookback, r.horizon) for r in rows})
+
+    values: dict[tuple[str, str], dict[int, float]] = {}
+    for pair in pairs:
+        dataset, model = pair
+        values[pair] = {}
+        for k in ks:
+            cells = [
+                r.value
+                for r in rows
+                if r.dataset == dataset
+                and r.model == model
+                and r.cluster == k
+                and not np.isnan(r.value)
+            ]
+            values[pair][k] = float(np.mean(cells)) if cells else float("nan")
+    return ks, pairs, values, configs
 
 
 # --------------------------------------------------------------------------- #
@@ -504,19 +611,25 @@ def draw_panel(
     for i, (name, vals) in enumerate(series):
         y = np.array(vals, dtype=float)
         is_muted = name in muted
-        color = MUTED_COLOR if is_muted else SERIES_COLORS[i % len(SERIES_COLORS)]
+        color, second_cycle = series_style(i)
+        if is_muted:
+            color = MUTED_COLOR
         depth = 2 if is_muted else 4 + i
 
         (line,) = ax.plot(
             x,
             y,
             color=color,
+            linestyle=(0, (2.4, 1.4)) if second_cycle else "-",
             marker="o",
             markersize=style.marker,
-            markeredgecolor="none",
+            markerfacecolor=SURFACE if second_cycle else color,
+            markeredgecolor=color if second_cycle else "none",
+            markeredgewidth=style.line_width * 0.9 if second_cycle else 0.0,
             linewidth=style.line_width,
             solid_capstyle="round",
             solid_joinstyle="round",
+            dash_capstyle="round",
             label=name,
             zorder=depth,
             clip_on=False,
@@ -535,7 +648,7 @@ def draw_panel(
                 ha="left" if label_side > 0 else "right",
                 va="center",
                 fontsize=style.value_label,
-                color=color if not is_muted else INK_MUTED,
+                color=label_color(color),
                 fontweight="bold",
                 zorder=depth + 0.7,
                 annotation_clip=False,
@@ -567,7 +680,8 @@ def draw_panel(
     ax.set_ylim(lo, hi)
     ax.set_xticks(x)
     # Short label sets sit flat; long ones tilt to keep from colliding.
-    flat = n <= 4 and max(map(len, panel.x_labels)) <= 8
+    longest = max(map(len, panel.x_labels))
+    flat = longest <= 4 or (n <= 4 and longest <= 8)
     ax.set_xticklabels(
         panel.x_labels,
         rotation=0 if flat else 28,
@@ -624,7 +738,7 @@ def draw_panel(
         ax.text(
             0.5, 1.06 + lift, subtitle, transform=ax.transAxes,
             fontsize=style.subtitle, color=INK_SECONDARY,
-            family="serif", ha="center", va="baseline",
+            ha="center", va="baseline",
         )
 
     return handles
@@ -650,12 +764,17 @@ def spread_labels(ax, labels, min_gap_pt: float) -> None:
 
 
 def dot_handles(handles, style: Style):
-    """Plain colour dots, the way the reference legend keys its series."""
+    """Plain colour dots, the way the reference legend keys its series.
+
+    Second-cycle series keep their hollow ring so the key mirrors the line.
+    """
     return [
         Line2D(
             [], [], linestyle="None",
             marker=h.get_marker(), markersize=style.legend * 1.15,
-            markerfacecolor=h.get_color(), markeredgecolor="none",
+            markerfacecolor=h.get_markerfacecolor(),
+            markeredgecolor=h.get_markeredgecolor(),
+            markeredgewidth=h.get_markeredgewidth(),
             label=h.get_label(),
         )
         for h in handles
@@ -748,7 +867,26 @@ def build_figures(
     subtitle_text: str | None,
 ) -> list[Path]:
     panels: list[Panel] = []
+    context = None  # the sole dataset of a cluster study, surfaced in subtitles
     for key, _, long_title, is_time in METRICS:
+        if split == "cluster":  # lines = (dataset, model) pairs, columns = k
+            ks, pairs, kvalues, configs = aggregate_clusters(records, section, key, grid)
+            if not ks:
+                continue
+            many_datasets = len({d for d, _ in pairs}) > 1
+            many_models = len({m for _, m in pairs}) > 1
+            if not many_datasets:
+                context = short_dataset(pairs[0][0])
+            x_labels = [str(k) for k in ks]
+            series = [
+                (
+                    pair_label(d, m, many_datasets, many_models),
+                    [kvalues[(d, m)][k] for k in ks],
+                )
+                for d, m in pairs
+            ]
+            panels.append(Panel(key, long_title, is_time, x_labels, series, configs))
+            continue
         models, datasets, values, configs = aggregate(records, section, key, grid)
         if not models:
             continue
@@ -768,11 +906,18 @@ def build_figures(
         print(f"  no data for section {section!r}", file=sys.stderr)
         return []
 
+    def sub(configs: list[tuple[int, int]]) -> str:
+        line = grid_line(configs)
+        return f"{context} · {line}" if context else line
+
     first = panels[0]
     written: list[Path] = []
-    x_title = "Dataset" if split == "model split" else "Model"
-    headline = title_text or f"{section}: accuracy and training cost by model generation"
-    subhead = subtitle_text or grid_line(first.configs)
+    x_title = {"model split": "Dataset", "cluster": "Channel clusters (k)"}.get(
+        split, "Model"
+    )
+    axis = "cluster count" if split == "cluster" else "model generation"
+    headline = title_text or f"{section}: accuracy and training cost by {axis}"
+    subhead = subtitle_text or sub(first.configs)
 
     # --- 1) Combined strip: MSE | MAE | training time, one shared legend ------ #
     legend_rows = int(np.ceil(len(first.series) / 4))
@@ -798,8 +943,7 @@ def build_figures(
     fig.text(0.5, 0.985, headline, ha="center", va="top",
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
     fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
-             ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY,
-             family="serif")
+             ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
     legend = fig.legend(
         handles=dot_handles(handles, style),
         loc="upper center",
@@ -831,7 +975,7 @@ def build_figures(
         draw_panel(
             ax, panel, style,
             title=panel.title,
-            subtitle=subtitle_text or grid_line(panel.configs),
+            subtitle=subtitle_text or sub(panel.configs),
             highlight=highlight,
             muted=muted,
             show_legend=True,
@@ -850,10 +994,11 @@ def build_figures(
 
 
 def tradeoff_points(records, section: str, metric: str, grid: str | None):
-    """One point per model: (label, mean seconds, mean metric value, colour).
+    """One point per model: (label, mean seconds, mean value, colour, hollow).
 
     Both means run over the datasets (and configs), so each model collapses to a
-    single cost/accuracy position. Colours reuse the model-split assignment.
+    single cost/accuracy position. Colours reuse the model-split assignment,
+    hollow markers included.
     """
     models, datasets, mvals, configs = aggregate(records, section, metric, grid)
     _, _, tvals, _ = aggregate(records, section, "Training time", grid)
@@ -861,23 +1006,25 @@ def tradeoff_points(records, section: str, metric: str, grid: str | None):
     for i, model in enumerate(models):
         ys = [mvals[d][model] for d in datasets if np.isfinite(mvals[d][model])]
         ts = [tvals[d][model] for d in datasets if np.isfinite(tvals[d][model])]
+        color, second_cycle = series_style(i)
         points.append((
             short_model(model),
             float(np.mean(ts)) if ts else float("nan"),
             float(np.mean(ys)) if ys else float("nan"),
-            SERIES_COLORS[i % len(SERIES_COLORS)],
+            color,
+            second_cycle,
         ))
     return points, configs
 
 
 def draw_tradeoff_panel(ax, key: str, title: str, subtitle: str | None, points, style: Style) -> str:
     """Scatter of models in cost/accuracy space; returns the time unit used."""
-    plotted = [(n, t, y, c) for n, t, y, c in points if np.isfinite(t) and np.isfinite(y)]
-    missing = [n for n, t, y, _ in points if not (np.isfinite(t) and np.isfinite(y))]
+    plotted = [p for p in points if np.isfinite(p[1]) and np.isfinite(p[2])]
+    missing = [p[0] for p in points if not (np.isfinite(p[1]) and np.isfinite(p[2]))]
 
-    divisor, unit = time_unit(max(t for _, t, _, _ in plotted))
-    xs = [t / divisor for _, t, _, _ in plotted]
-    ys = [y for _, _, y, _ in plotted]
+    divisor, unit = time_unit(max(t for _, t, _, _, _ in plotted))
+    xs = [t / divisor for _, t, _, _, _ in plotted]
+    ys = [y for _, _, y, _, _ in plotted]
 
     # Log time axis, with room on the right for the point labels.
     xlo, xhi = min(xs) / 1.5, max(xs) * 2.6
@@ -889,16 +1036,20 @@ def draw_tradeoff_panel(ax, key: str, title: str, subtitle: str | None, points, 
     ydigits = digits_for_step(yticks[1] - yticks[0]) if len(yticks) > 1 else 2
 
     labels = []
-    for name, t, y, color in plotted:
+    for name, t, y, color, second_cycle in plotted:
         ax.plot(
             [t / divisor], [y],
             marker="o", markersize=style.marker * 1.35, color=color,
-            markeredgecolor="none", linestyle="None", zorder=4, clip_on=False,
+            markerfacecolor=SURFACE if second_cycle else color,
+            markeredgecolor=color if second_cycle else "none",
+            markeredgewidth=style.line_width * 0.9 if second_cycle else 0.0,
+            linestyle="None", zorder=4, clip_on=False,
         )
         labels.append(ax.annotate(
             name, (t / divisor, y),
             textcoords="offset points", xytext=(style.marker * 1.1, 0),
-            ha="left", va="center", fontsize=style.value_label, color=color,
+            ha="left", va="center", fontsize=style.value_label,
+            color=label_color(color),
             fontweight="bold", zorder=5, annotation_clip=False,
         ))
 
@@ -933,7 +1084,7 @@ def draw_tradeoff_panel(ax, key: str, title: str, subtitle: str | None, points, 
         ax.text(
             0.5, 1.06, subtitle, transform=ax.transAxes,
             fontsize=style.subtitle, color=INK_SECONDARY,
-            family="serif", ha="center", va="baseline",
+            ha="center", va="baseline",
         )
     return unit
 
@@ -955,7 +1106,7 @@ def build_tradeoff_figures(
         if is_time:
             continue
         points, configs = tradeoff_points(records, section, key, grid)
-        if points and any(np.isfinite(t) and np.isfinite(y) for _, t, y, _ in points):
+        if points and any(np.isfinite(t) and np.isfinite(y) for _, t, y, _, _ in points):
             panels.append((key, long_title, points, configs))
 
     if not panels:
@@ -976,8 +1127,7 @@ def build_tradeoff_figures(
     fig.text(0.5, 0.985, headline, ha="center", va="top",
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
     fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
-             ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY,
-             family="serif")
+             ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
     add_x_label(fig, axes, style, f"Total Training Time ({unit}, log scale)")
     written += save(fig, outdir, stem, formats)
 
@@ -1005,14 +1155,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tables", type=Path, default=here / "tables.md")
     parser.add_argument("--outdir", type=Path, default=here / "figures")
     parser.add_argument(
-        "--section", default="all", choices=["all", *SECTION_ALIASES],
-        help="which results tree to plot (default: all three)",
+        "--section", default="all", choices=["all", *SECTION_ALIASES, "cluster"],
+        help="which results tree to plot (default: everything)",
     )
     parser.add_argument(
         "--grid",
         help="keep a single lookback/horizon config, e.g. 336/96 (default: average them)",
     )
-    parser.add_argument("--formats", default="pdf,png", help="comma-separated output formats")
+    parser.add_argument("--formats", default="png", help="comma-separated output formats")
     parser.add_argument(
         "--style", default="slide", choices=list(STYLES),
         help="slide: presentation proportions (default); paper: IEEEtran column sizing",
@@ -1021,6 +1171,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--highlight", default="",
         help="optionally bold this model's tick label and label its values",
+    )
+    parser.add_argument(
+        "--dataset", action="append", default=[], metavar="NAME",
+        help="keep only this dataset, e.g. ED2022 (repeatable; default: all)",
     )
     parser.add_argument(
         "--mute", action="append", default=[], metavar="SERIES",
@@ -1041,10 +1195,31 @@ def main(argv: list[str] | None = None) -> int:
     if not records:
         parser.error(f"no metric tables found in {args.tables}")
 
+    if args.dataset:
+        wanted = {name.lower() for name in args.dataset}
+        available = sorted({short_dataset(r.dataset) for r in records})
+        records = [r for r in records if short_dataset(r.dataset).lower() in wanted]
+        if not records:
+            parser.error(
+                f"no rows match --dataset {', '.join(args.dataset)}; "
+                f"available: {', '.join(available)}"
+            )
+
     if args.list:
         for section in dict.fromkeys(r.section for r in records):
             print(f"\n{section}")
             for key, _, _, _ in METRICS:
+                if section == CLUSTER_SECTION:
+                    ks, pairs, _, configs = aggregate_clusters(
+                        records, section, key, args.grid
+                    )
+                    if ks:
+                        print(
+                            f"  {key:<14} {len(pairs)} series x k = "
+                            f"{{{', '.join(map(str, ks))}}}"
+                            f"  [{', '.join(f'L{l}/O{o}' for l, o in configs)}]"
+                        )
+                    continue
                 models, datasets, _, configs = aggregate(records, section, key, args.grid)
                 if models:
                     print(
@@ -1072,6 +1247,8 @@ def main(argv: list[str] | None = None) -> int:
     sections = (
         list(SECTION_ALIASES.values())
         if args.section == "all"
+        else []
+        if args.section == "cluster"
         else [SECTION_ALIASES[args.section]]
     )
 
@@ -1113,6 +1290,33 @@ def main(argv: list[str] | None = None) -> int:
             formats=formats,
             style=style,
             stem=stem,
+            title_text=args.title,
+            subtitle_text=args.subtitle,
+        ):
+            print(f"  wrote {path}")
+
+    if args.section in ("all", "cluster"):
+        # Without an explicit --dataset the cluster figures keep only the
+        # study's dataset; nine (dataset, model) lines drown the k trend.
+        cluster_records = records if args.dataset else [
+            r for r in records
+            if short_dataset(r.dataset).lower() == CLUSTER_DEFAULT_DATASET.lower()
+        ]
+        outdir = args.outdir / "cluster"
+        outdir.mkdir(parents=True, exist_ok=True)
+        print(f"cluster / {CLUSTER_SECTION}:")
+        for path in build_figures(
+            cluster_records,
+            CLUSTER_SECTION,
+            outdir=outdir,
+            grid=args.grid,
+            formats=formats,
+            style=style,
+            highlight=args.highlight or None,
+            muted=set(args.mute),
+            label_points=args.labels,
+            stem="cluster",
+            split="cluster",
             title_text=args.title,
             subtitle_text=args.subtitle,
         ):

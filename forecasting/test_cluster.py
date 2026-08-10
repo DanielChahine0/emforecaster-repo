@@ -374,16 +374,29 @@ def test_run_grid_k_values_override_restricts_the_cells(tmp_path, capsys):
     assert "k=1" in out
     for k in grids.GRIDS["cluster"]["k_values"]:
         assert f"k={k}" not in out
-    # one cell per model x dataset, and no k dimension left over
-    assert out.count("[DRY ]") == len(grids.CLUSTER_MODELS) * len(grids.MV_DATASETS)
+    # one cell per model x default dataset, and no k dimension left over
+    assert out.count("[DRY ]") == (len(grids.CLUSTER_MODELS)
+                                   * len(grids.GRIDS["cluster"]["default_datasets"]))
 
 
 def test_run_grid_without_k_values_runs_the_whole_sweep(tmp_path, capsys):
     grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
                   windows=[(336, 96)], k_values=None)
     out = capsys.readouterr().out
-    assert out.count("[DRY ]") == (len(grids.CLUSTER_MODELS) * len(grids.MV_DATASETS)
+    assert out.count("[DRY ]") == (len(grids.CLUSTER_MODELS)
+                                   * len(grids.GRIDS["cluster"]["default_datasets"])
                                    * len(grids.GRIDS["cluster"]["k_values"]))
+
+
+def test_cluster_grid_defaults_to_ed2022_but_keeps_the_rest_reachable(tmp_path, capsys):
+    # The clustering study runs on ED2022, so a bare sweep covers only it ...
+    grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
+                  windows=[(336, 96)])
+    out = capsys.readouterr().out
+    assert "ED2022" in out
+    assert "UH2022" not in out and "emf2023" not in out.lower()
+    # ... while --dataset still reaches the full multivariate dataset list.
+    assert grids.select_datasets("uh2022", grids.GRIDS["cluster"]["datasets"]) == ["UH2022"]
 
 
 def test_select_models_matches_label_or_model_id():

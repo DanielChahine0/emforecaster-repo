@@ -150,9 +150,12 @@ GRIDS = {
     # k=num_channels (one cluster per channel) are deliberately outside the
     # sweep: they are the degenerate ends of the soft assignment rather than
     # interesting cluster counts, and --k reaches them for a one-off sanity
-    # check without editing this list.
+    # check without editing this list. The clustering study runs on ED2022, so
+    # a bare sweep defaults to it; UH2022 and emf2023 stay in the grid and are
+    # reachable with an explicit --dataset.
     "cluster": {
-        "models": CLUSTER_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
+        "models": CLUSTER_MODELS, "datasets": MV_DATASETS,
+        "default_datasets": ["ED2022"], "windows": WINDOWS,
         "alpha": 0.1, "k_values": [2, 3, 5, 9],
     },
 }
@@ -189,22 +192,23 @@ def parse_window_spec(spec):
 def select_windows(spec, available):
     """The windows from `available` selected by `spec`, in grid order.
 
-    `spec` None/empty -> all of `available` unchanged. Otherwise every requested
-    window must exist in the grid (else ValueError), duplicates collapse, and the
-    result keeps the grid's own ordering so runs and resume paths stay stable
-    regardless of how the flag was typed.
+    `spec` None/empty -> all of `available` unchanged. Duplicates collapse, and
+    requested windows that are in the grid keep the grid's own ordering so runs
+    and resume paths stay stable regardless of how the flag was typed.
+
+    Like select_k_values, a requested window need NOT be one of the grid's own:
+    a custom lookback ('--window 720x96') runs as a one-off without editing this
+    file. Off-grid windows sort ascending after the grid ones, and run_grid logs
+    them so a one-off cell is never mistaken for part of the canonical sweep.
+    parse_window_spec still rejects malformed tokens, so a typo that doesn't
+    parse as LxO fails loudly rather than training the wrong cell.
     """
     if not spec:
         return list(available)
     requested = set(parse_window_spec(spec))
-    missing = [w for w in requested if w not in set(available)]
-    if missing:
-        pretty = ", ".join(f"L{s}_O{p}" for s, p in sorted(missing))
-        have = ", ".join(f"L{s}_O{p}" for s, p in available)
-        raise ValueError(
-            f"requested window(s) {pretty} not in grid windows ({have})"
-        )
-    return [w for w in available if w in requested]
+    on_grid = [w for w in available if w in requested]
+    off_grid = sorted(requested - set(available))
+    return on_grid + off_grid
 
 
 def select_seeds(spec):
