@@ -1,15 +1,14 @@
 {
   "setup": "cluster",
-  "finished": "2026-08-10_00-46-33",
+  "finished": "2026-08-10_01-59-08",
   "seeds": [
     69421
   ],
   "k_values": [
-    7,
-    8
+    4,
+    6
   ],
   "models": [
-    "DLinear",
     "PatchTST",
     "TSMixer"
   ],
@@ -20,12 +19,10 @@
     "L336_O96"
   ],
   "passed": [
-    "[ 1/6] DLinear      ED2022/L336/O96 k=7",
-    "[ 2/6] DLinear      ED2022/L336/O96 k=8",
-    "[ 3/6] PatchTST     ED2022/L336/O96 k=7",
-    "[ 4/6] PatchTST     ED2022/L336/O96 k=8",
-    "[ 5/6] TSMixer      ED2022/L336/O96 k=7",
-    "[ 6/6] TSMixer      ED2022/L336/O96 k=8"
+    "[ 1/4] PatchTST     ED2022/L336/O96 k=4",
+    "[ 2/4] PatchTST     ED2022/L336/O96 k=6",
+    "[ 3/4] TSMixer      ED2022/L336/O96 k=4",
+    "[ 4/4] TSMixer      ED2022/L336/O96 k=6"
   ],
   "skipped": [],
   "failed": []

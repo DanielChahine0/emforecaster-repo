@@ -1,0 +1,63 @@
+{
+  "setup": "multivariate",
+  "finished": "2026-08-10_02-19-09",
+  "seeds": [
+    69421
+  ],
+  "k_values": null,
+  "models": [
+    "DLinear",
+    "PatchTST",
+    "TSMixer"
+  ],
+  "datasets": [
+    "ED2022"
+  ],
+  "windows": [
+    "L192_O96",
+    "L336_O96",
+    "L48_O96",
+    "L96_O96",
+    "L144_O96",
+    "L240_O96",
+    "L288_O96",
+    "L384_O96",
+    "L432_O96",
+    "L480_O96"
+  ],
+  "passed": [
+    "[ 1/30] DLinear      ED2022/L192/O96",
+    "[ 3/30] DLinear      ED2022/L48/O96",
+    "[ 4/30] DLinear      ED2022/L96/O96",
+    "[ 5/30] DLinear      ED2022/L144/O96",
+    "[ 6/30] DLinear      ED2022/L240/O96",
+    "[ 7/30] DLinear      ED2022/L288/O96",
+    "[ 8/30] DLinear      ED2022/L384/O96",
+    "[ 9/30] DLinear      ED2022/L432/O96",
+    "[10/30] DLinear      ED2022/L480/O96",
+    "[11/30] PatchTST     ED2022/L192/O96",
+    "[13/30] PatchTST     ED2022/L48/O96",
+    "[14/30] PatchTST     ED2022/L96/O96",
+    "[15/30] PatchTST     ED2022/L144/O96",
+    "[16/30] PatchTST     ED2022/L240/O96",
+    "[17/30] PatchTST     ED2022/L288/O96",
+    "[18/30] PatchTST     ED2022/L384/O96",
+    "[19/30] PatchTST     ED2022/L432/O96",
+    "[20/30] PatchTST     ED2022/L480/O96",
+    "[21/30] TSMixer      ED2022/L192/O96",
+    "[23/30] TSMixer      ED2022/L48/O96",
+    "[24/30] TSMixer      ED2022/L96/O96",
+    "[25/30] TSMixer      ED2022/L144/O96",
+    "[26/30] TSMixer      ED2022/L240/O96",
+    "[27/30] TSMixer      ED2022/L288/O96",
+    "[28/30] TSMixer      ED2022/L384/O96",
+    "[29/30] TSMixer      ED2022/L432/O96",
+    "[30/30] TSMixer      ED2022/L480/O96"
+  ],
+  "skipped": [
+    "[ 2/30] DLinear      ED2022/L336/O96",
+    "[12/30] PatchTST     ED2022/L336/O96",
+    "[22/30] TSMixer      ED2022/L336/O96"
+  ],
+  "failed": []
+}

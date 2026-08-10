@@ -492,6 +492,42 @@ def style_axes(ax, style: Style) -> None:
     ax.set_axisbelow(True)
 
 
+def draw_axis_break(ax, style: Style, below: float) -> None:
+    """Kink the y-axis spine into a small zigzag - the truncated-scale mark.
+
+    Two sharp teeth poke left of the spine just above the origin: the
+    conventional sign that a linear axis does not run down to zero. ``below``
+    is the axes-fraction height of the lowest tick; the glyph centres itself
+    under it, clear of the tick and its label.
+    """
+    fig = ax.figure
+    pos = ax.get_position()
+    width_pt = pos.width * fig.get_size_inches()[0] * 72.0
+    height_pt = pos.height * fig.get_size_inches()[1] * 72.0
+    # Sized to sit under the tick labels: a touch shorter than the tick font,
+    # so the lowest number reads taller than the glyph.
+    half = 0.32 * style.tick / height_pt
+    reach = 0.36 * style.tick / width_pt
+    centre = min(0.085, max(0.04, below / 2))
+    ys = [centre + half, centre + half / 2, centre, centre - half / 2, centre - half]
+    xs = [0.0, -reach, 0.0, -reach, 0.0]
+
+    spine = ax.spines["left"]
+    # Blank the straight spine behind the glyph first, so the axis line
+    # really kinks instead of showing through the teeth.
+    ax.add_artist(Line2D(
+        [0.0, 0.0], [ys[0], ys[-1]], transform=ax.transAxes,
+        color=SURFACE, linewidth=spine.get_linewidth() * 3.0,
+        solid_capstyle="butt", clip_on=False, zorder=spine.get_zorder() + 0.1,
+    ))
+    ax.add_artist(Line2D(
+        xs, ys, transform=ax.transAxes,
+        color=AXIS_RULE, linewidth=spine.get_linewidth(),
+        solid_capstyle="butt", solid_joinstyle="miter",
+        clip_on=False, zorder=spine.get_zorder() + 0.2,
+    ))
+
+
 def densify(points: list[tuple[float, float]], per_segment: int = 10):
     """Sample along each polyline segment - a legend must dodge lines, not just markers."""
     dense = []
@@ -700,6 +736,11 @@ def draw_panel(
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: fmt(v)))
     ax.set_ylabel(axis_label, fontsize=style.axis_label, color=INK_PRIMARY, labelpad=7)
     ax.tick_params(axis="y", labelsize=style.tick)
+
+    # A linear scale that does not reach zero says so with the conventional
+    # zigzag break in the spine; the log time axis names its scale instead.
+    if not panel.is_time and lo > 0:
+        draw_axis_break(ax, style, below=(ticks[0] - lo) / (hi - lo) if ticks else 1.0)
 
     # A column with no logged run keeps its slot so the panels stay aligned.
     for xi in x:
@@ -1066,6 +1107,9 @@ def draw_tradeoff_panel(ax, key: str, title: str, subtitle: str | None, points, 
         f"{key} (lower is better)", fontsize=style.axis_label, color=INK_PRIMARY, labelpad=7
     )
     ax.tick_params(axis="both", labelsize=style.tick)
+
+    if ylo > 0:
+        draw_axis_break(ax, style, below=(yticks[0] - ylo) / (yhi - ylo) if yticks else 1.0)
 
     if missing:
         ax.text(

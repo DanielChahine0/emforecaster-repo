@@ -113,7 +113,7 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-08-06_14-58-39
+  time: 2026-08-10_01-50-39
   tuning_metric: loss
   u_weight: false
   va_inductive: true
