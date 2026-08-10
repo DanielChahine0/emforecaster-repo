@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib
@@ -150,6 +151,17 @@ def build_panels() -> list[pm.Panel]:
 DOTTED = (0, (1.0, 1.6))
 
 
+def slim_markers(handles, style: pm.Style) -> None:
+    """Thin the hollow rings to suit the ladder's small markers.
+
+    draw_panel sizes the ring stroke for plot_metrics' large markers; at the
+    ladder's point size that stroke would fill the circle solid.
+    """
+    for h in handles:
+        if h.get_markeredgecolor() not in ("none", None):
+            h.set_markeredgewidth(style.line_width * 0.5)
+
+
 def model_panels(model: str) -> list[pm.Panel]:
     """The three metric panels of one model: series = its three setups."""
     cells = {
@@ -204,6 +216,7 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
             handles[2].set_linestyle(DOTTED)
             handles[2].set_marker("s")
             handles[2].set_markersize(style.marker * 0.88)
+            slim_markers(handles, style)
         pos = axes[row][0].get_position()
         fig.text(
             0.016, (pos.y0 + pos.y1) / 2, model,
@@ -262,7 +275,9 @@ def main() -> None:
     parser.add_argument("--format", action="append", dest="formats",
                         help="png (default), pdf, svg; repeatable")
     args = parser.parse_args()
-    style = pm.STYLES[args.style]
+    # Ten points per line, up to three lines per hue: the ladder wants far
+    # smaller markers than plot_metrics' five-point categorical panels.
+    style = replace(pm.STYLES[args.style], marker=pm.STYLES[args.style].marker * 0.5)
     formats = args.formats or ["png"]
 
     plt.rcParams.update({
@@ -293,6 +308,7 @@ def main() -> None:
             highlight=None, muted=set(),
             show_legend=False, label_points=False,
         )
+        slim_markers(handles, style)
 
     fig.text(0.5, 0.985, "ED2022: accuracy and training cost by lookback length",
              ha="center", va="top", fontsize=style.title, fontweight="bold",
