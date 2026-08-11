@@ -6,9 +6,11 @@ one line per dataset, so a panel reads as "how this metric moves across model
 generations, per dataset". Three panels - MSE, MAE, total training time - are
 emitted both as one combined strip and as standalone single figures, twice:
 ``figures/dataset split/`` keeps datasets as the lines with models along the
-x-axis, and ``figures/model split/`` flips the roles. The clustering study
-(k-grouped channels) instead puts the cluster count k on the x-axis and lands
-in ``figures/cluster/``.
+x-axis, and ``figures/model split/`` flips the roles. Each split also gets
+``mv-vs-perchannel_mae``, one panel overlaying both setups' MAE (multivariate
+solid over per-channel dashed). The clustering study (k-grouped channels)
+instead puts the cluster count k on the x-axis and lands in
+``figures/cluster/``.
 
 Usage
 -----
@@ -136,8 +138,8 @@ class Style:
 STYLES = {
     # Presentation / preprint proportions: heavy strokes, generous margins.
     "slide": Style(
-        combined_size=(11.5, 6.0),
-        single_size=(6.4, 5.6),
+        combined_size=(11.5, 5.4),
+        single_size=(6.4, 5.0),
         title=17,
         subtitle=11.5,
         panel_title=13,
@@ -151,8 +153,8 @@ STYLES = {
     ),
     # IEEEtran: \columnwidth ~ 3.5in, \textwidth ~ 7.16in, no downscaling.
     "paper": Style(
-        combined_size=(7.16, 4.0),
-        single_size=(3.5, 3.6),
+        combined_size=(7.16, 3.7),
+        single_size=(3.5, 3.3),
         title=10.5,
         subtitle=8,
         panel_title=9,
@@ -219,12 +221,12 @@ class Record:
     cluster: int | None = None  # k, in the k-grouped-channels tables only
 
 
-# Which subsection heading feeds which panel, its long-form title, and whether it
+# Which subsection heading feeds which panel, its panel title, and whether it
 # is a duration (log axis, time-formatted ticks).
 METRICS = [
-    ("MSE", re.compile(r"^1\.1\b.*\bMSE\b"), "Mean Squared Error (MSE)", False),
-    ("MAE", re.compile(r"^1\.2\b.*\bMAE\b"), "Mean Absolute Error (MAE)", False),
-    ("Training time", re.compile(r"^2\.1\b.*Total training time"), "Total Training Time", True),
+    ("MSE", re.compile(r"^1\.1\b.*\bMSE\b"), "MSE", False),
+    ("MAE", re.compile(r"^1\.2\b.*\bMAE\b"), "MAE", False),
+    ("Training time", re.compile(r"^2\.1\b.*Total training time"), "Training time", True),
 ]
 
 # Fixed x-axis order: EMForecaster first, then the baselines. Models missing
@@ -446,6 +448,10 @@ def time_unit(seconds_max: float) -> tuple[float, str]:
     return 3600.0, "hours"
 
 
+# Compact axis-label spellings of the time_unit names.
+TIME_UNIT_ABBREV = {"seconds": "s", "minutes": "min", "hours": "h"}
+
+
 def log_ticks(lo: float, hi: float, target: int = 6) -> list[float]:
     """Ladder values inside [lo, hi], thinned toward ``target`` ticks."""
     inside = [t for t in LADDER if lo <= t <= hi]
@@ -597,31 +603,34 @@ def draw_panel(
     muted: set[str],
     show_legend: bool,
     label_points: bool,
+    styler=None,
 ) -> list[Line2D]:
     x = np.arange(len(panel.x_labels))
     finite = [v for _, vals in panel.series for v in vals if np.isfinite(v)]
 
     # --- scale: one unit, one number format, for ticks and value labels alike --
+    # The panel title names the metric, so the y-axis carries only what the
+    # title cannot: the time unit. MSE / MAE axes stay label-free.
     if panel.is_time:
         divisor, unit = time_unit(max(finite))
         series = [(name, [v / divisor for v in vals]) for name, vals in panel.series]
         span = [v / divisor for v in finite]
         lo, hi = min(span) / 1.3, max(span) * 1.3
         if show_legend:  # empty band at the top for the legend to sit in
-            hi *= (hi / lo) ** 0.24
+            hi *= (hi / lo) ** 0.20
         ticks = log_ticks(lo, hi)
         digits = 0 if all(float(t).is_integer() for t in ticks) else 1
-        axis_label = f"Total training time ({unit}, log scale)"
+        axis_label = TIME_UNIT_ABBREV.get(unit, unit)
     else:
         series = panel.series
         span = list(finite)
         pad = 0.09 * (max(span) - min(span))
         lo, hi = min(span) - pad, max(span) + pad
         if show_legend:  # empty band at the top for the legend to sit in
-            hi += 0.28 * (hi - lo)
+            hi += 0.24 * (hi - lo)
         ticks = linear_ticks(lo, hi)
         digits = digits_for_step(ticks[1] - ticks[0]) if len(ticks) > 1 else 2
-        axis_label = f"{panel.key} (lower is better)"
+        axis_label = None
 
     fmt = lambda v: f"{v:.{digits}f}"
     highlight_at = next(
@@ -647,7 +656,10 @@ def draw_panel(
     for i, (name, vals) in enumerate(series):
         y = np.array(vals, dtype=float)
         is_muted = name in muted
-        color, second_cycle = series_style(i)
+        if styler is not None:
+            color, second_cycle, marker = styler(i)
+        else:
+            (color, second_cycle), marker = series_style(i), "o"
         if is_muted:
             color = MUTED_COLOR
         depth = 2 if is_muted else 4 + i
@@ -657,7 +669,7 @@ def draw_panel(
             y,
             color=color,
             linestyle=(0, (2.4, 1.4)) if second_cycle else "-",
-            marker="o",
+            marker=marker,
             markersize=style.marker,
             markerfacecolor=SURFACE if second_cycle else color,
             markeredgecolor=color if second_cycle else "none",
@@ -734,7 +746,8 @@ def draw_panel(
         ax.yaxis.set_minor_locator(FixedLocator([]))
     ax.yaxis.set_major_locator(FixedLocator(ticks))
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: fmt(v)))
-    ax.set_ylabel(axis_label, fontsize=style.axis_label, color=INK_PRIMARY, labelpad=7)
+    if axis_label:
+        ax.set_ylabel(axis_label, fontsize=style.axis_label, color=INK_PRIMARY, labelpad=7)
     ax.tick_params(axis="y", labelsize=style.tick)
 
     # A linear scale that does not reach zero says so with the conventional
@@ -871,14 +884,24 @@ def add_x_label(fig, axes, style: Style, label: str) -> None:
 
 
 def grid_line(configs: list[tuple[int, int]]) -> str:
-    """``L = {192, 336} and O = {96, 336}`` from the configs in play."""
+    """``lookback length 192, 336 · forecast horizon 96`` from the configs in play.
+
+    The symbols L and O belong to the tables; a caption spells them out. An
+    evenly spaced run of four or more windows collapses to its endpoints and
+    step - the ladder's ten lookbacks, listed, ran wider than the figure.
+    """
 
     def fmt(values: list[int]) -> str:
-        return str(values[0]) if len(values) == 1 else "{" + ", ".join(map(str, values)) + "}"
+        if len(values) == 1:
+            return str(values[0])
+        steps = {b - a for a, b in zip(values, values[1:])}
+        if len(values) >= 4 and len(steps) == 1:
+            return f"{values[0]}-{values[-1]} every {steps.pop()}"
+        return ", ".join(map(str, values))
 
     lookbacks = sorted({l for l, _ in configs})
     horizons = sorted({o for _, o in configs})
-    return f"L = {fmt(lookbacks)} and O = {fmt(horizons)}"
+    return f"lookback length {fmt(lookbacks)} · forecast horizon {fmt(horizons)}"
 
 
 def save(fig, outdir: Path, stem: str, formats: list[str]) -> list[Path]:
@@ -965,9 +988,9 @@ def build_figures(
     fig, axes = plt.subplots(1, len(panels), figsize=style.combined_size)
     axes = list(np.atleast_1d(axes))
     fig.subplots_adjust(
-        left=0.062, right=0.985,
-        top=0.66 if legend_rows == 1 else 0.57,
-        bottom=0.27, wspace=0.34,
+        left=0.055, right=0.985,
+        top=0.70 if legend_rows == 1 else 0.63,
+        bottom=0.27, wspace=0.30,
     )
     handles: list[Line2D] = []
     for ax, panel in zip(axes, panels):
@@ -981,9 +1004,9 @@ def build_figures(
             label_points=label_points,
         )
 
-    fig.text(0.5, 0.985, headline, ha="center", va="top",
+    fig.text(0.5, 0.99, headline, ha="center", va="top",
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
-    fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
+    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1], subhead,
              ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
     legend = fig.legend(
         handles=dot_handles(handles, style),
@@ -1012,7 +1035,7 @@ def build_figures(
     # --- 2) One standalone figure per metric --------------------------------- #
     for panel in panels:
         fig, ax = plt.subplots(figsize=style.single_size)
-        fig.subplots_adjust(left=0.155, right=0.965, top=0.80, bottom=0.26)
+        fig.subplots_adjust(left=0.125, right=0.965, top=0.84, bottom=0.26)
         draw_panel(
             ax, panel, style,
             title=panel.title,
@@ -1027,6 +1050,130 @@ def build_figures(
         written += save(fig, outdir, f"{stem}_{slug}", formats)
 
     return written
+
+
+# --------------------------------------------------------------------------- #
+# Overlay view: multivariate MAE drawn over the per-channel MAE
+# --------------------------------------------------------------------------- #
+
+OVERLAY_MV = "Multivariate"
+OVERLAY_PC = "Univariate (Per Channel)"
+
+
+def build_overlay_figure(
+    records,
+    *,
+    outdir: Path,
+    split: str,
+    grid: str | None,
+    formats: list[str],
+    style: Style,
+    title_text: str | None,
+    subtitle_text: str | None,
+) -> list[Path]:
+    """One MAE panel holding both setups: multivariate lines over per-channel.
+
+    Hue keeps its usual identity (datasets in the dataset split, models in the
+    model split); the setup rides on the second-cycle idiom - multivariate
+    solid with filled markers, per-channel dashed with hollow ones - so two
+    nearly-equal lines stay tellable apart. Because most pairs differ by only
+    a few percent, the panel runs extra tall: the stretched y-axis is what
+    opens the solid/dashed gaps to a visible size. Only the (L, O) configs
+    both sections share enter the mean, keeping the setups comparable; the
+    multivariate series draw last, on top.
+    """
+    shared = (
+        {(r.lookback, r.horizon) for r in records if r.section == OVERLAY_MV}
+        & {(r.lookback, r.horizon) for r in records if r.section == OVERLAY_PC}
+    )
+    rows = [r for r in records if (r.lookback, r.horizon) in shared]
+    models, datasets, mv_vals, _ = aggregate(rows, OVERLAY_MV, "MAE", grid)
+    pc_models, pc_datasets, pc_vals, _ = aggregate(rows, OVERLAY_PC, "MAE", grid)
+    if not models or not pc_models:
+        print("  no shared MV / per-channel MAE cells", file=sys.stderr)
+        return []
+    models = [m for m in models if m in pc_models]
+    datasets = [d for d in datasets if d in pc_datasets]
+
+    if split == "model split":  # lines = models, columns = datasets
+        names, short, x_title = models, short_model, "Dataset"
+        x_labels = [short_dataset(d) for d in datasets]
+        series_of = lambda vals, m: [vals[d][m] for d in datasets]
+    else:  # dataset split: lines = datasets, columns = models
+        names, short, x_title = datasets, short_dataset, "Model"
+        x_labels = [short_model(m) for m in models]
+        series_of = lambda vals, d: [vals[d][m] for m in models]
+
+    n = len(names)
+    series = [(f"{short(nm)} · per-channel", series_of(pc_vals, nm)) for nm in names]
+    series += [(f"{short(nm)} · multivariate", series_of(mv_vals, nm)) for nm in names]
+    panel = Panel("MAE", "MAE", False, x_labels, series, sorted(shared))
+
+    def styler(i: int):
+        """Hue = identity; per-channel (first half) dashed and hollow.
+
+        Sixth and seventh models revisit the colour wheel, so they trade the
+        usual dashed second cycle - taken here by the setup - for a shape.
+        """
+        base = i % n
+        color, _ = series_style(base)
+        return color, i < n, {5: "s", 6: "^"}.get(base, "o")
+
+    # The header runs title / two subtitle lines / legend, so its height is
+    # stacked out of the font sizes rather than guessed as a figure fraction -
+    # the two presets set very different type.
+    legend_rows = int(np.ceil(n / 4))
+    subtitle = subtitle_text or (
+        f"{grid_line(sorted(shared))}\nsolid = multivariate, dashed = per-channel"
+    )
+    width, height = style.single_size
+    height += 0.30 if legend_rows == 1 else 0.55  # the extra subtitle line
+    height += 2.0  # the stretched panel that separates near-equal pairs
+    fig, ax = plt.subplots(figsize=(width, height))
+    frac = lambda points: points / 72 / height
+
+    title_y = 0.985
+    subtitle_y = title_y - frac(style.panel_title * 1.7)
+    legend_y = subtitle_y - frac(
+        style.subtitle * 1.45 * (subtitle.count("\n") + 1) + 10
+    )
+    fig.subplots_adjust(
+        left=0.125, right=0.96,
+        top=legend_y - frac(style.legend * 2.8 * legend_rows), bottom=0.20,
+    )
+
+    handles = draw_panel(
+        ax, panel, style,
+        title="", subtitle=None, highlight=None, muted=set(),
+        show_legend=False, label_points=False, styler=styler,
+    )
+    for handle, nm in zip(handles[n:], names):  # legend keys identity via MV lines
+        handle.set_label(short(nm))
+
+    fig.text(0.5, title_y, title_text or "MAE: multivariate vs per-channel",
+             ha="center", va="top", fontsize=style.panel_title, fontweight="bold",
+             color=INK_PRIMARY)
+    fig.text(0.5, subtitle_y, subtitle, ha="center", va="top",
+             fontsize=style.subtitle, color=INK_SECONDARY, linespacing=1.45)
+    legend = fig.legend(
+        handles=dot_handles(handles[n:], style),
+        loc="upper center", bbox_to_anchor=(0.5, legend_y),
+        ncol=min(n, 4), frameon=True, fancybox=True, fontsize=style.legend,
+        handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=1.6,
+    )
+    frame = legend.get_frame()
+    frame.set_facecolor(LEGEND_FILL)
+    frame.set_edgecolor(LEGEND_EDGE)
+    frame.set_linewidth(1.0)
+    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
+    for text in legend.get_texts():
+        text.set_color(INK_PRIMARY)
+
+    if any(short_model(m) == "ARIMA" for m in models):
+        fig.text(0.985, 0.008, "ARIMA is channel-independent - both setups coincide",
+                 ha="right", va="bottom", fontsize=style.footnote, color=INK_MUTED)
+    add_x_label(fig, [ax], style, x_title)
+    return save(fig, outdir, "mv-vs-perchannel_mae", formats)
 
 
 # --------------------------------------------------------------------------- #
@@ -1103,9 +1250,6 @@ def draw_tradeoff_panel(ax, key: str, title: str, subtitle: str | None, points, 
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.{xdigits}f}"))
     ax.yaxis.set_major_locator(FixedLocator(yticks))
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.{ydigits}f}"))
-    ax.set_ylabel(
-        f"{key} (lower is better)", fontsize=style.axis_label, color=INK_PRIMARY, labelpad=7
-    )
     ax.tick_params(axis="both", labelsize=style.tick)
 
     if ylo > 0:
@@ -1164,7 +1308,7 @@ def build_tradeoff_figures(
     # --- 1) Combined pair: TT vs MSE | TT vs MAE ------------------------------ #
     fig, axes = plt.subplots(1, len(panels), figsize=style.combined_size)
     axes = list(np.atleast_1d(axes))
-    fig.subplots_adjust(left=0.062, right=0.97, top=0.74, bottom=0.22, wspace=0.3)
+    fig.subplots_adjust(left=0.055, right=0.97, top=0.78, bottom=0.22, wspace=0.26)
     unit = ""
     for ax, (key, long_title, points, _) in zip(axes, panels):
         unit = draw_tradeoff_panel(ax, key, long_title, None, points, style)
@@ -1172,17 +1316,17 @@ def build_tradeoff_figures(
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
     fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
              ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
-    add_x_label(fig, axes, style, f"Total Training Time ({unit}, log scale)")
+    add_x_label(fig, axes, style, f"Training time ({TIME_UNIT_ABBREV.get(unit, unit)})")
     written += save(fig, outdir, stem, formats)
 
     # --- 2) One standalone figure per metric --------------------------------- #
     for key, long_title, points, configs in panels:
         fig, ax = plt.subplots(figsize=style.single_size)
-        fig.subplots_adjust(left=0.155, right=0.94, top=0.80, bottom=0.2)
+        fig.subplots_adjust(left=0.125, right=0.94, top=0.84, bottom=0.2)
         unit = draw_tradeoff_panel(
             ax, key, long_title, subtitle_text or grid_line(configs), points, style
         )
-        add_x_label(fig, [ax], style, f"Total Training Time ({unit}, log scale)")
+        add_x_label(fig, [ax], style, f"Training time ({TIME_UNIT_ABBREV.get(unit, unit)})")
         written += save(fig, outdir, f"{stem}_{key.lower()}-vs-tt", formats)
 
     return written
@@ -1316,6 +1460,19 @@ def main(argv: list[str] | None = None) -> int:
                 label_points=args.labels,
                 stem=stem,
                 split=split,
+                title_text=args.title,
+                subtitle_text=args.subtitle,
+            ):
+                print(f"  wrote {path}")
+        if args.section in ("all", "multivariate", "perchannel"):
+            print(f"{split} / multivariate vs per-channel:")
+            for path in build_overlay_figure(
+                records,
+                outdir=outdir,
+                split=split,
+                grid=args.grid,
+                formats=formats,
+                style=style,
                 title_text=args.title,
                 subtitle_text=args.subtitle,
             ):

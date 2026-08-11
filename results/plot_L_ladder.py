@@ -135,13 +135,11 @@ def build_panels() -> list[pm.Panel]:
     configs = [(L, HORIZON) for L in LOOKBACKS]
     x_labels = [str(L) for L in LOOKBACKS]
     panels = []
-    for slot, (key, long_title, is_time) in enumerate([
-        ("MSE", "Mean Squared Error (MSE)", False),
-        ("MAE", "Mean Absolute Error (MAE)", False),
-        ("Training time", "Total Training Time", True),
-    ]):
+    for slot, (key, is_time) in enumerate(
+        [("MSE", False), ("MAE", False), ("Training time", True)]
+    ):
         panels.append(pm.Panel(
-            key, long_title, is_time, x_labels,
+            key, key, is_time, x_labels,
             [(name, [cells[slot] for cells in values]) for name, values in series],
             configs,
         ))
@@ -173,15 +171,13 @@ def model_panels(model: str) -> list[pm.Panel]:
     x_labels = [str(L) for L in LOOKBACKS]
     return [
         pm.Panel(
-            key, long_title, is_time, x_labels,
+            key, key, is_time, x_labels,
             [(name, [c[slot] for c in values]) for name, values in cells.items()],
             configs,
         )
-        for slot, (key, long_title, is_time) in enumerate([
-            ("MSE", "Mean Squared Error (MSE)", False),
-            ("MAE", "Mean Absolute Error (MAE)", False),
-            ("Training time", "Total Training Time", True),
-        ])
+        for slot, (key, is_time) in enumerate(
+            [("MSE", False), ("MAE", False), ("Training time", True)]
+        )
     ]
 
 
@@ -197,9 +193,9 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
     """
     width, row_height = style.combined_size
     fig, axes = plt.subplots(len(MODELS), 3,
-                             figsize=(width, row_height * 0.62 * len(MODELS) + 1.7))
-    fig.subplots_adjust(left=0.085, right=0.985, top=0.845, bottom=0.11,
-                        wspace=0.34, hspace=0.52)
+                             figsize=(width, row_height * 0.62 * len(MODELS) + 1.5))
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.86, bottom=0.11,
+                        wspace=0.30, hspace=0.44)
 
     for row, model in enumerate(MODELS):
         colour = pm.SERIES_COLORS[row]
@@ -228,7 +224,7 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
              ha="center", va="top", fontsize=style.title, fontweight="bold",
              color=pm.INK_PRIMARY)
     fig.text(0.5, 0.988 - (style.title * 1.5) / 72 / fig.get_size_inches()[1],
-             f"O = {HORIZON} · seed {SEED} · colour = model, line style = setup",
+             f"forecast horizon {HORIZON} · seed {SEED}",
              ha="center", va="top", fontsize=style.subtitle, color=pm.INK_SECONDARY)
 
     # Hue belongs to the rows, so the setup key is neutral ink: the line style
@@ -247,10 +243,10 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
     legend = fig.legend(
         handles=[
             key_handle("multivariate", "-", "o", True),
-            key_handle("per-channel (27 bands)", (0, (2.4, 1.4)), "o", False),
+            key_handle("per-channel", (0, (2.4, 1.4)), "o", False),
             key_handle(f"cluster (k = {K_CLUSTER})", DOTTED, "s", False),
         ],
-        loc="upper center", bbox_to_anchor=(0.5, 0.933),
+        loc="upper center", bbox_to_anchor=(0.5, 0.94),
         ncol=3, frameon=True, fancybox=True, fontsize=style.legend,
         handlelength=2.6, handletextpad=0.8, borderpad=0.7, columnspacing=2.0,
     )
@@ -258,11 +254,11 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
     frame.set_facecolor(pm.LEGEND_FILL)
     frame.set_edgecolor(pm.LEGEND_EDGE)
     frame.set_linewidth(1.0)
-    pm.add_x_label(fig, list(axes[-1]), style, "Lookback length L")
+    pm.add_x_label(fig, list(axes[-1]), style, "Lookback length")
     fig.text(
         0.985, 0.008,
-        "per-channel time = summed band trainings, not wall-clock · "
-        "L = 336 cells reuse the Aug 1-3 sweep runs (timed under different GPU load)",
+        "per-channel time = sum of the 27 band trainings · "
+        "the lookback-336 cells were timed under different GPU load",
         ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
     )
     for path in pm.save(fig, outdir, f"{DATASET}_O{HORIZON}_L_ladder_by_model", formats):
@@ -299,7 +295,7 @@ def main() -> None:
     panels = build_panels()
     fig, axes = plt.subplots(1, len(panels), figsize=style.combined_size)
     axes = list(np.atleast_1d(axes))
-    fig.subplots_adjust(left=0.062, right=0.985, top=0.60, bottom=0.27, wspace=0.34)
+    fig.subplots_adjust(left=0.055, right=0.985, top=0.70, bottom=0.21, wspace=0.30)
     handles = []
     for ax, panel in zip(axes, panels):
         handles = pm.draw_panel(
@@ -310,31 +306,32 @@ def main() -> None:
         )
         slim_markers(handles, style)
 
-    fig.text(0.5, 0.985, "ED2022: accuracy and training cost by lookback length",
+    fig.text(0.5, 0.99, "ED2022: accuracy and training cost by lookback length",
              ha="center", va="top", fontsize=style.title, fontweight="bold",
              color=pm.INK_PRIMARY)
-    fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1],
-             f"O = {HORIZON} · seed {SEED} · solid = multivariate, "
-             f"dashed = per-channel (27 bands)",
+    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1],
+             f"forecast horizon {HORIZON} · seed {SEED} · "
+             f"solid = multivariate, dashed = per-channel",
              ha="center", va="top", fontsize=style.subtitle, color=pm.INK_SECONDARY)
-    # Column-major fill: interleaving the setups stacks each model's filled and
-    # hollow dot in one legend column.
-    paired = [handles[i + j * len(MODELS)] for i in range(len(MODELS)) for j in (0, 1)]
+    # The subtitle keys the setups, so the legend needs only one dot per model:
+    # the solid multivariate lines, drawn first, carry the hue.
+    for handle, model in zip(handles, MODELS):
+        handle.set_label(model)
     legend = fig.legend(
-        handles=pm.dot_handles(paired, style),
-        loc="upper center", bbox_to_anchor=(0.5, 0.895),
-        ncol=3, frameon=True, fancybox=True, fontsize=style.legend,
+        handles=pm.dot_handles(handles[: len(MODELS)], style),
+        loc="upper center", bbox_to_anchor=(0.5, 0.875),
+        ncol=len(MODELS), frameon=True, fancybox=True, fontsize=style.legend,
         handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=2.0,
     )
     frame = legend.get_frame()
     frame.set_facecolor(pm.LEGEND_FILL)
     frame.set_edgecolor(pm.LEGEND_EDGE)
     frame.set_linewidth(1.0)
-    pm.add_x_label(fig, axes, style, "Lookback length L")
+    pm.add_x_label(fig, axes, style, "Lookback length")
     fig.text(
         0.985, 0.012,
-        "per-channel time = summed band trainings, not wall-clock · "
-        "L = 336 cells reuse the Aug 1-3 sweep runs (timed under different GPU load)",
+        "per-channel time = sum of the 27 band trainings · "
+        "the lookback-336 cells were timed under different GPU load",
         ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
     )
 

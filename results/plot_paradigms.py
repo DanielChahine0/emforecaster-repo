@@ -73,9 +73,9 @@ TITLES = [
 ]
 CAPTIONS = [
     "One series, one model,\none forecast.",
-    "One model per channel;\nno cross-channel\ninformation.",
-    "One shared model, all\nchannels jointly; channels\nmix inside the model.",
-    "One shared model; channels\nsoftly assigned to k learned\nclusters; k cluster-wise heads.",
+    "One model per channel;\nno cross-channel information.",
+    "One shared model for all\nchannels; they mix inside it.",
+    "Soft assignment to k learned\nclusters; k cluster-wise heads.",
 ]
 
 
