@@ -200,14 +200,7 @@ def panel_d(ax):
 
 
 def main():
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": pm.FONT_STACKS["sans"],
-        "mathtext.fontset": "dejavusans",
-        "savefig.facecolor": pm.SURFACE,
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42,
-    })
+    plt.rcParams.update(pm.rc_fonts())
     fig, axes = plt.subplots(1, 4, figsize=(7.16, 2.35))
     fig.subplots_adjust(left=0.005, right=0.995, top=0.995, bottom=0.005, wspace=0.07)
     for ax, panel in zip(axes, (panel_a, panel_b, panel_c, panel_d)):

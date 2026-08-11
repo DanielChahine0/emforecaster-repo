@@ -436,17 +436,7 @@ def main() -> int:
     ]
 
     style = pm.STYLES[args.style]
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": pm.FONT_STACKS["sans"],
-        "font.size": style.tick,
-        "text.color": pm.INK_PRIMARY,
-        "axes.labelcolor": pm.INK_SECONDARY,
-        "figure.facecolor": pm.SURFACE,
-        "savefig.facecolor": pm.SURFACE,
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42,
-    })
+    plt.rcParams.update({**pm.rc_fonts(), "font.size": style.tick})
 
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
     args.outdir.mkdir(parents=True, exist_ok=True)

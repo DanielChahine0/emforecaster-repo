@@ -103,14 +103,49 @@ def label_color(color: str) -> str:
 
 
 FONT_STACKS = {
-    # The reference figures set a Lato-like humanist sans; fall through to
-    # whatever of the family is installed.
+    # IBM Plex Sans sets every figure in the repo; the rest of the list is the
+    # fallback chain for a machine that does not have it. Install the family
+    # with results/install_plex_sans.py - Google Fonts ships only the variable
+    # font, whose bold matplotlib cannot reach.
     "sans": [
+        "IBM Plex Sans",
         "Lato", "Source Sans 3", "Source Sans Pro", "Open Sans", "Noto Sans",
         "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans",
     ],
-    "serif": ["Times New Roman", "STIXGeneral", "Charter", "DejaVu Serif"],
+    "serif": ["IBM Plex Serif", "Times New Roman", "STIXGeneral", "DejaVu Serif"],
 }
+
+
+def rc_fonts(family: str = "sans") -> dict:
+    """rcParams that put every glyph - mathtext included - in one family.
+
+    Every figure script shares this, so the typeface is named in one place.
+    Mathtext runs through the ``custom`` fontset rather than a stock one:
+    otherwise the paradigm schematic's $f_1$ would arrive in DejaVu beside
+    Plex captions.
+    """
+    lead = FONT_STACKS[family][0]
+    return {
+        "font.family": "sans-serif" if family == "sans" else "serif",
+        "font.sans-serif": FONT_STACKS["sans"],
+        "font.serif": FONT_STACKS["serif"],
+        # Every custom slot is resolved at draw time, so name the family in all
+        # of them - the unused calligraphic one otherwise warns its way to a
+        # cursive fallback on each run.
+        "mathtext.fontset": "custom",
+        "mathtext.rm": lead,
+        "mathtext.it": f"{lead}:italic",
+        "mathtext.bf": f"{lead}:bold",
+        "mathtext.bfit": f"{lead}:italic:bold",
+        "mathtext.sf": lead,
+        "mathtext.cal": f"{lead}:italic",
+        "text.color": INK_PRIMARY,
+        "axes.labelcolor": INK_SECONDARY,
+        "figure.facecolor": SURFACE,
+        "savefig.facecolor": SURFACE,
+        "pdf.fonttype": 42,  # embed real glyphs, not type-3 outlines
+        "ps.fonttype": 42,
+    }
 
 
 @dataclass(frozen=True)
@@ -604,6 +639,7 @@ def draw_panel(
     show_legend: bool,
     label_points: bool,
     styler=None,
+    log_y: bool = False,
 ) -> list[Line2D]:
     x = np.arange(len(panel.x_labels))
     finite = [v for _, vals in panel.series for v in vals if np.isfinite(v)]
@@ -741,7 +777,7 @@ def draw_panel(
         label.set_fontweight("bold")
         label.set_color(INK_PRIMARY)
 
-    if panel.is_time:
+    if panel.is_time or log_y:
         ax.set_yscale("log")
         ax.yaxis.set_minor_locator(FixedLocator([]))
     ax.yaxis.set_major_locator(FixedLocator(ticks))
@@ -751,8 +787,9 @@ def draw_panel(
     ax.tick_params(axis="y", labelsize=style.tick)
 
     # A linear scale that does not reach zero says so with the conventional
-    # zigzag break in the spine; the log time axis names its scale instead.
-    if not panel.is_time and lo > 0:
+    # zigzag break in the spine; a log axis has no zero to truncate, so it
+    # shows its scale through the uneven tick spacing instead.
+    if not panel.is_time and not log_y and lo > 0:
         draw_axis_break(ax, style, below=(ticks[0] - lo) / (hi - lo) if ticks else 1.0)
 
     # A column with no logged run keeps its slot so the panels stay aligned.
@@ -914,6 +951,34 @@ def save(fig, outdir: Path, stem: str, formats: list[str]) -> list[Path]:
     return written
 
 
+def draw_no_cluster_baselines(ax, panel: Panel, base_vals, style: Style) -> None:
+    """Dotted per-model reference lines: the plain multivariate backbone.
+
+    The cluster panels sweep k inside the CCM architecture, so on their own
+    they cannot say whether clustering beats not clustering - CCM's k = 1 is
+    still CCM, not the ordinary model. Each series gets a dotted line in its
+    own hue at the plain (no-CCM) multivariate value for the same dataset,
+    windows and metric; time panels re-derive draw_panel's unit divisor so
+    the line lands on the same scale.
+    """
+    finite = [v for _, vals in panel.series for v in vals if np.isfinite(v)]
+    divisor = time_unit(max(finite))[0] if panel.is_time else 1.0
+    lo, hi = ax.get_ylim()
+    pad = (hi - lo) * 0.04
+    for i, value in enumerate(base_vals):
+        if value is None or not np.isfinite(value):
+            continue
+        value = value / divisor
+        color, _ = series_style(i)
+        ax.axhline(value, color=color, linestyle=(0, (1.4, 1.8)),
+                   linewidth=style.line_width * 0.85, zorder=3)
+        if panel.is_time:  # log axis: extend multiplicatively
+            lo, hi = min(lo, value / 1.15), max(hi, value * 1.15)
+        else:
+            lo, hi = min(lo, value - pad), max(hi, value + pad)
+    ax.set_ylim(lo, hi)
+
+
 def build_figures(
     records,
     section: str,
@@ -932,6 +997,7 @@ def build_figures(
 ) -> list[Path]:
     panels: list[Panel] = []
     context = None  # the sole dataset of a cluster study, surfaced in subtitles
+    baselines: dict[str, list] = {}  # panel key -> no-clustering value per series
     for key, _, long_title, is_time in METRICS:
         if split == "cluster":  # lines = (dataset, model) pairs, columns = k
             ks, pairs, kvalues, configs = aggregate_clusters(records, section, key, grid)
@@ -949,6 +1015,12 @@ def build_figures(
                 )
                 for d, m in pairs
             ]
+            # The plain multivariate cell beside each (dataset, model) pair,
+            # at the same windows: the no-clustering reference the k sweep is
+            # judged against (drawn dotted by draw_no_cluster_baselines).
+            base_rows = [r for r in records if (r.lookback, r.horizon) in set(configs)]
+            _, _, base_map, _ = aggregate(base_rows, OVERLAY_MV, key, grid)
+            baselines[key] = [base_map.get(d, {}).get(m) for d, m in pairs]
             panels.append(Panel(key, long_title, is_time, x_labels, series, configs))
             continue
         models, datasets, values, configs = aggregate(records, section, key, grid)
@@ -972,7 +1044,11 @@ def build_figures(
 
     def sub(configs: list[tuple[int, int]]) -> str:
         line = grid_line(configs)
-        return f"{context} · {line}" if context else line
+        if context:
+            line = f"{context} · {line}"
+        if any(v is not None for vals in baselines.values() for v in vals):
+            line += " · dotted = no clustering"
+        return line
 
     first = panels[0]
     written: list[Path] = []
@@ -1003,6 +1079,8 @@ def build_figures(
             show_legend=False,
             label_points=label_points,
         )
+        if any(v is not None for v in baselines.get(panel.key, [])):
+            draw_no_cluster_baselines(ax, panel, baselines[panel.key], style)
 
     fig.text(0.5, 0.99, headline, ha="center", va="top",
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
@@ -1045,6 +1123,8 @@ def build_figures(
             show_legend=True,
             label_points=label_points,
         )
+        if any(v is not None for v in baselines.get(panel.key, [])):
+            draw_no_cluster_baselines(ax, panel, baselines[panel.key], style)
         add_x_label(fig, [ax], style, x_title)
         slug = panel.key.lower().replace(" ", "-")
         written += save(fig, outdir, f"{stem}_{slug}", formats)
@@ -1076,11 +1156,13 @@ def build_overlay_figure(
     Hue keeps its usual identity (datasets in the dataset split, models in the
     model split); the setup rides on the second-cycle idiom - multivariate
     solid with filled markers, per-channel dashed with hollow ones - so two
-    nearly-equal lines stay tellable apart. Because most pairs differ by only
-    a few percent, the panel runs extra tall: the stretched y-axis is what
-    opens the solid/dashed gaps to a visible size. Only the (L, O) configs
-    both sections share enter the mean, keeping the setups comparable; the
-    multivariate series draw last, on top.
+    nearly-equal lines stay tellable apart. The panel runs wide - the full
+    combined-strip width at the usual single height - and its y-axis runs
+    log: the width spreads the models apart, and the log squeezes the
+    classical models' offset at the top so the spread among the deep models
+    carries more of the height. Only the (L, O) configs both sections share
+    enter the mean, keeping the setups comparable; the multivariate series
+    draw last, on top.
     """
     shared = (
         {(r.lookback, r.horizon) for r in records if r.section == OVERLAY_MV}
@@ -1126,9 +1208,9 @@ def build_overlay_figure(
     subtitle = subtitle_text or (
         f"{grid_line(sorted(shared))}\nsolid = multivariate, dashed = per-channel"
     )
-    width, height = style.single_size
+    width = style.combined_size[0]  # wide panel: room between the models
+    height = style.single_size[1]
     height += 0.30 if legend_rows == 1 else 0.55  # the extra subtitle line
-    height += 2.0  # the stretched panel that separates near-equal pairs
     fig, ax = plt.subplots(figsize=(width, height))
     frac = lambda points: points / 72 / height
 
@@ -1138,14 +1220,14 @@ def build_overlay_figure(
         style.subtitle * 1.45 * (subtitle.count("\n") + 1) + 10
     )
     fig.subplots_adjust(
-        left=0.125, right=0.96,
-        top=legend_y - frac(style.legend * 2.8 * legend_rows), bottom=0.20,
+        left=0.075, right=0.975,
+        top=legend_y - frac(style.legend * 2.8 * legend_rows), bottom=0.24,
     )
 
     handles = draw_panel(
         ax, panel, style,
         title="", subtitle=None, highlight=None, muted=set(),
-        show_legend=False, label_points=False, styler=styler,
+        show_legend=False, label_points=False, styler=styler, log_y=True,
     )
     for handle, nm in zip(handles[n:], names):  # legend keys identity via MV lines
         handle.set_label(short(nm))
@@ -1417,20 +1499,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     style = STYLES[args.style]
-    plt.rcParams.update(
-        {
-            "font.family": "sans-serif" if args.font == "sans" else "serif",
-            "font.sans-serif": FONT_STACKS["sans"],
-            "font.serif": FONT_STACKS["serif"],
-            "font.size": style.tick,
-            "text.color": INK_PRIMARY,
-            "axes.labelcolor": INK_SECONDARY,
-            "figure.facecolor": SURFACE,
-            "savefig.facecolor": SURFACE,
-            "pdf.fonttype": 42,  # embed real glyphs, not type-3 outlines
-            "ps.fonttype": 42,
-        }
-    )
+    plt.rcParams.update({**rc_fonts(args.font), "font.size": style.tick})
 
     sections = (
         list(SECTION_ALIASES.values())

@@ -276,17 +276,7 @@ def main() -> None:
     style = replace(pm.STYLES[args.style], marker=pm.STYLES[args.style].marker * 0.5)
     formats = args.formats or ["png"]
 
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": pm.FONT_STACKS["sans"],
-        "font.size": style.tick,
-        "text.color": pm.INK_PRIMARY,
-        "axes.labelcolor": pm.INK_SECONDARY,
-        "figure.facecolor": pm.SURFACE,
-        "savefig.facecolor": pm.SURFACE,
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42,
-    })
+    plt.rcParams.update({**pm.rc_fonts(), "font.size": style.tick})
 
     # draw_panel keys colour off the module's series_style; the ladder pairs
     # each model's two setups instead of cycling five colours.

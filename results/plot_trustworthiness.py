@@ -175,7 +175,7 @@ def draw_trust_panel(
         color, second_cycle = pm.series_style(i)
         # Line and markers as separate artists: a halo on a marker-bearing
         # line erases the segment around every dot and fakes a dash pattern,
-        # so the line alone gets the halo and the dots a thin surface rim.
+        # so the line alone gets the halo and the dots stay plain.
         # Dots ride above every line so a crossing never buries a marker.
         (line,) = ax.plot(
             xs, y,
@@ -198,8 +198,8 @@ def draw_trust_panel(
             marker="o",
             markersize=style.marker,
             markerfacecolor=pm.SURFACE if second_cycle else color,
-            markeredgecolor=color if second_cycle else pm.SURFACE,
-            markeredgewidth=style.line_width * (0.9 if second_cycle else 0.7),
+            markeredgecolor=color if second_cycle else "none",
+            markeredgewidth=style.line_width * 0.9 if second_cycle else 0.0,
             color=color,
             label=name,
             zorder=10 + i,
@@ -267,17 +267,7 @@ def main() -> int:
     style = pm.STYLES[args.style]
     formats = args.formats or ["png"]
 
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": pm.FONT_STACKS["sans"],
-        "font.size": style.tick,
-        "text.color": pm.INK_PRIMARY,
-        "axes.labelcolor": pm.INK_SECONDARY,
-        "figure.facecolor": pm.SURFACE,
-        "savefig.facecolor": pm.SURFACE,
-        "pdf.fonttype": 42,  # embed real glyphs, not type-3 outlines
-        "ps.fonttype": 42,
-    })
+    plt.rcParams.update({**pm.rc_fonts(), "font.size": style.tick})
 
     records = parse_trust_tables(args.tables)
     panels = {
