@@ -779,6 +779,156 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
     return doc.render()
 
 
+def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
+                       mv_cells: dict[tuple, Cell], cluster_runs: list[Run]) -> str:
+    """The CCM paper's Table 4 shape: base | + CCM per backbone, IMP(%) last.
+
+    Both inputs are canonical_cells-keyed. "Base" is the plain multivariate
+    cell from the '# Multivariate' tree - the same job config, byte-identical
+    training hyperparameters, only the network swapped for upstream's CCM
+    wrapper. The + CCM column takes, per (dataset, model), the k with the best
+    test MSE and reuses that k for the MAE row; the note flags this as a
+    post-hoc (oracle) choice, unlike the paper's validation-tuned k. A second
+    table mirrors the paper's Table 10 configuration summary, read from the
+    cluster runs' own logs.
+    """
+    sl, pl = ULTIMATE_SETTING
+    conf = True
+    at = lambda key: key[2] == sl and key[3] == pl and key[4] == conf
+    models = sorted({k[0] for k in cluster_cells if at(k) and k[5] is not None},
+                    key=display_rank)
+    datasets = sorted({k[1] for k in cluster_cells if at(k) and k[5] is not None},
+                      key=dataset_rank)
+    if not models or not datasets:
+        return ""
+
+    doc = Doc(title)
+    doc.preamble([
+        ("Format", "the CCM paper's Table 4 - per backbone a base | + CCM column "
+                   "pair, **bold** = better of the pair, <u>underline</u> = best in "
+                   "the row, last column the mean % improvement of CCM over the "
+                   "base models"),
+        ("Base", f"the plain multivariate cell from '# {MULTIVARIATE_TITLE}' - same "
+                 f"job config and training hyperparameters, no CCM"),
+        ("Configuration", f"{setting_label(sl, pl)} only -- the window the k sweep covers"),
+        ("Caveat", "the + CCM cell's k is chosen post hoc by test MSE per (dataset, "
+                   "model) and reused for MAE - an oracle bound, where the paper "
+                   "tunes k on validation data. CCM at k = 1 is already a different "
+                   "network than the base (see the Ultimate Comparison caveat)."),
+        ("Conformal prediction", "on for every run"),
+    ])
+
+    doc.group("Base vs + CCM")
+
+    headers = ["Dataset", "Metric"]
+    for m in models:
+        headers += [m, "+ CCM"]
+    headers.append("IMP (%)")
+    rows = []
+    for ds in datasets:
+        ks_of = lambda m: sorted({k[5] for k in cluster_cells
+                                  if k[0] == m and k[1] == ds and at(k)
+                                  and k[5] is not None})
+        best_k = {}
+        for m in models:
+            scored = [(cluster_cells[(m, ds, sl, pl, conf, k)].mse, k)
+                      for k in ks_of(m)
+                      if cluster_cells[(m, ds, sl, pl, conf, k)].mse is not None]
+            if scored:
+                best_k[m] = min(scored)[1]
+        for attr, name in (("mse", "MSE"), ("mae", "MAE")):
+            strs: list[str] = []
+            vals: list[Optional[float]] = []
+            imps = []
+            for m in models:
+                base_cell = mv_cells.get((m, ds, sl, pl, conf, None))
+                base = getattr(base_cell, attr, None)
+                k = best_k.get(m)
+                ccm_cell = cluster_cells.get((m, ds, sl, pl, conf, k)) if k else None
+                ccm = getattr(ccm_cell, attr, None)
+                bs, cs = fmt_num(base, 4), fmt_num(ccm, 4)
+                if ccm is not None:
+                    cs = f"{cs} (k={k})"
+                if base is not None and ccm is not None:
+                    if ccm < base:
+                        cs = f"**{cs}**"
+                    elif base < ccm:
+                        bs = f"**{bs}**"
+                    imps.append((base - ccm) / base * 100.0)
+                strs += [bs, cs]
+                vals += [base, ccm]
+            ranked = sorted((v, i) for i, v in enumerate(vals) if v is not None)
+            if ranked:
+                i = ranked[0][1]
+                strs[i] = f"<u>{strs[i]}</u>"
+            imp = f"{statistics.mean(imps):+.2f}" if imps else MISSING
+            rows.append([dataset_label(ds), name] + strs + [imp])
+    doc.table("Long-horizon forecasting, base vs + CCM",
+              md_table(headers, "ll" + "r" * (2 * len(models) + 1), rows),
+              note="IMP (%) = mean over the backbones of (base − CCM) / base × 100 "
+                   "for that row's metric; positive = CCM ahead.")
+
+    # --- the paper's Table 10 analogue, from the cluster runs' own logs ------- #
+    def ccm_log(m: str) -> dict:
+        for r in cluster_runs:
+            if (model_label(r.model) == m and r.seq_len == sl and r.pred_len == pl
+                    and r.k == 5 and r.dataset == "ed2022"):
+                with open(r.path) as f:
+                    return json.load(f)
+        return {}
+
+    logs = {m: ccm_log(m) for m in models}
+    fmt_int = lambda v: f"{v:,}" if v is not None else MISSING
+    param = lambda m, key: logs[m].get(key)
+
+    def best_k_line(m: str) -> str:
+        parts = []
+        for ds in datasets:
+            scored = [(cluster_cells[(m, ds, sl, pl, conf, k)].mse, k)
+                      for k in sorted({key[5] for key in cluster_cells
+                                       if key[0] == m and key[1] == ds and at(key)
+                                       and key[5] is not None})
+                      if cluster_cells[(m, ds, sl, pl, conf, k)].mse is not None]
+            parts.append(str(min(scored)[1]) if scored else MISSING)
+        return " / ".join(parts)
+
+    cfg_rows = [
+        ["Channel clusters k swept"] + [
+            "-".join(str(v) for v in (min(vs), max(vs))) if (vs := sorted(
+                {key[5] for key in cluster_cells
+                 if key[0] == m and at(key) and key[5] is not None})) else MISSING
+            for m in models],
+        [f"Best k by test MSE ({' / '.join(dataset_label(d) for d in datasets)})"]
+        + [best_k_line(m) for m in models],
+        ["β (similarity-loss weight)"] + [
+            fmt_num(param(m, "parameters/cluster/beta"), 1) for m in models],
+        ["Sinkhorn temperature ε"] + ["0.05" for _ in models],
+        ["Cluster-assigner hidden dim (`sl/d_model`)"] + [
+            str(param(m, "parameters/sl/d_model") or MISSING) for m in models],
+        ["Learning rate"] + [
+            f"{param(m, 'parameters/sl/lr'):g}" if param(m, "parameters/sl/lr")
+            else MISSING for m in models],
+        ["Weight decay"] + [
+            f"{param(m, 'parameters/sl/weight_decay'):g}"
+            if param(m, "parameters/sl/weight_decay") else MISSING for m in models],
+        ["Batch size"] + [
+            str(param(m, "parameters/sl/batch_size") or MISSING) for m in models],
+        ["Trainable weights, base → + CCM (ED2022, k=5)"] + [
+            f"{fmt_int(getattr(mv_cells.get((m, 'ed2022', sl, pl, conf, None)), 'num_params', None))}"
+            f" → {fmt_int(getattr(cluster_cells.get((m, 'ed2022', sl, pl, conf, 5)), 'num_params', None))}"
+            for m in models],
+    ]
+    doc.table("Experiment configuration",
+              md_table(["Configuration"] + models, "l" + "r" * len(models), cfg_rows),
+              note="Read from the cluster runs' logged parameters (ED2022, k=5 "
+                   "representative; β and the training set-up are identical across "
+                   "cells). The sinkhorn temperature is upstream's hard-coded "
+                   "default (`TimeSeriesCCM-main/models/layers.py`), not a logged "
+                   "parameter.")
+
+    return doc.render()
+
+
 DEFAULT_TABLES_FILE = Path(__file__).resolve().parent / "tables.md"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
@@ -787,6 +937,7 @@ PER_CHANNEL_TITLE = "Univariate (Per Channel)"
 MULTIVARIATE_TITLE = "Multivariate"
 CLUSTER_TITLE = "Cluster (k-Grouped Channels)"
 COMPARISON_TITLE = "Multivariate vs Univariate"
+CCM_TITLE = "CCM vs Base (No Clustering)"
 ULTIMATE_TITLE = "Ultimate Comparison"
 ROOT_TITLES = {
     "univariate": UNIVARIATE_SERIES_TITLE,
@@ -799,6 +950,7 @@ SECTION_ORDER = [
     PER_CHANNEL_TITLE,
     MULTIVARIATE_TITLE,
     CLUSTER_TITLE,
+    CCM_TITLE,
     COMPARISON_TITLE,
     ULTIMATE_TITLE,
 ]
@@ -966,6 +1118,14 @@ def main() -> None:
         else:
             print("WARNING: no (dataset, L, O, model) cells shared between the multivariate and "
                   "univariate trees; skipping the comparison section", file=sys.stderr)
+
+    cl_cells = by_title.get(CLUSTER_TITLE)
+    if mv_cells and cl_cells:
+        cluster_runs = next((r for t, r, _ in loaded if t == CLUSTER_TITLE), [])
+        ccm_section = render_ccm_vs_base(CCM_TITLE, canonical_cells(cl_cells),
+                                         canonical_cells(mv_cells), cluster_runs)
+        if ccm_section:
+            updates.append((CCM_TITLE, ccm_section))
 
     pipelines = build_pipelines(by_title)
     ultimate = render_ultimate(ULTIMATE_TITLE, pipelines) if pipelines else ""
