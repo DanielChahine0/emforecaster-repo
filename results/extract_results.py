@@ -109,10 +109,27 @@ class Cell:
     n_seeds: Optional[int]
 
 
+def excluded(log_path: Path, exclude: list[str]) -> bool:
+    """True if any --exclude pattern names a directory on this run's path.
+
+    Matching is per path component, not by substring: a plain substring test
+    made ``--exclude ch1`` swallow ch10 through ch19 as well. A pattern that
+    contains a separator still matches as a substring, so a path fragment
+    like ``ed2022/L336_O96_cp`` keeps working.
+    """
+    if not exclude:
+        return False
+    parts = set(log_path.parts)
+    return any(
+        (pat in str(log_path)) if ("/" in pat or "\\" in pat) else (pat in parts)
+        for pat in exclude
+    )
+
+
 def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
     runs = []
     for log_path in sorted(logs_root.rglob("log.json")):
-        if any(pat in str(log_path) for pat in exclude):
+        if excluded(log_path, exclude):
             continue
         with open(log_path) as f:
             d = json.load(f)
@@ -1036,7 +1053,7 @@ def main() -> None:
     parser.add_argument("--title", default=None,
                          help="report/section heading, default derived from --logs-root "
                               "(requires an explicit --logs-root)")
-    parser.add_argument("--exclude", action="append", default=[], metavar="SUBSTRING",
+    parser.add_argument("--exclude", action="append", default=[], metavar="NAME",
                          help="skip log.json paths containing this substring, repeatable")
     args = parser.parse_args()
 

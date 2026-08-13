@@ -255,11 +255,28 @@ def pair_label(dataset: str, model: str, many_datasets: bool, many_models: bool)
 
 
 
+_GRID_RE = re.compile(r"^\s*L?(\d+)\s*[/x]\s*O?(\d+)\s*$", re.IGNORECASE)
+
+
+def parse_grid(grid: str) -> tuple[int, int]:
+    """(lookback, horizon) from ``336/96``, ``L336/O96`` or ``336x96``.
+
+    The tables and the log directories both spell this window with L/O
+    prefixes, so a reader who copies one in should not get a traceback.
+    """
+    m = _GRID_RE.match(grid)
+    if not m:
+        raise ValueError(
+            f"cannot read --grid {grid!r}; expected something like 336/96 or L336/O96"
+        )
+    return int(m.group(1)), int(m.group(2))
+
+
 def aggregate(records, section: str, metric: str, grid: str | None):
     """Mean each (dataset, model) cell over the (L, O) configs still in play."""
     rows = [r for r in records if r.section == section and r.metric == metric]
     if grid:
-        lookback, horizon = (int(v) for v in grid.lower().replace("l", "").split("/"))
+        lookback, horizon = parse_grid(grid)
         rows = [r for r in rows if r.lookback == lookback and r.horizon == horizon]
     if not rows:
         return [], [], {}, []
@@ -289,7 +306,7 @@ def aggregate_clusters(records, section: str, metric: str, grid: str | None):
         if r.section == section and r.metric == metric and r.cluster is not None
     ]
     if grid:
-        lookback, horizon = (int(v) for v in grid.lower().replace("l", "").split("/"))
+        lookback, horizon = parse_grid(grid)
         rows = [r for r in rows if r.lookback == lookback and r.horizon == horizon]
     if not rows:
         return [], [], {}, []
@@ -580,8 +597,12 @@ def build_overlay_figure(
         & {(r.lookback, r.horizon) for r in records if r.section == OVERLAY_PC}
     )
     rows = [r for r in records if (r.lookback, r.horizon) in shared]
-    models, datasets, mv_vals, _ = aggregate(rows, OVERLAY_MV, "MAE", grid)
-    pc_models, pc_datasets, pc_vals, _ = aggregate(rows, OVERLAY_PC, "MAE", grid)
+    models, datasets, mv_vals, mv_configs = aggregate(rows, OVERLAY_MV, "MAE", grid)
+    pc_models, pc_datasets, pc_vals, pc_configs = aggregate(rows, OVERLAY_PC, "MAE", grid)
+    # What actually entered the mean, after --grid. `shared` is computed before
+    # that filter, so captioning with it told a --grid run it had averaged the
+    # whole ladder.
+    drawn = sorted(set(mv_configs) & set(pc_configs))
     if not models or not pc_models:
         print("  no shared MV / per-channel MAE cells", file=sys.stderr)
         return []
@@ -600,7 +621,7 @@ def build_overlay_figure(
     n = len(names)
     series = [(f"{short(nm)} · per-channel", series_of(pc_vals, nm)) for nm in names]
     series += [(f"{short(nm)} · multivariate", series_of(mv_vals, nm)) for nm in names]
-    panel = Panel("MAE", "MAE", False, x_labels, series, sorted(shared))
+    panel = Panel("MAE", "MAE", False, x_labels, series, drawn)
 
     def styler(i: int):
         """Hue = identity; per-channel (first half) dashed and hollow.
@@ -619,7 +640,7 @@ def build_overlay_figure(
     # two runs taller sets the header.
     ncol = min(n, 3)
     legend_rows = max(int(np.ceil(n / ncol)), 2)  # the setup key is two rows
-    subtitle = subtitle_text or grid_line(sorted(shared))
+    subtitle = subtitle_text or grid_line(drawn)
     width = style.single_size[0] * 1.2  # near square, with the header on top
     height = style.single_size[1] * 1.3
     fig, ax = plt.subplots(figsize=(width, height))
@@ -798,6 +819,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.tables.exists():
         parser.error(f"tables file not found: {args.tables}")
+
+    if args.grid:
+        try:
+            parse_grid(args.grid)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     records = parse_tables(args.tables)
     if not records:
