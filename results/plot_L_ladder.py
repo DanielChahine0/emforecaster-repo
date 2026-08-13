@@ -36,6 +36,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 import plot_metrics as pm
+from emfres.vocab import parse_duration
 
 REPO = Path(__file__).resolve().parent.parent
 LOOKBACKS = list(range(48, 481, 48))
@@ -49,18 +50,15 @@ PC_ROOT = REPO / "logs" / "univariate (per channel)"
 CL_ROOT = REPO / "logs" / "cluster"
 K_CLUSTER = 5
 
-_TIME_PART = re.compile(r"(\d+(?:\.\d+)?)\s*(h|min|s)\b")
-_TIME_UNITS = {"h": 3600.0, "min": 60.0, "s": 1.0}
-
-
 def running_seconds(text: str | None) -> float:
-    """Seconds from the logger's ``43min 10s`` / ``1h 5min 2s`` / ``22s`` form."""
-    if not text:
-        return float("nan")
-    parts = _TIME_PART.findall(text)
-    if not parts:
-        return float("nan")
-    return sum(float(v) * _TIME_UNITS[u] for v, u in parts)
+    """Seconds from the logger's ``43min 10s`` / ``1h 5min 2s`` / ``22s`` form.
+
+    Delegates to the shared grammar. The local copy this replaces matched
+    ``h`` only on a word boundary, so it silently dropped the hours from a
+    ``1hr 44min 16s`` value and under-reported that run by an hour.
+    """
+    seconds = parse_duration(text)
+    return float("nan") if seconds is None else seconds
 
 
 def scalar(value) -> float:

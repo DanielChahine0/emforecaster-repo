@@ -72,9 +72,7 @@ from emfres.panels import (  # noqa: E402
 # Parsing
 # --------------------------------------------------------------------------- #
 
-TIME_UNITS = {"h": 3600.0, "m": 60.0, "s": 1.0}
-_TIME_RE = re.compile(r"^(?:\d+(?:\.\d+)?\s*[hms]\s*)+$", re.IGNORECASE)
-_TIME_PART_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([hms])", re.IGNORECASE)
+from emfres.vocab import is_duration, parse_duration  # noqa: E402
 
 
 def clean_cell(cell: str) -> str:
@@ -93,10 +91,8 @@ def parse_value(text: str) -> float:
     text = clean_cell(text)
     if not text or text in {"-", "--", "n/a", "N/A"}:
         return float("nan")
-    if _TIME_RE.match(text):
-        return sum(
-            float(v) * TIME_UNITS[u.lower()] for v, u in _TIME_PART_RE.findall(text)
-        )
+    if is_duration(text):
+        return parse_duration(text)
     try:
         return float(text.replace(",", "").rstrip("%"))
     except ValueError:

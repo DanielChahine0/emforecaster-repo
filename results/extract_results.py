@@ -30,6 +30,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from emfres.vocab import (
+    MISSING, format_seconds, format_seconds_fine, parse_duration,
+)
+
 MODEL_DISPLAY = {
     "EMForecaster": "EMForecaster (2025)",
     "DLinear": "DLinear (2023)",
@@ -50,53 +54,22 @@ DATASET_DISPLAY = {
 }
 DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
 
-MISSING = "-"
+# MISSING now comes from emfres.vocab, so the tables and the duration
+# formatters cannot disagree about what an absent value looks like.
 
 # The single (L, O) window the '# Ultimate Comparison' section is built for. The
 # cluster grid only sweeps this one, so it is the only window where per-channel,
 # multivariate and clustered runs can all be put in the same row.
 ULTIMATE_SETTING = (336, 96)
 
-# format is "<N>s", "<N>min <N>s" or "<N>hr <N>min <N>s"
-_TIME_RE = re.compile(
-    r"^(?:(?P<hr>\d+)h(?:r|rs)?\s*)?(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
 _CHANNEL_RE = re.compile(r"^ch(\d+)$")
 # The run-dir tag forecasting/grid.py stamps on a cluster cell (exp.id = "k3").
 _K_RE = re.compile(r"^k(\d+)$")
 
 
 def parse_running_time(raw: Optional[str]) -> Optional[float]:
-    if not raw:
-        return None
-    m = _TIME_RE.match(raw.strip())
-    if not m or not any(m.group(g) for g in ("hr", "min", "sec")):
-        raise ValueError(f"unrecognized running_time format: {raw!r}")
-    return (int(m.group("hr") or 0) * 3600
-            + int(m.group("min") or 0) * 60
-            + int(m.group("sec") or 0))
-
-
-def format_seconds(sec: Optional[float]) -> str:
-    if sec is None:
-        return MISSING
-    sec = round(sec)
-    h, rem = divmod(sec, 3600)
-    m, s = divmod(rem, 60)
-    parts = []
-    if h:
-        parts.append(f"{h}h")
-    if h or m:
-        parts.append(f"{m}m")
-    parts.append(f"{s}s")
-    return " ".join(parts)
-
-
-def format_seconds_fine(sec: Optional[float]) -> str:
-    if sec is None:
-        return MISSING
-    if sec < 60:
-        return f"{sec:.1f}s"
-    return format_seconds(sec)
+    """Strict read of a logged running_time; raises on anything unreadable."""
+    return parse_duration(raw, strict=True)
 
 
 @dataclass
