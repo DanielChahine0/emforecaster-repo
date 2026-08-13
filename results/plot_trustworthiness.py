@@ -42,6 +42,7 @@ from matplotlib.ticker import FixedLocator, FuncFormatter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plot_metrics as pm
+from emfres.chrome import figure_header, footnote, shared_legend
 
 HERE = Path(__file__).resolve().parent
 SECTION = "Multivariate"
@@ -291,28 +292,11 @@ def main() -> int:
             title=long_title, subtitle=None,
             ylim=ylim, tick_target=target, ref_line=ref, show_legend=False,
         )
-    fig.text(0.5, 0.985, "Multivariate: conformal prediction trustworthiness",
-             ha="center", va="top", fontsize=style.title, fontweight="bold",
-             color=pm.INK_PRIMARY)
-    fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1],
-             subhead,
-             ha="center", va="top", fontsize=style.subtitle, color=pm.INK_SECONDARY)
-    legend = fig.legend(
-        handles=pm.dot_handles(handles, style),
-        loc="upper center", bbox_to_anchor=(0.5, 0.875),
-        ncol=len(handles), frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=2.0,
-    )
-    frame = legend.get_frame()
-    frame.set_facecolor(pm.LEGEND_FILL)
-    frame.set_edgecolor(pm.LEGEND_EDGE)
-    frame.set_linewidth(1.0)
-    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
-    for text in legend.get_texts():
-        text.set_color(pm.INK_PRIMARY)
+    figure_header(fig, style, "Multivariate: conformal prediction trustworthiness",
+                  subhead, top=0.985, gap=1.5)
+    shared_legend(fig, pm.dot_handles(handles, style), style)
     pm.add_x_label(fig, axes, style, "Model")
-    fig.text(0.985, 0.008, FOOTNOTE, ha="right", va="bottom",
-             fontsize=style.footnote, color=pm.INK_MUTED)
+    footnote(fig, FOOTNOTE, style, y=0.008)
     for path in pm.save(fig, outdir, "multivariate_trustworthiness", formats):
         print(f"  wrote {path}")
 

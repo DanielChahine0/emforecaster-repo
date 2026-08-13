@@ -60,7 +60,8 @@ from emfres.style import (  # noqa: E402
 )
 from emfres.chrome import (  # noqa: E402
     add_legend, add_x_label, axes_bottom, densify, dot_handles, draw_axis_break,
-    frame_legend, grid_line, place_legend, save, spread_labels, style_axes,
+    figure_header, footnote, frame_legend, grid_line, place_legend, save,
+    shared_legend, spread_labels, style_axes,
 )
 from emfres.panels import (  # noqa: E402
     Panel, draw_panel, draw_tradeoff_panel,
@@ -475,10 +476,7 @@ def build_figures(
         if any(v is not None for v in baselines.get(panel.key, [])):
             draw_no_cluster_baselines(ax, panel, baselines[panel.key], style)
 
-    fig.text(0.5, 0.99, headline, ha="center", va="top",
-             fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
-    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1], subhead,
-             ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
+    figure_header(fig, style, headline, subhead)
     legend = fig.legend(
         handles=dot_handles(handles, style),
         loc="upper center",

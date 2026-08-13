@@ -36,6 +36,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 import plot_metrics as pm
+from emfres.chrome import figure_header, footnote, shared_legend
 from emfres.vocab import parse_duration
 
 REPO = Path(__file__).resolve().parent.parent
@@ -238,26 +239,21 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
             label=label,
         )
 
-    legend = fig.legend(
-        handles=[
+    shared_legend(
+        fig,
+        [
             key_handle("multivariate", "-", "o", True),
             key_handle("per-channel", (0, (2.4, 1.4)), "o", False),
             key_handle(f"cluster (k = {K_CLUSTER})", DOTTED, "s", False),
         ],
-        loc="upper center", bbox_to_anchor=(0.5, 0.94),
-        ncol=3, frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=2.6, handletextpad=0.8, borderpad=0.7, columnspacing=2.0,
+        style, anchor=(0.5, 0.94), handlelength=2.6, handletextpad=0.8,
     )
-    frame = legend.get_frame()
-    frame.set_facecolor(pm.LEGEND_FILL)
-    frame.set_edgecolor(pm.LEGEND_EDGE)
-    frame.set_linewidth(1.0)
     pm.add_x_label(fig, list(axes[-1]), style, "Lookback length")
-    fig.text(
-        0.985, 0.008,
+    footnote(
+        fig,
         "per-channel time = sum of the 27 band trainings · "
         "the lookback-336 cells were timed under different GPU load",
-        ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
+        style, y=0.008,
     )
     for path in pm.save(fig, outdir, f"{DATASET}_O{HORIZON}_L_ladder_by_model", formats):
         print(f"  wrote {path.relative_to(REPO)}")
@@ -292,33 +288,24 @@ def main() -> None:
         )
         slim_markers(handles, style)
 
-    fig.text(0.5, 0.99, "ED2022: accuracy and training cost by lookback length",
-             ha="center", va="top", fontsize=style.title, fontweight="bold",
-             color=pm.INK_PRIMARY)
-    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1],
-             f"forecast horizon {HORIZON} · seed {SEED} · "
-             f"solid = multivariate, dashed = per-channel",
-             ha="center", va="top", fontsize=style.subtitle, color=pm.INK_SECONDARY)
+    figure_header(
+        fig, style,
+        "ED2022: accuracy and training cost by lookback length",
+        f"forecast horizon {HORIZON} · seed {SEED} · "
+        f"solid = multivariate, dashed = per-channel",
+    )
     # The subtitle keys the setups, so the legend needs only one dot per model:
     # the solid multivariate lines, drawn first, carry the hue.
     for handle, model in zip(handles, MODELS):
         handle.set_label(model)
-    legend = fig.legend(
-        handles=pm.dot_handles(handles[: len(MODELS)], style),
-        loc="upper center", bbox_to_anchor=(0.5, 0.875),
-        ncol=len(MODELS), frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=2.0,
-    )
-    frame = legend.get_frame()
-    frame.set_facecolor(pm.LEGEND_FILL)
-    frame.set_edgecolor(pm.LEGEND_EDGE)
-    frame.set_linewidth(1.0)
+    shared_legend(fig, pm.dot_handles(handles[: len(MODELS)], style), style,
+                  ncol=len(MODELS))
     pm.add_x_label(fig, axes, style, "Lookback length")
-    fig.text(
-        0.985, 0.012,
+    footnote(
+        fig,
         "per-channel time = sum of the 27 band trainings · "
         "the lookback-336 cells were timed under different GPU load",
-        ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
+        style,
     )
 
     outdir = REPO / "results" / "figures" / "L ladder"

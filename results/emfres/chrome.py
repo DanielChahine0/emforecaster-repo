@@ -184,6 +184,65 @@ def frame_legend(legend):
     return legend
 
 
+def shared_legend(
+    fig,
+    handles,
+    style: Style,
+    *,
+    anchor: tuple[float, float] = (0.5, 0.875),
+    ncol: int | None = None,
+    handlelength: float = 1.4,
+    handletextpad: float = 0.7,
+):
+    """The one figure-level legend every multi-panel figure hangs under its title.
+
+    Five near-copies of this used to sit in four files, and two of them -- both
+    of plot_L_ladder's -- had lost the rounded box and the text-ink loop along
+    the way, so the ladder's legends did not match any other figure's.
+    """
+    return frame_legend(fig.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=anchor,
+        ncol=len(handles) if ncol is None else ncol,
+        frameon=True,
+        fancybox=True,
+        fontsize=style.legend,
+        handlelength=handlelength,
+        handletextpad=handletextpad,
+        borderpad=0.7,
+        columnspacing=2.0,
+    ))
+
+
+def figure_header(
+    fig,
+    style: Style,
+    headline: str,
+    subhead: str | None = None,
+    *,
+    top: float = 0.99,
+    gap: float = 1.35,
+):
+    """Bold headline with a grey line under it, stacked out of the font sizes.
+
+    ``gap`` is the headline's leading in multiples of its own point size; the
+    drop is converted to a figure fraction so the two presets, which set very
+    different type, keep the same optical spacing.
+    """
+    fig.text(0.5, top, headline, ha="center", va="top",
+             fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
+    if subhead:
+        fig.text(0.5, top - (style.title * gap) / 72 / style.combined_size[1], subhead,
+                 ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
+
+
+def footnote(fig, text: str, style: Style, *, y: float = 0.012):
+    """The grey caveat line in the bottom-right corner."""
+    fig.text(0.985, y, text, ha="right", va="bottom",
+             fontsize=style.footnote, color=INK_MUTED)
+
+
 def add_legend(ax, handles, style: Style, loc: str, ncol: int = 1):
     return frame_legend(ax.legend(
         handles=dot_handles(handles, style),
