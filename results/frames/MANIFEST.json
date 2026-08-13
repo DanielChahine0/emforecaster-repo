@@ -1,7 +1,6 @@
 {
   "counts": {
     "cells": 249,
-    "epochs": 133762,
     "runs": 1685,
     "runs_by_setup": {
       "cluster": 159,
@@ -11,7 +10,7 @@
     }
   },
   "exclude": [],
-  "git": "6d268678",
+  "git": "0a8f960e-dirty",
   "n_runs": 1685,
   "runs_digest": "c1152c8eea7c1656d2ec29cd84c5ed0079d4feb474fd20bc8080ba3ea887662c",
   "setups": [

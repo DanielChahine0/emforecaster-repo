@@ -59,6 +59,79 @@ def cmd_extract(args) -> int:
     return 0
 
 
+def cmd_tables(args) -> int:
+    import json
+    from difflib import unified_diff
+
+    from . import tables as T
+
+    runs_csv = FRAMES / "runs.csv"
+    if not runs_csv.exists():
+        print(f"{runs_csv} not found -- run `make.py extract` first", file=sys.stderr)
+        return 1
+
+    sections = (T.render_sections(runs_csv, REPO, RESULTS)
+                + T.render_cross_sections(runs_csv, REPO, RESULTS))
+
+    # Gate: what we render from the CSVs must match what is published today.
+    published = RESULTS / "tables.md"
+    if published.exists():
+        import re
+        have = {}
+        for block in re.split(r"(?m)^(?=# )", published.read_text()):
+            if block.startswith("# "):
+                have[block.splitlines()[0][2:].strip()] = block.strip()
+        drift = 0
+        for _, title, md in sections:
+            old = have.get(title)
+            if old is None:
+                print(f"NOTE: '{title}' is new -- not in tables.md", file=sys.stderr)
+            elif old != md.strip():
+                drift += 1
+                print(f"DRIFT: '{title}' differs from tables.md", file=sys.stderr)
+                for line in list(unified_diff(old.splitlines(), md.strip().splitlines(),
+                                              lineterm="", n=0))[:12]:
+                    print(f"  {line}", file=sys.stderr)
+        if drift and not args.force:
+            print(f"\n{drift} section(s) drifted; refusing to write. Pass --force to "
+                  f"write anyway.", file=sys.stderr)
+            return 1
+    if args.check:
+        print(f"checked {len(sections)} sections against tables.md -- no drift")
+        return 0
+
+    outdir = RESULTS / "tables"
+    outdir.mkdir(parents=True, exist_ok=True)
+    manifest = FRAMES / "MANIFEST.json"
+    digest = "unknown"
+    if manifest.exists():
+        digest = json.loads(manifest.read_text()).get("runs_digest", "unknown")[:12]
+    banner = T.BANNER.format(digest=digest)
+
+    for slug, title, md in sections:
+        (outdir / f"{slug}.md").write_text(f"{banner}\n\n{md.strip()}\n")
+    (outdir / "all.md").write_text(
+        banner + "\n\n" + "\n\n".join(md.strip() for _, _, md in sections) + "\n")
+
+    twins = T.cells_csv_twins(FRAMES / "cells.csv", outdir / "csv")
+
+    index = [banner, "", "# Results tables", "",
+             f"Rendered from `frames/runs.csv` (digest `{digest}`).",
+             "Every number here is reproducible with `python results/make.py extract`.",
+             "", "| Section | Markdown |", "| :--- | :--- |"]
+    index += [f"| {title} | [`{slug}.md`]({slug}.md) |" for slug, title, _ in sections]
+    index += ["", "Per-setup cell values, one row per aggregated cell:", ""]
+    index += [f"- [`csv/{p.name}`](csv/{p.name})" for p in twins]
+    (outdir / "index.md").write_text("\n".join(index) + "\n")
+
+    rel = outdir.relative_to(REPO)
+    print(f"wrote {len(sections)} sections + all.md + index.md to {rel}/")
+    for slug, title, _ in sections:
+        print(f"  {slug + '.md':<22} {title}")
+    print(f"wrote {len(twins)} csv twins to {rel}/csv/")
+    return 0
+
+
 def cmd_reconcile(args) -> int:
     from . import reconcile
     cells = FRAMES / "cells.csv"
@@ -82,6 +155,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="also write epochs.csv (per-epoch losses; slow, rereads every log)")
     ex.add_argument("--dry-run", action="store_true", help="print counts, write nothing")
     ex.set_defaults(func=cmd_extract)
+
+    tb = sub.add_parser("tables", help="frames/ -> tables/*.md + csv twins")
+    tb.add_argument("--check", action="store_true",
+                    help="rebuild and diff against tables.md, write nothing")
+    tb.add_argument("--force", action="store_true",
+                    help="write even if a section drifted from tables.md")
+    tb.set_defaults(func=cmd_tables)
 
     rc = sub.add_parser(
         "reconcile", help="check tables.md's published cells against frames/cells.csv")
