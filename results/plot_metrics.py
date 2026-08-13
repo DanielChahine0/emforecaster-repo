@@ -872,8 +872,20 @@ def dot_handles(handles, style: Style):
     ]
 
 
+def frame_legend(legend):
+    """The soft rounded box every legend in these figures sits in."""
+    frame = legend.get_frame()
+    frame.set_facecolor(LEGEND_FILL)
+    frame.set_edgecolor(LEGEND_EDGE)
+    frame.set_linewidth(1.0)
+    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
+    for text in legend.get_texts():
+        text.set_color(INK_PRIMARY)
+    return legend
+
+
 def add_legend(ax, handles, style: Style, loc: str, ncol: int = 1):
-    legend = ax.legend(
+    return frame_legend(ax.legend(
         handles=dot_handles(handles, style),
         loc=loc,
         ncol=ncol,
@@ -886,15 +898,7 @@ def add_legend(ax, handles, style: Style, loc: str, ncol: int = 1):
         borderpad=0.85,
         labelspacing=0.65,
         borderaxespad=0.9,
-    )
-    frame = legend.get_frame()
-    frame.set_facecolor(LEGEND_FILL)
-    frame.set_edgecolor(LEGEND_EDGE)
-    frame.set_linewidth(1.0)
-    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
-    for text in legend.get_texts():
-        text.set_color(INK_PRIMARY)
-    return legend
+    ))
 
 
 # --------------------------------------------------------------------------- #
@@ -1140,6 +1144,41 @@ OVERLAY_MV = "Multivariate"
 OVERLAY_PC = "Univariate (Per Channel)"
 
 
+def setup_handles(style: Style) -> list[Line2D]:
+    """The second key: what a line's dress means, with the hue held out of it.
+
+    Colour is spoken for - it carries identity - so these run in ink and show
+    the line itself rather than the legend's usual dot.
+    """
+    common = dict(color=INK_SECONDARY, marker="o", markersize=style.legend * 0.9,
+                  linewidth=style.line_width * 0.85)
+    return [
+        Line2D([], [], linestyle="-", markerfacecolor=INK_SECONDARY,
+               markeredgecolor="none", label="Multivariate", **common),
+        Line2D([], [], linestyle=(0, (2.4, 1.4)), markerfacecolor=SURFACE,
+               markeredgecolor=INK_SECONDARY,
+               markeredgewidth=style.line_width * 0.9, label="Per-channel",
+               **common),
+    ]
+
+
+def place_legend_pair(fig, left, right, y: float, gap: float = 0.025) -> None:
+    """Centre two legend boxes side by side, tops aligned on ``y``.
+
+    Their widths are only known once drawn, so the pair is measured and then
+    re-anchored - the split decides how many entries the identity key holds.
+    """
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    widths = [
+        lg.get_window_extent(renderer).width / fig.bbox.width for lg in (left, right)
+    ]
+    x = 0.5 - (sum(widths) + gap) / 2
+    for legend, width in zip((left, right), widths):
+        legend.set_bbox_to_anchor((x + width / 2, y))
+        x += width + gap
+
+
 def build_overlay_figure(
     records,
     *,
@@ -1156,12 +1195,12 @@ def build_overlay_figure(
     Hue keeps its usual identity (datasets in the dataset split, models in the
     model split); the setup rides on the second-cycle idiom - multivariate
     solid with filled markers, per-channel dashed with hollow ones - so two
-    nearly-equal lines stay tellable apart. The panel runs wide - the full
-    combined-strip width at the usual single height - and its y-axis runs
-    log: the width spreads the models apart, and the log squeezes the
-    classical models' offset at the top so the spread among the deep models
-    carries more of the height. Only the (L, O) configs both sections share
-    enter the mean, keeping the setups comparable; the multivariate series
+    nearly-equal lines stay tellable apart, and a second legend beside the
+    identity key spells the dress out. The panel sits near square - a little
+    wider than the single size, a little taller - and its y-axis runs log,
+    which squeezes the classical models' offset at the top so the spread among
+    the deep models carries more of the height. Only the (L, O) configs both
+    sections share enter the mean, keeping the setups comparable; the multivariate
     draw last, on top.
     """
     shared = (
@@ -1201,16 +1240,16 @@ def build_overlay_figure(
         color, _ = series_style(base)
         return color, i < n, {5: "s", 6: "^"}.get(base, "o")
 
-    # The header runs title / two subtitle lines / legend, so its height is
+    # The header runs title / subtitle / the two legends, so its height is
     # stacked out of the font sizes rather than guessed as a figure fraction -
-    # the two presets set very different type.
-    legend_rows = int(np.ceil(n / 4))
-    subtitle = subtitle_text or (
-        f"{grid_line(sorted(shared))}\nsolid = multivariate, dashed = per-channel"
-    )
-    width = style.combined_size[0]  # wide panel: room between the models
-    height = style.single_size[1]
-    height += 0.30 if legend_rows == 1 else 0.55  # the extra subtitle line
+    # the two presets set very different type. The identity key narrows to
+    # three columns to leave the setup key room beside it; whichever of the
+    # two runs taller sets the header.
+    ncol = min(n, 3)
+    legend_rows = max(int(np.ceil(n / ncol)), 2)  # the setup key is two rows
+    subtitle = subtitle_text or grid_line(sorted(shared))
+    width = style.single_size[0] * 1.2  # near square, with the header on top
+    height = style.single_size[1] * 1.3
     fig, ax = plt.subplots(figsize=(width, height))
     frac = lambda points: points / 72 / height
 
@@ -1220,8 +1259,8 @@ def build_overlay_figure(
         style.subtitle * 1.45 * (subtitle.count("\n") + 1) + 10
     )
     fig.subplots_adjust(
-        left=0.075, right=0.975,
-        top=legend_y - frac(style.legend * 2.8 * legend_rows), bottom=0.24,
+        left=0.11, right=0.975,
+        top=legend_y - frac(style.legend * 2.8 * legend_rows), bottom=0.15,
     )
 
     handles = draw_panel(
@@ -1232,24 +1271,21 @@ def build_overlay_figure(
     for handle, nm in zip(handles[n:], names):  # legend keys identity via MV lines
         handle.set_label(short(nm))
 
-    fig.text(0.5, title_y, title_text or "MAE: multivariate vs per-channel",
+    fig.text(0.5, title_y, title_text or "MAE",
              ha="center", va="top", fontsize=style.panel_title, fontweight="bold",
              color=INK_PRIMARY)
     fig.text(0.5, subtitle_y, subtitle, ha="center", va="top",
              fontsize=style.subtitle, color=INK_SECONDARY, linespacing=1.45)
-    legend = fig.legend(
-        handles=dot_handles(handles[n:], style),
-        loc="upper center", bbox_to_anchor=(0.5, legend_y),
-        ncol=min(n, 4), frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=1.6,
-    )
-    frame = legend.get_frame()
-    frame.set_facecolor(LEGEND_FILL)
-    frame.set_edgecolor(LEGEND_EDGE)
-    frame.set_linewidth(1.0)
-    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
-    for text in legend.get_texts():
-        text.set_color(INK_PRIMARY)
+    box = dict(loc="upper center", bbox_to_anchor=(0.5, legend_y), frameon=True,
+               fancybox=True, fontsize=style.legend, handletextpad=0.7,
+               borderpad=0.7, columnspacing=1.6)
+    identity = frame_legend(fig.legend(
+        handles=dot_handles(handles[n:], style), ncol=ncol, handlelength=1.4, **box,
+    ))
+    setup = frame_legend(fig.legend(
+        handles=setup_handles(style), ncol=1, handlelength=2.4, **box,
+    ))
+    place_legend_pair(fig, identity, setup, legend_y)
 
     if any(short_model(m) == "ARIMA" for m in models):
         fig.text(0.985, 0.008, "ARIMA is channel-independent - both setups coincide",
