@@ -120,9 +120,9 @@ def pc_cell(model: str, lookback: int) -> tuple[float, float, float]:
     )
 
 
-def ladder_style(i: int) -> tuple[str, bool]:
+def ladder_style(i: int) -> tuple[str, bool, str]:
     """Colour follows the model, the dashed second cycle marks the per-channel setup."""
-    return pm.SERIES_COLORS[i % len(MODELS)], i >= len(MODELS)
+    return pm.SERIES_COLORS[i % len(MODELS)], i >= len(MODELS), "o"
 
 
 def build_panels() -> list[pm.Panel]:
@@ -199,15 +199,15 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
 
     for row, model in enumerate(MODELS):
         colour = pm.SERIES_COLORS[row]
-        # Rebind per row: one hue, the second cycle marking both non-MV setups;
-        # the cluster line is then restyled dotted-and-square below.
-        pm.series_style = lambda i, c=colour: (c, i >= 1)
+        # One hue per row, the second cycle marking both non-MV setups; the
+        # cluster line is then restyled dotted-and-square below.
+        row_style = lambda i, c=colour: (c, i >= 1, "o")
         for col, panel in enumerate(model_panels(model)):
             handles = pm.draw_panel(
                 axes[row][col], panel, style,
                 title=panel.title if row == 0 else "",
                 subtitle=None, highlight=None, muted=set(),
-                show_legend=False, label_points=False,
+                show_legend=False, label_points=False, styler=row_style,
             )
             handles[2].set_linestyle(DOTTED)
             handles[2].set_marker("s")
@@ -278,10 +278,8 @@ def main() -> None:
 
     plt.rcParams.update({**pm.rc_fonts(), "font.size": style.tick})
 
-    # draw_panel keys colour off the module's series_style; the ladder pairs
-    # each model's two setups instead of cycling five colours.
-    pm.series_style = ladder_style
-
+    # The ladder pairs each model's two setups instead of cycling five colours,
+    # so it hands draw_panel its own styler rather than the default wheel.
     panels = build_panels()
     fig, axes = plt.subplots(1, len(panels), figsize=style.combined_size)
     axes = list(np.atleast_1d(axes))
@@ -292,7 +290,7 @@ def main() -> None:
             ax, panel, style,
             title=panel.title, subtitle=None,
             highlight=None, muted=set(),
-            show_legend=False, label_points=False,
+            show_legend=False, label_points=False, styler=ladder_style,
         )
         slim_markers(handles, style)
 
