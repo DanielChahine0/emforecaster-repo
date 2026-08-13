@@ -184,11 +184,18 @@ def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
         w.writerows(rows)
 
 
-def _git_describe(repo: Path) -> str:
+def _logs_commit(repo: Path) -> str:
+    """The last commit that touched logs/ -- the only git fact worth recording.
+
+    Recording the checked-out HEAD instead would rewrite this file on every
+    unrelated commit, leaving `git status` permanently dirty after a rebuild,
+    which is how a provenance file stops being read. This changes exactly when
+    the inputs change.
+    """
     try:
         return subprocess.run(
-            ["git", "-C", str(repo), "describe", "--always", "--dirty"],
-            capture_output=True, text=True, check=True).stdout.strip()
+            ["git", "-C", str(repo), "log", "-1", "--format=%H", "--", "logs"],
+            capture_output=True, text=True, check=True).stdout.strip() or "unknown"
     except Exception:
         return "unknown"
 
@@ -205,7 +212,7 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
     for r in sorted(runs, key=lambda r: r["path"]):
         digest.update(f"{r['path']}|{r['mse']}|{r['mae']}|{r['running_time']}\n".encode())
     payload = {
-        "git": _git_describe(repo),
+        "logs_commit": _logs_commit(repo),
         "n_runs": len(runs),
         "runs_digest": digest.hexdigest(),
         "counts": counts,

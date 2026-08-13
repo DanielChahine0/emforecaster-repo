@@ -10,7 +10,7 @@
     }
   },
   "exclude": [],
-  "git": "0a8f960e-dirty",
+  "logs_commit": "fd5810c39911c1277ced1fcb8ef183b26005f76c",
   "n_runs": 1685,
   "runs_digest": "c1152c8eea7c1656d2ec29cd84c5ed0079d4feb474fd20bc8080ba3ea887662c",
   "setups": [
