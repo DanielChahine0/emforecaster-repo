@@ -60,15 +60,18 @@ def main() -> int:
 
     from matplotlib import font_manager
 
+    from .style import FONT_STACKS
+
+    family = FONT_STACKS["sans"][0]
     font_manager._load_fontmanager(try_read_cache=False)
     resolved = font_manager.findfont(
-        font_manager.FontProperties(family="IBM Plex Sans", weight="bold")
+        font_manager.FontProperties(family=family, weight="bold")
     )
-    if "IBMPlexSans" not in resolved:
+    if family.replace(" ", "") not in resolved:
         print(f"installed, but matplotlib still resolves bold to {resolved}",
               file=sys.stderr)
         return 1
-    print(f"\nIBM Plex Sans ready in {DEST}")
+    print(f"\n{family} ready in {DEST}")
     return 0
 
 
