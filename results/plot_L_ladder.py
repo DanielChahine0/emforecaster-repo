@@ -36,6 +36,8 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 import plot_metrics as pm
+from emfres.chrome import figure_header, footnote, shared_legend
+from emfres.vocab import parse_duration
 
 REPO = Path(__file__).resolve().parent.parent
 LOOKBACKS = list(range(48, 481, 48))
@@ -49,18 +51,15 @@ PC_ROOT = REPO / "logs" / "univariate (per channel)"
 CL_ROOT = REPO / "logs" / "cluster"
 K_CLUSTER = 5
 
-_TIME_PART = re.compile(r"(\d+(?:\.\d+)?)\s*(h|min|s)\b")
-_TIME_UNITS = {"h": 3600.0, "min": 60.0, "s": 1.0}
-
-
 def running_seconds(text: str | None) -> float:
-    """Seconds from the logger's ``43min 10s`` / ``1h 5min 2s`` / ``22s`` form."""
-    if not text:
-        return float("nan")
-    parts = _TIME_PART.findall(text)
-    if not parts:
-        return float("nan")
-    return sum(float(v) * _TIME_UNITS[u] for v, u in parts)
+    """Seconds from the logger's ``43min 10s`` / ``1h 5min 2s`` / ``22s`` form.
+
+    Delegates to the shared grammar. The local copy this replaces matched
+    ``h`` only on a word boundary, so it silently dropped the hours from a
+    ``1hr 44min 16s`` value and under-reported that run by an hour.
+    """
+    seconds = parse_duration(text)
+    return float("nan") if seconds is None else seconds
 
 
 def scalar(value) -> float:
@@ -120,9 +119,9 @@ def pc_cell(model: str, lookback: int) -> tuple[float, float, float]:
     )
 
 
-def ladder_style(i: int) -> tuple[str, bool]:
+def ladder_style(i: int) -> tuple[str, bool, str]:
     """Colour follows the model, the dashed second cycle marks the per-channel setup."""
-    return pm.SERIES_COLORS[i % len(MODELS)], i >= len(MODELS)
+    return pm.SERIES_COLORS[i % len(MODELS)], i >= len(MODELS), "o"
 
 
 def build_panels() -> list[pm.Panel]:
@@ -199,15 +198,15 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
 
     for row, model in enumerate(MODELS):
         colour = pm.SERIES_COLORS[row]
-        # Rebind per row: one hue, the second cycle marking both non-MV setups;
-        # the cluster line is then restyled dotted-and-square below.
-        pm.series_style = lambda i, c=colour: (c, i >= 1)
+        # One hue per row, the second cycle marking both non-MV setups; the
+        # cluster line is then restyled dotted-and-square below.
+        row_style = lambda i, c=colour: (c, i >= 1, "o")
         for col, panel in enumerate(model_panels(model)):
             handles = pm.draw_panel(
                 axes[row][col], panel, style,
                 title=panel.title if row == 0 else "",
                 subtitle=None, highlight=None, muted=set(),
-                show_legend=False, label_points=False,
+                show_legend=False, label_points=False, styler=row_style,
             )
             handles[2].set_linestyle(DOTTED)
             handles[2].set_marker("s")
@@ -240,26 +239,21 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
             label=label,
         )
 
-    legend = fig.legend(
-        handles=[
+    shared_legend(
+        fig,
+        [
             key_handle("multivariate", "-", "o", True),
             key_handle("per-channel", (0, (2.4, 1.4)), "o", False),
             key_handle(f"cluster (k = {K_CLUSTER})", DOTTED, "s", False),
         ],
-        loc="upper center", bbox_to_anchor=(0.5, 0.94),
-        ncol=3, frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=2.6, handletextpad=0.8, borderpad=0.7, columnspacing=2.0,
+        style, anchor=(0.5, 0.94), handlelength=2.6, handletextpad=0.8,
     )
-    frame = legend.get_frame()
-    frame.set_facecolor(pm.LEGEND_FILL)
-    frame.set_edgecolor(pm.LEGEND_EDGE)
-    frame.set_linewidth(1.0)
     pm.add_x_label(fig, list(axes[-1]), style, "Lookback length")
-    fig.text(
-        0.985, 0.008,
+    footnote(
+        fig,
         "per-channel time = sum of the 27 band trainings · "
         "the lookback-336 cells were timed under different GPU load",
-        ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
+        style, y=0.008,
     )
     for path in pm.save(fig, outdir, f"{DATASET}_O{HORIZON}_L_ladder_by_model", formats):
         print(f"  wrote {path.relative_to(REPO)}")
@@ -278,10 +272,8 @@ def main() -> None:
 
     plt.rcParams.update({**pm.rc_fonts(), "font.size": style.tick})
 
-    # draw_panel keys colour off the module's series_style; the ladder pairs
-    # each model's two setups instead of cycling five colours.
-    pm.series_style = ladder_style
-
+    # The ladder pairs each model's two setups instead of cycling five colours,
+    # so it hands draw_panel its own styler rather than the default wheel.
     panels = build_panels()
     fig, axes = plt.subplots(1, len(panels), figsize=style.combined_size)
     axes = list(np.atleast_1d(axes))
@@ -292,37 +284,28 @@ def main() -> None:
             ax, panel, style,
             title=panel.title, subtitle=None,
             highlight=None, muted=set(),
-            show_legend=False, label_points=False,
+            show_legend=False, label_points=False, styler=ladder_style,
         )
         slim_markers(handles, style)
 
-    fig.text(0.5, 0.99, "ED2022: accuracy and training cost by lookback length",
-             ha="center", va="top", fontsize=style.title, fontweight="bold",
-             color=pm.INK_PRIMARY)
-    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1],
-             f"forecast horizon {HORIZON} · seed {SEED} · "
-             f"solid = multivariate, dashed = per-channel",
-             ha="center", va="top", fontsize=style.subtitle, color=pm.INK_SECONDARY)
+    figure_header(
+        fig, style,
+        "ED2022: accuracy and training cost by lookback length",
+        f"forecast horizon {HORIZON} · seed {SEED} · "
+        f"solid = multivariate, dashed = per-channel",
+    )
     # The subtitle keys the setups, so the legend needs only one dot per model:
     # the solid multivariate lines, drawn first, carry the hue.
     for handle, model in zip(handles, MODELS):
         handle.set_label(model)
-    legend = fig.legend(
-        handles=pm.dot_handles(handles[: len(MODELS)], style),
-        loc="upper center", bbox_to_anchor=(0.5, 0.875),
-        ncol=len(MODELS), frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=2.0,
-    )
-    frame = legend.get_frame()
-    frame.set_facecolor(pm.LEGEND_FILL)
-    frame.set_edgecolor(pm.LEGEND_EDGE)
-    frame.set_linewidth(1.0)
+    shared_legend(fig, pm.dot_handles(handles[: len(MODELS)], style), style,
+                  ncol=len(MODELS))
     pm.add_x_label(fig, axes, style, "Lookback length")
-    fig.text(
-        0.985, 0.012,
+    footnote(
+        fig,
         "per-channel time = sum of the 27 band trainings · "
         "the lookback-336 cells were timed under different GPU load",
-        ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
+        style,
     )
 
     outdir = REPO / "results" / "figures" / "L ladder"

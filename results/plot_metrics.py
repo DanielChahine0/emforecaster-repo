@@ -43,174 +43,37 @@ from matplotlib import colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FixedLocator, FuncFormatter
 
+
 # --------------------------------------------------------------------------- #
-# Design tokens
+# Shared library
 # --------------------------------------------------------------------------- #
+#
+# Design tokens, figure furniture, and the drawing primitives now live in
+# ``emfres``. They are re-exported here by name because plot_complexity,
+# plot_trustworthiness, and plot_L_ladder all reach for them as ``pm.<name>``.
 
-# The five style-example colours - Verdigris, Burnt Peach, Charcoal Blue,
-# Sandy Brown, Tuscan Sun - ordered for contrast on a white surface. The
-# leading Verdigris / Burnt Peach / Charcoal trio is the dataset-split set and
-# passes the all-pairs check (deltaE >= 42.0, >= 28.0 under simulated CVD);
-# across all five, adjacent pairs hold deltaE >= 23.2 normal-vision, though the
-# twin ambers compress to 6.2 for deutan viewers - the legend and the paper's
-# tables are the relief. Sandy Brown and Tuscan Sun sit below 3:1 contrast.
-# Uniform circle markers, like the reference - hue carries identity, and
-# series past the fifth restate the wheel dashed-and-hollow (series_style).
-SERIES_COLORS = [
-    "#2a9d8f", "#e76f51", "#264653", "#f4a261", "#e9c46a",
-]
-# A deliberately recessive mist step for a series named with --mute: it stays
-# legible and keeps its legend entry, but stops competing for attention.
-MUTED_COLOR = "#d7e0e4"
+from emfres.style import (  # noqa: E402
+    AXIS_RULE, FONT_STACKS, GRIDLINE, INK_MUTED, INK_PRIMARY, INK_SECONDARY,
+    LADDER, LEGEND_EDGE, LEGEND_FILL, MUTED_COLOR, SERIES_COLORS, STYLES,
+    SURFACE, TIME_UNIT_ABBREV, Style, digits_for_step, label_color,
+    linear_ticks, log_ticks, rc_fonts, series_style, time_unit,
+)
+from emfres.chrome import (  # noqa: E402
+    add_legend, add_x_label, axes_bottom, densify, dot_handles, draw_axis_break,
+    figure_header, footnote, frame_legend, grid_line, place_legend, save,
+    shared_legend, spread_labels, style_axes,
+)
+from emfres.panels import (  # noqa: E402
+    Panel, draw_panel, draw_tradeoff_panel,
+)
 
-INK_PRIMARY = "#264653"
-INK_SECONDARY = "#54707e"
-INK_MUTED = "#8ba1ab"
-GRIDLINE = "#e4eaee"
-AXIS_RULE = "#264653"
-SURFACE = "#ffffff"
-LEGEND_FILL = "#fbfcfd"
-LEGEND_EDGE = "#d5dde2"
-
-
-def series_style(i: int) -> tuple[str, bool]:
-    """Colour and second-cycle flag for series ``i``.
-
-    The palette stays fixed at the five theme colours; a sixth or seventh
-    series repeats the wheel one step ahead - so the lead colour, the proposed
-    model's, never duplicates - and the True flag asks for a dashed line with a
-    hollow marker to carry the difference.
-    """
-    cycle, slot = divmod(i, len(SERIES_COLORS))
-    return SERIES_COLORS[(slot + cycle) % len(SERIES_COLORS)], cycle > 0
-
-
-def label_color(color: str) -> str:
-    """Darken a series colour until small bold text in it reads on white (3:1).
-
-    Lines and markers keep the true palette; only annotations pay the tax, so
-    the light saffron / sandy / sage slots stay legible as text.
-    """
-    rgb = np.array(mcolors.to_rgb(color))
-
-    def contrast(c: np.ndarray) -> float:
-        linear = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-        return 1.05 / (linear @ [0.2126, 0.7152, 0.0722] + 0.05)
-
-    while contrast(rgb) < 3.0:
-        rgb *= 0.97
-    return mcolors.to_hex(rgb)
-
-
-FONT_STACKS = {
-    # IBM Plex Sans sets every figure in the repo; the rest of the list is the
-    # fallback chain for a machine that does not have it. Install the family
-    # with results/install_plex_sans.py - Google Fonts ships only the variable
-    # font, whose bold matplotlib cannot reach.
-    "sans": [
-        "IBM Plex Sans",
-        "Lato", "Source Sans 3", "Source Sans Pro", "Open Sans", "Noto Sans",
-        "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans",
-    ],
-    "serif": ["IBM Plex Serif", "Times New Roman", "STIXGeneral", "DejaVu Serif"],
-}
-
-
-def rc_fonts(family: str = "sans") -> dict:
-    """rcParams that put every glyph - mathtext included - in one family.
-
-    Every figure script shares this, so the typeface is named in one place.
-    Mathtext runs through the ``custom`` fontset rather than a stock one:
-    otherwise the paradigm schematic's $f_1$ would arrive in DejaVu beside
-    Plex captions.
-    """
-    lead = FONT_STACKS[family][0]
-    return {
-        "font.family": "sans-serif" if family == "sans" else "serif",
-        "font.sans-serif": FONT_STACKS["sans"],
-        "font.serif": FONT_STACKS["serif"],
-        # Every custom slot is resolved at draw time, so name the family in all
-        # of them - the unused calligraphic one otherwise warns its way to a
-        # cursive fallback on each run.
-        "mathtext.fontset": "custom",
-        "mathtext.rm": lead,
-        "mathtext.it": f"{lead}:italic",
-        "mathtext.bf": f"{lead}:bold",
-        "mathtext.bfit": f"{lead}:italic:bold",
-        "mathtext.sf": lead,
-        "mathtext.cal": f"{lead}:italic",
-        "text.color": INK_PRIMARY,
-        "axes.labelcolor": INK_SECONDARY,
-        "figure.facecolor": SURFACE,
-        "savefig.facecolor": SURFACE,
-        "pdf.fonttype": 42,  # embed real glyphs, not type-3 outlines
-        "ps.fonttype": 42,
-    }
-
-
-@dataclass(frozen=True)
-class Style:
-    """Everything that changes between the presentation and the LaTeX preset."""
-
-    combined_size: tuple[float, float]
-    single_size: tuple[float, float]
-    title: float
-    subtitle: float
-    panel_title: float
-    axis_label: float
-    context: float
-    tick: float
-    legend: float
-    footnote: float
-    line_width: float
-    marker: float
-
-    @property
-    def value_label(self) -> float:
-        return self.tick * 0.95
-
-
-STYLES = {
-    # Presentation / preprint proportions: heavy strokes, generous margins.
-    "slide": Style(
-        combined_size=(11.5, 5.4),
-        single_size=(6.4, 5.0),
-        title=17,
-        subtitle=11.5,
-        panel_title=13,
-        axis_label=11.5,
-        context=9,
-        tick=10,
-        legend=10.5,
-        footnote=7.5,
-        line_width=2.8,
-        marker=8.5,
-    ),
-    # IEEEtran: \columnwidth ~ 3.5in, \textwidth ~ 7.16in, no downscaling.
-    "paper": Style(
-        combined_size=(7.16, 3.7),
-        single_size=(3.5, 3.3),
-        title=10.5,
-        subtitle=8,
-        panel_title=9,
-        axis_label=8,
-        context=6.5,
-        tick=7,
-        legend=7,
-        footnote=5.6,
-        line_width=1.8,
-        marker=5.0,
-    ),
-}
 
 
 # --------------------------------------------------------------------------- #
 # Parsing
 # --------------------------------------------------------------------------- #
 
-TIME_UNITS = {"h": 3600.0, "m": 60.0, "s": 1.0}
-_TIME_RE = re.compile(r"^(?:\d+(?:\.\d+)?\s*[hms]\s*)+$", re.IGNORECASE)
-_TIME_PART_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([hms])", re.IGNORECASE)
+from emfres.vocab import is_duration, parse_duration  # noqa: E402
 
 
 def clean_cell(cell: str) -> str:
@@ -229,10 +92,8 @@ def parse_value(text: str) -> float:
     text = clean_cell(text)
     if not text or text in {"-", "--", "n/a", "N/A"}:
         return float("nan")
-    if _TIME_RE.match(text):
-        return sum(
-            float(v) * TIME_UNITS[u.lower()] for v, u in _TIME_PART_RE.findall(text)
-        )
+    if is_duration(text):
+        return parse_duration(text)
     try:
         return float(text.replace(",", "").rstrip("%"))
     except ValueError:
@@ -394,21 +255,29 @@ def pair_label(dataset: str, model: str, many_datasets: bool, many_models: bool)
     return " · ".join(parts)
 
 
-@dataclass
-class Panel:
-    key: str
-    title: str
-    is_time: bool
-    x_labels: list[str]  # display-ready column names
-    series: list[tuple[str, list[float]]]  # (display label, value per column)
-    configs: list[tuple[int, int]]
+
+_GRID_RE = re.compile(r"^\s*L?(\d+)\s*[/x]\s*O?(\d+)\s*$", re.IGNORECASE)
+
+
+def parse_grid(grid: str) -> tuple[int, int]:
+    """(lookback, horizon) from ``336/96``, ``L336/O96`` or ``336x96``.
+
+    The tables and the log directories both spell this window with L/O
+    prefixes, so a reader who copies one in should not get a traceback.
+    """
+    m = _GRID_RE.match(grid)
+    if not m:
+        raise ValueError(
+            f"cannot read --grid {grid!r}; expected something like 336/96 or L336/O96"
+        )
+    return int(m.group(1)), int(m.group(2))
 
 
 def aggregate(records, section: str, metric: str, grid: str | None):
     """Mean each (dataset, model) cell over the (L, O) configs still in play."""
     rows = [r for r in records if r.section == section and r.metric == metric]
     if grid:
-        lookback, horizon = (int(v) for v in grid.lower().replace("l", "").split("/"))
+        lookback, horizon = parse_grid(grid)
         rows = [r for r in rows if r.lookback == lookback and r.horizon == horizon]
     if not rows:
         return [], [], {}, []
@@ -438,7 +307,7 @@ def aggregate_clusters(records, section: str, metric: str, grid: str | None):
         if r.section == section and r.metric == metric and r.cluster is not None
     ]
     if grid:
-        lookback, horizon = (int(v) for v in grid.lower().replace("l", "").split("/"))
+        lookback, horizon = parse_grid(grid)
         rows = [r for r in rows if r.lookback == lookback and r.horizon == horizon]
     if not rows:
         return [], [], {}, []
@@ -466,493 +335,14 @@ def aggregate_clusters(records, section: str, metric: str, grid: str | None):
     return ks, pairs, values, configs
 
 
-# --------------------------------------------------------------------------- #
-# Scales: one unit and one number format per axis
-# --------------------------------------------------------------------------- #
 
-# A 1-2-3-5 ladder, so every axis draws its ticks from the same shape.
-LADDER = [m * 10**k for k in range(-3, 6) for m in (1, 2, 3, 5)]
 
 
-def time_unit(seconds_max: float) -> tuple[float, str]:
-    """One unit for the whole axis - mixing '45s' with '2m' reads inconsistently."""
-    if seconds_max < 120:
-        return 1.0, "seconds"
-    if seconds_max < 10800:
-        return 60.0, "minutes"
-    return 3600.0, "hours"
 
 
-# Compact axis-label spellings of the time_unit names.
-TIME_UNIT_ABBREV = {"seconds": "s", "minutes": "min", "hours": "h"}
 
 
-def log_ticks(lo: float, hi: float, target: int = 6) -> list[float]:
-    """Ladder values inside [lo, hi], thinned toward ``target`` ticks."""
-    inside = [t for t in LADDER if lo <= t <= hi]
-    if len(inside) <= target:
-        return inside
-    step = int(np.ceil(len(inside) / target))
-    return inside[::step]
 
-
-def linear_ticks(lo: float, hi: float, target: int = 6) -> list[float]:
-    """Evenly spaced ticks on a round step - a log ladder on a linear axis reads wrong."""
-    raw = (hi - lo) / target
-    magnitude = 10 ** np.floor(np.log10(raw))
-    step = next(
-        (m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw), 10 * magnitude
-    )
-    first = np.ceil(lo / step) * step
-    return [round(first + i * step, 10) for i in range(int((hi - first) / step) + 1)]
-
-
-def digits_for_step(step: float) -> int:
-    """One decimal count for every tick on the axis."""
-    for threshold, digits in ((10, 0), (1, 1), (0.1, 2)):
-        if step >= threshold:
-            return digits
-    return 3
-
-
-# --------------------------------------------------------------------------- #
-# Drawing
-# --------------------------------------------------------------------------- #
-
-
-def style_axes(ax, style: Style) -> None:
-    ax.set_facecolor(SURFACE)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    rule = style.line_width * 0.55
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(AXIS_RULE)
-        ax.spines[side].set_linewidth(rule)
-    ax.tick_params(colors=AXIS_RULE, length=4, width=rule, labelcolor=INK_PRIMARY)
-    ax.grid(axis="x", color=GRIDLINE, linewidth=style.line_width * 0.32, zorder=0)
-    ax.set_axisbelow(True)
-
-
-def draw_axis_break(ax, style: Style, below: float) -> None:
-    """Kink the y-axis spine into a small zigzag - the truncated-scale mark.
-
-    Two sharp teeth poke left of the spine just above the origin: the
-    conventional sign that a linear axis does not run down to zero. ``below``
-    is the axes-fraction height of the lowest tick; the glyph centres itself
-    under it, clear of the tick and its label.
-    """
-    fig = ax.figure
-    pos = ax.get_position()
-    width_pt = pos.width * fig.get_size_inches()[0] * 72.0
-    height_pt = pos.height * fig.get_size_inches()[1] * 72.0
-    # Sized to sit under the tick labels: a touch shorter than the tick font,
-    # so the lowest number reads taller than the glyph.
-    half = 0.32 * style.tick / height_pt
-    reach = 0.36 * style.tick / width_pt
-    centre = min(0.085, max(0.04, below / 2))
-    ys = [centre + half, centre + half / 2, centre, centre - half / 2, centre - half]
-    xs = [0.0, -reach, 0.0, -reach, 0.0]
-
-    spine = ax.spines["left"]
-    # Blank the straight spine behind the glyph first, so the axis line
-    # really kinks instead of showing through the teeth.
-    ax.add_artist(Line2D(
-        [0.0, 0.0], [ys[0], ys[-1]], transform=ax.transAxes,
-        color=SURFACE, linewidth=spine.get_linewidth() * 3.0,
-        solid_capstyle="butt", clip_on=False, zorder=spine.get_zorder() + 0.1,
-    ))
-    ax.add_artist(Line2D(
-        xs, ys, transform=ax.transAxes,
-        color=AXIS_RULE, linewidth=spine.get_linewidth(),
-        solid_capstyle="butt", solid_joinstyle="miter",
-        clip_on=False, zorder=spine.get_zorder() + 0.2,
-    ))
-
-
-def densify(points: list[tuple[float, float]], per_segment: int = 10):
-    """Sample along each polyline segment - a legend must dodge lines, not just markers."""
-    dense = []
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
-        if not (np.isfinite(y0) and np.isfinite(y1)):
-            continue
-        for t in np.linspace(0, 1, per_segment):
-            dense.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
-    return dense + points
-
-
-# (location, columns) tried in order; the first placement that touches no data
-# wins. The stacked box reads best when a corner is free; the single row fits the
-# thin band of headroom reserved at the top when no corner is.
-LEGEND_PLACEMENTS = [
-    ("upper right", 1), ("upper left", 1), ("lower left", 1), ("lower right", 1),
-    ("upper left", 0), ("upper right", 0), ("lower left", 0),
-]
-
-
-def place_legend(ax, handles, style: Style, points, avoid) -> bool:
-    """Try each corner against the legend's real box; hang it above the axes if none is clear.
-
-    Counting points per quadrant is not enough - a legend needs clearance, and a
-    flat line crossing a sparse corner still runs under the box.
-    """
-    fig = ax.figure
-    fig.canvas.draw()
-    marks = [
-        ax.transData.transform((px, py)) for px, py in points if np.isfinite(py)
-    ]
-    boxes = [a.get_window_extent(fig.canvas.get_renderer()) for a in avoid]
-
-    best = (None, float("inf"))
-    for loc, ncol in LEGEND_PLACEMENTS:
-        legend = add_legend(ax, handles, style, loc, ncol or len(handles))
-        fig.canvas.draw()
-        frame = legend.get_window_extent(fig.canvas.get_renderer()).expanded(1.14, 1.3)
-        hits = sum(frame.x0 <= px <= frame.x1 and frame.y0 <= py <= frame.y1 for px, py in marks)
-        hits += sum(frame.overlaps(box) for box in boxes)
-        if hits < best[1]:
-            best = ((loc, ncol), hits)
-        if hits == 0:
-            return False
-        legend.remove()
-
-    if best[1] == 0:
-        loc, ncol = best[0]
-        add_legend(ax, handles, style, loc, ncol or len(handles))
-        return False
-
-    # Nothing inside is clear: a horizontal strip above the axes never collides.
-    legend = add_legend(ax, handles, style, "lower left", len(handles))
-    legend.set_bbox_to_anchor((0.0, 1.02, 1.0, 0.12), transform=ax.transAxes)
-    legend.set_ncols(len(handles))
-    return True
-
-
-def draw_panel(
-    ax,
-    panel: Panel,
-    style: Style,
-    *,
-    title: str,
-    subtitle: str | None,
-    highlight: str | None,
-    muted: set[str],
-    show_legend: bool,
-    label_points: bool,
-    styler=None,
-    log_y: bool = False,
-) -> list[Line2D]:
-    x = np.arange(len(panel.x_labels))
-    finite = [v for _, vals in panel.series for v in vals if np.isfinite(v)]
-
-    # --- scale: one unit, one number format, for ticks and value labels alike --
-    # The panel title names the metric, so the y-axis carries only what the
-    # title cannot: the time unit. MSE / MAE axes stay label-free.
-    if panel.is_time:
-        divisor, unit = time_unit(max(finite))
-        series = [(name, [v / divisor for v in vals]) for name, vals in panel.series]
-        span = [v / divisor for v in finite]
-        lo, hi = min(span) / 1.3, max(span) * 1.3
-        if show_legend:  # empty band at the top for the legend to sit in
-            hi *= (hi / lo) ** 0.20
-        ticks = log_ticks(lo, hi)
-        digits = 0 if all(float(t).is_integer() for t in ticks) else 1
-        axis_label = TIME_UNIT_ABBREV.get(unit, unit)
-    else:
-        series = panel.series
-        span = list(finite)
-        pad = 0.09 * (max(span) - min(span))
-        lo, hi = min(span) - pad, max(span) + pad
-        if show_legend:  # empty band at the top for the legend to sit in
-            hi += 0.24 * (hi - lo)
-        ticks = linear_ticks(lo, hi)
-        digits = digits_for_step(ticks[1] - ticks[0]) if len(ticks) > 1 else 2
-        axis_label = None
-
-    fmt = lambda v: f"{v:.{digits}f}"
-    highlight_at = next(
-        (i for i, name in enumerate(panel.x_labels) if name == highlight), None
-    )
-    label_side = -1 if highlight_at == 0 else 1  # labels face the nearer plot edge
-
-    # Endpoint labels carry one more decimal if the axis format would print two
-    # series as the same number.
-    label_digits = digits
-    if highlight_at is not None:
-        endpoints = [vals[highlight_at] for name, vals in series if name not in muted]
-        while label_digits < digits + 2 and len(
-            {f"{v:.{label_digits}f}" for v in endpoints if np.isfinite(v)}
-        ) < len([v for v in endpoints if np.isfinite(v)]):
-            label_digits += 1
-    label_fmt = lambda v: f"{v:.{label_digits}f}"
-
-    # --- series -------------------------------------------------------------- #
-    handles: list[Line2D] = []
-    occupied: list[tuple[float, float]] = []
-    value_labels = []
-    for i, (name, vals) in enumerate(series):
-        y = np.array(vals, dtype=float)
-        is_muted = name in muted
-        if styler is not None:
-            color, second_cycle, marker = styler(i)
-        else:
-            (color, second_cycle), marker = series_style(i), "o"
-        if is_muted:
-            color = MUTED_COLOR
-        depth = 2 if is_muted else 4 + i
-
-        (line,) = ax.plot(
-            x,
-            y,
-            color=color,
-            linestyle=(0, (2.4, 1.4)) if second_cycle else "-",
-            marker=marker,
-            markersize=style.marker,
-            markerfacecolor=SURFACE if second_cycle else color,
-            markeredgecolor=color if second_cycle else "none",
-            markeredgewidth=style.line_width * 0.9 if second_cycle else 0.0,
-            linewidth=style.line_width,
-            solid_capstyle="round",
-            solid_joinstyle="round",
-            dash_capstyle="round",
-            label=name,
-            zorder=depth,
-            clip_on=False,
-        )
-        handles.append(line)
-        occupied += densify(list(zip(x.tolist(), y.tolist())))
-
-        # The proposed model gets the only value label on the line - the marks
-        # themselves stay uniform, like the reference.
-        if highlight_at is not None and not is_muted and np.isfinite(y[highlight_at]):
-            value_labels.append(ax.annotate(
-                label_fmt(y[highlight_at]),
-                (x[highlight_at], y[highlight_at]),
-                textcoords="offset points",
-                xytext=(label_side * style.marker * 1.2, 0),
-                ha="left" if label_side > 0 else "right",
-                va="center",
-                fontsize=style.value_label,
-                color=label_color(color),
-                fontweight="bold",
-                zorder=depth + 0.7,
-                annotation_clip=False,
-            ))
-
-        if label_points:
-            for xi, yi in zip(x, y):
-                if np.isfinite(yi) and xi != highlight_at:
-                    ax.annotate(
-                        fmt(yi),
-                        (xi, yi),
-                        textcoords="offset points",
-                        xytext=(0, style.marker),
-                        ha="center",
-                        fontsize=style.value_label * 0.9,
-                        color=INK_SECONDARY,
-                    )
-
-    # --- frame --------------------------------------------------------------- #
-    style_axes(ax, style)
-    n = len(panel.x_labels)
-    # Room beside the highlighted column for its value label.
-    if highlight_at is None:
-        ax.set_xlim(-0.45, n - 0.55)
-    elif label_side > 0:
-        ax.set_xlim(-0.45, n - 1 + 0.85)
-    else:
-        ax.set_xlim(-0.85, n - 1 + 0.45)
-    ax.set_ylim(lo, hi)
-    ax.set_xticks(x)
-    # Short label sets sit flat; long ones tilt to keep from colliding.
-    longest = max(map(len, panel.x_labels))
-    flat = longest <= 4 or (n <= 4 and longest <= 8)
-    ax.set_xticklabels(
-        panel.x_labels,
-        rotation=0 if flat else 28,
-        ha="center" if flat else "right",
-        fontsize=style.tick,
-    )
-    if highlight_at is not None:
-        label = ax.get_xticklabels()[highlight_at]
-        label.set_fontweight("bold")
-        label.set_color(INK_PRIMARY)
-
-    if panel.is_time or log_y:
-        ax.set_yscale("log")
-        ax.yaxis.set_minor_locator(FixedLocator([]))
-    ax.yaxis.set_major_locator(FixedLocator(ticks))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: fmt(v)))
-    if axis_label:
-        ax.set_ylabel(axis_label, fontsize=style.axis_label, color=INK_PRIMARY, labelpad=7)
-    ax.tick_params(axis="y", labelsize=style.tick)
-
-    # A linear scale that does not reach zero says so with the conventional
-    # zigzag break in the spine; a log axis has no zero to truncate, so it
-    # shows its scale through the uneven tick spacing instead.
-    if not panel.is_time and not log_y and lo > 0:
-        draw_axis_break(ax, style, below=(ticks[0] - lo) / (hi - lo) if ticks else 1.0)
-
-    # A column with no logged run keeps its slot so the panels stay aligned.
-    for xi in x:
-        if not any(np.isfinite(vals[xi]) for _, vals in panel.series):
-            ax.annotate(
-                "not logged",
-                (xi, 0),
-                xycoords=("data", "axes fraction"),
-                textcoords="offset points",
-                xytext=(0, 8),
-                ha="center",
-                rotation=90,
-                fontsize=style.context * 0.85,
-                color=INK_MUTED,
-            )
-
-    # A series with nothing logged in this panel keeps its legend entry; the
-    # panel itself says why the line is absent.
-    missing = [name for name, vals in panel.series if not any(np.isfinite(v) for v in vals)]
-    if missing:
-        ax.text(
-            0.975, 0.035, f"{', '.join(missing)}: not logged", transform=ax.transAxes,
-            ha="right", va="bottom", fontsize=style.context * 0.9, color=INK_MUTED,
-        )
-
-    spread_labels(ax, value_labels, style.value_label * 1.3)
-    outside = show_legend and place_legend(ax, handles, style, occupied, value_labels)
-
-    lift = 0.15 if outside else 0.0
-    ax.text(
-        0.5, (1.16 if subtitle else 1.08) + lift, title, transform=ax.transAxes,
-        fontsize=style.panel_title, fontweight="bold", color=INK_PRIMARY,
-        ha="center", va="baseline",
-    )
-    if subtitle:
-        ax.text(
-            0.5, 1.06 + lift, subtitle, transform=ax.transAxes,
-            fontsize=style.subtitle, color=INK_SECONDARY,
-            ha="center", va="baseline",
-        )
-
-    return handles
-
-
-def spread_labels(ax, labels, min_gap_pt: float) -> None:
-    """Push overlapping endpoint labels apart - two series can land on one value."""
-    if len(labels) < 2:
-        return
-    fig = ax.figure
-    fig.canvas.draw()
-    to_points = 72 / fig.dpi
-    gap_px = min_gap_pt / to_points
-    ordered = sorted(labels, key=lambda a: ax.transData.transform(a.xy)[1])
-    previous = -np.inf
-    for ann in ordered:
-        anchor = ax.transData.transform(ann.xy)[1]
-        current = anchor + ann.xyann[1] / to_points
-        if current - previous < gap_px:
-            current = previous + gap_px
-            ann.xyann = (ann.xyann[0], (current - anchor) * to_points)
-        previous = current
-
-
-def dot_handles(handles, style: Style):
-    """Plain colour dots, the way the reference legend keys its series.
-
-    Second-cycle series keep their hollow ring so the key mirrors the line.
-    """
-    return [
-        Line2D(
-            [], [], linestyle="None",
-            marker=h.get_marker(), markersize=style.legend * 1.15,
-            markerfacecolor=h.get_markerfacecolor(),
-            markeredgecolor=h.get_markeredgecolor(),
-            markeredgewidth=h.get_markeredgewidth(),
-            label=h.get_label(),
-        )
-        for h in handles
-    ]
-
-
-def frame_legend(legend):
-    """The soft rounded box every legend in these figures sits in."""
-    frame = legend.get_frame()
-    frame.set_facecolor(LEGEND_FILL)
-    frame.set_edgecolor(LEGEND_EDGE)
-    frame.set_linewidth(1.0)
-    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
-    for text in legend.get_texts():
-        text.set_color(INK_PRIMARY)
-    return legend
-
-
-def add_legend(ax, handles, style: Style, loc: str, ncol: int = 1):
-    return frame_legend(ax.legend(
-        handles=dot_handles(handles, style),
-        loc=loc,
-        ncol=ncol,
-        columnspacing=1.8,
-        frameon=True,
-        fancybox=True,
-        fontsize=style.legend,
-        handlelength=1.4,
-        handletextpad=0.7,
-        borderpad=0.85,
-        labelspacing=0.65,
-        borderaxespad=0.9,
-    ))
-
-
-# --------------------------------------------------------------------------- #
-# Figure furniture
-# --------------------------------------------------------------------------- #
-
-
-def axes_bottom(fig, axes) -> float:
-    """Figure fraction of the lowest ink in ``axes`` (rotated tick labels included)."""
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    return min(ax.get_tightbbox(renderer).y0 for ax in axes) / fig.bbox.height
-
-
-def add_x_label(fig, axes, style: Style, label: str) -> None:
-    """Shared x-axis label, centred below the rotated tick labels."""
-    height = fig.get_size_inches()[1]
-    centre = np.mean([ax.get_position().x0 + ax.get_position().width / 2 for ax in axes])
-    y = axes_bottom(fig, axes) - 0.07 / height
-    fig.text(
-        centre, y, label, ha="center", va="top",
-        fontsize=style.axis_label, color=INK_PRIMARY, fontweight="bold",
-    )
-
-
-def grid_line(configs: list[tuple[int, int]]) -> str:
-    """``lookback length 192, 336 · forecast horizon 96`` from the configs in play.
-
-    The symbols L and O belong to the tables; a caption spells them out. An
-    evenly spaced run of four or more windows collapses to its endpoints and
-    step - the ladder's ten lookbacks, listed, ran wider than the figure.
-    """
-
-    def fmt(values: list[int]) -> str:
-        if len(values) == 1:
-            return str(values[0])
-        steps = {b - a for a, b in zip(values, values[1:])}
-        if len(values) >= 4 and len(steps) == 1:
-            return f"{values[0]}-{values[-1]} every {steps.pop()}"
-        return ", ".join(map(str, values))
-
-    lookbacks = sorted({l for l, _ in configs})
-    horizons = sorted({o for _, o in configs})
-    return f"lookback length {fmt(lookbacks)} · forecast horizon {fmt(horizons)}"
-
-
-def save(fig, outdir: Path, stem: str, formats: list[str]) -> list[Path]:
-    written = []
-    for fmt in formats:
-        path = outdir / f"{stem}.{fmt}"
-        fig.savefig(path, dpi=300, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.06)
-        written.append(path)
-    plt.close(fig)
-    return written
 
 
 def draw_no_cluster_baselines(ax, panel: Panel, base_vals, style: Style) -> None:
@@ -1086,10 +476,7 @@ def build_figures(
         if any(v is not None for v in baselines.get(panel.key, [])):
             draw_no_cluster_baselines(ax, panel, baselines[panel.key], style)
 
-    fig.text(0.5, 0.99, headline, ha="center", va="top",
-             fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
-    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1], subhead,
-             ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
+    figure_header(fig, style, headline, subhead)
     legend = fig.legend(
         handles=dot_handles(handles, style),
         loc="upper center",
@@ -1208,8 +595,12 @@ def build_overlay_figure(
         & {(r.lookback, r.horizon) for r in records if r.section == OVERLAY_PC}
     )
     rows = [r for r in records if (r.lookback, r.horizon) in shared]
-    models, datasets, mv_vals, _ = aggregate(rows, OVERLAY_MV, "MAE", grid)
-    pc_models, pc_datasets, pc_vals, _ = aggregate(rows, OVERLAY_PC, "MAE", grid)
+    models, datasets, mv_vals, mv_configs = aggregate(rows, OVERLAY_MV, "MAE", grid)
+    pc_models, pc_datasets, pc_vals, pc_configs = aggregate(rows, OVERLAY_PC, "MAE", grid)
+    # What actually entered the mean, after --grid. `shared` is computed before
+    # that filter, so captioning with it told a --grid run it had averaged the
+    # whole ladder.
+    drawn = sorted(set(mv_configs) & set(pc_configs))
     if not models or not pc_models:
         print("  no shared MV / per-channel MAE cells", file=sys.stderr)
         return []
@@ -1228,7 +619,7 @@ def build_overlay_figure(
     n = len(names)
     series = [(f"{short(nm)} · per-channel", series_of(pc_vals, nm)) for nm in names]
     series += [(f"{short(nm)} · multivariate", series_of(mv_vals, nm)) for nm in names]
-    panel = Panel("MAE", "MAE", False, x_labels, series, sorted(shared))
+    panel = Panel("MAE", "MAE", False, x_labels, series, drawn)
 
     def styler(i: int):
         """Hue = identity; per-channel (first half) dashed and hollow.
@@ -1247,7 +638,7 @@ def build_overlay_figure(
     # two runs taller sets the header.
     ncol = min(n, 3)
     legend_rows = max(int(np.ceil(n / ncol)), 2)  # the setup key is two rows
-    subtitle = subtitle_text or grid_line(sorted(shared))
+    subtitle = subtitle_text or grid_line(drawn)
     width = style.single_size[0] * 1.2  # near square, with the header on top
     height = style.single_size[1] * 1.3
     fig, ax = plt.subplots(figsize=(width, height))
@@ -1323,76 +714,6 @@ def tradeoff_points(records, section: str, metric: str, grid: str | None):
     return points, configs
 
 
-def draw_tradeoff_panel(ax, key: str, title: str, subtitle: str | None, points, style: Style) -> str:
-    """Scatter of models in cost/accuracy space; returns the time unit used."""
-    plotted = [p for p in points if np.isfinite(p[1]) and np.isfinite(p[2])]
-    missing = [p[0] for p in points if not (np.isfinite(p[1]) and np.isfinite(p[2]))]
-
-    divisor, unit = time_unit(max(t for _, t, _, _, _ in plotted))
-    xs = [t / divisor for _, t, _, _, _ in plotted]
-    ys = [y for _, _, y, _, _ in plotted]
-
-    # Log time axis, with room on the right for the point labels.
-    xlo, xhi = min(xs) / 1.5, max(xs) * 2.6
-    xticks = log_ticks(xlo, xhi)
-    xdigits = 0 if all(float(t).is_integer() for t in xticks) else 1
-    pad = 0.12 * (max(ys) - min(ys))
-    ylo, yhi = min(ys) - pad, max(ys) + pad
-    yticks = linear_ticks(ylo, yhi)
-    ydigits = digits_for_step(yticks[1] - yticks[0]) if len(yticks) > 1 else 2
-
-    labels = []
-    for name, t, y, color, second_cycle in plotted:
-        ax.plot(
-            [t / divisor], [y],
-            marker="o", markersize=style.marker * 1.35, color=color,
-            markerfacecolor=SURFACE if second_cycle else color,
-            markeredgecolor=color if second_cycle else "none",
-            markeredgewidth=style.line_width * 0.9 if second_cycle else 0.0,
-            linestyle="None", zorder=4, clip_on=False,
-        )
-        labels.append(ax.annotate(
-            name, (t / divisor, y),
-            textcoords="offset points", xytext=(style.marker * 1.1, 0),
-            ha="left", va="center", fontsize=style.value_label,
-            color=label_color(color),
-            fontweight="bold", zorder=5, annotation_clip=False,
-        ))
-
-    style_axes(ax, style)
-    ax.set_xscale("log")
-    ax.set_xlim(xlo, xhi)
-    ax.set_ylim(ylo, yhi)
-    ax.xaxis.set_major_locator(FixedLocator(xticks))
-    ax.xaxis.set_minor_locator(FixedLocator([]))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.{xdigits}f}"))
-    ax.yaxis.set_major_locator(FixedLocator(yticks))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.{ydigits}f}"))
-    ax.tick_params(axis="both", labelsize=style.tick)
-
-    if ylo > 0:
-        draw_axis_break(ax, style, below=(yticks[0] - ylo) / (yhi - ylo) if yticks else 1.0)
-
-    if missing:
-        ax.text(
-            0.975, 0.035, f"{', '.join(missing)}: not logged", transform=ax.transAxes,
-            ha="right", va="bottom", fontsize=style.context * 0.9, color=INK_MUTED,
-        )
-
-    spread_labels(ax, labels, style.value_label * 1.45)
-
-    ax.text(
-        0.5, 1.16 if subtitle else 1.08, title, transform=ax.transAxes,
-        fontsize=style.panel_title, fontweight="bold", color=INK_PRIMARY,
-        ha="center", va="baseline",
-    )
-    if subtitle:
-        ax.text(
-            0.5, 1.06, subtitle, transform=ax.transAxes,
-            fontsize=style.subtitle, color=INK_SECONDARY,
-            ha="center", va="baseline",
-        )
-    return unit
 
 
 def build_tradeoff_figures(
@@ -1496,6 +817,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.tables.exists():
         parser.error(f"tables file not found: {args.tables}")
+
+    if args.grid:
+        try:
+            parse_grid(args.grid)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     records = parse_tables(args.tables)
     if not records:

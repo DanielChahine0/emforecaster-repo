@@ -30,6 +30,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from emfres.vocab import (
+    MISSING, format_seconds, format_seconds_fine, parse_duration,
+)
+
 MODEL_DISPLAY = {
     "EMForecaster": "EMForecaster (2025)",
     "DLinear": "DLinear (2023)",
@@ -50,165 +54,19 @@ DATASET_DISPLAY = {
 }
 DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
 
-MISSING = "-"
+# MISSING now comes from emfres.vocab, so the tables and the duration
+# formatters cannot disagree about what an absent value looks like.
 
 # The single (L, O) window the '# Ultimate Comparison' section is built for. The
 # cluster grid only sweeps this one, so it is the only window where per-channel,
 # multivariate and clustered runs can all be put in the same row.
 ULTIMATE_SETTING = (336, 96)
 
-# format is "<N>s", "<N>min <N>s" or "<N>hr <N>min <N>s"
-_TIME_RE = re.compile(
-    r"^(?:(?P<hr>\d+)h(?:r|rs)?\s*)?(?:(?P<min>\d+)min\s*)?(?:(?P<sec>\d+)s)?$")
-_CHANNEL_RE = re.compile(r"^ch(\d+)$")
-# The run-dir tag forecasting/grid.py stamps on a cluster cell (exp.id = "k3").
-_K_RE = re.compile(r"^k(\d+)$")
+from emfres.runlogs import (  # noqa: E402
+    Cell, Run, excluded, load_runs, parse_running_time,
+)
 
 
-def parse_running_time(raw: Optional[str]) -> Optional[float]:
-    if not raw:
-        return None
-    m = _TIME_RE.match(raw.strip())
-    if not m or not any(m.group(g) for g in ("hr", "min", "sec")):
-        raise ValueError(f"unrecognized running_time format: {raw!r}")
-    return (int(m.group("hr") or 0) * 3600
-            + int(m.group("min") or 0) * 60
-            + int(m.group("sec") or 0))
-
-
-def format_seconds(sec: Optional[float]) -> str:
-    if sec is None:
-        return MISSING
-    sec = round(sec)
-    h, rem = divmod(sec, 3600)
-    m, s = divmod(rem, 60)
-    parts = []
-    if h:
-        parts.append(f"{h}h")
-    if h or m:
-        parts.append(f"{m}m")
-    parts.append(f"{s}s")
-    return " ".join(parts)
-
-
-def format_seconds_fine(sec: Optional[float]) -> str:
-    if sec is None:
-        return MISSING
-    if sec < 60:
-        return f"{sec:.1f}s"
-    return format_seconds(sec)
-
-
-@dataclass
-class Run:
-    model: str
-    dataset: str
-    seq_len: int
-    pred_len: int
-    conf: bool
-    mse: Optional[float]
-    mae: Optional[float]
-    running_time: Optional[float]
-    per_epoch: Optional[float]
-    num_params: Optional[int]
-    ic: Optional[float]
-    jc: Optional[float]
-    interval_width: Optional[float]
-    channel: Optional[int]
-    # Number of channel clusters, or None for an ordinary (non-cluster) run.
-    k: Optional[int]
-    seed: Optional[str]
-    path: Path
-
-
-@dataclass
-class Cell:
-    mse: Optional[float]
-    mae: Optional[float]
-    running_time: Optional[float]
-    per_epoch: Optional[float]
-    ic: Optional[float]
-    jc: Optional[float]
-    interval_width: Optional[float]
-    num_params: Optional[int]
-    n: int
-    n_channels: Optional[int]
-    n_seeds: Optional[int]
-
-
-def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
-    runs = []
-    for log_path in sorted(logs_root.rglob("log.json")):
-        if any(pat in str(log_path) for pat in exclude):
-            continue
-        with open(log_path) as f:
-            d = json.load(f)
-
-        model = d.get("parameters/exp/model_id")
-        dataset_raw = d.get("parameters/data/dataset")
-        seq_len = d.get("parameters/data/seq_len")
-        pred_len = d.get("parameters/data/pred_len")
-        if model is None or dataset_raw is None or seq_len is None or pred_len is None:
-            print(f"WARNING: skipping {log_path} (missing model/dataset/seq_len/pred_len)", file=sys.stderr)
-            continue
-
-        criterion = d.get("parameters/sl/criterion")
-        if criterion not in (None, "MSE"):
-            print(f"WARNING: {log_path} uses criterion={criterion!r}, not MSE -- "
-                  f"its 'MSE' column value is actually sl_test/loss under that criterion", file=sys.stderr)
-
-        conf = bool(d.get("parameters/conf/conf"))
-        dataset = dataset_raw.lower()
-        if dataset.startswith("rf_emf_"):
-            dataset = dataset[len("rf_emf_"):]
-
-        test_loss = d.get("sl_test/loss")
-        mse = test_loss[0] if test_loss else None
-        test_mae = d.get("sl_test/mae")
-        mae = test_mae[0] if test_mae else None
-
-        train_loss = d.get("sl_train/loss")
-        epochs = len(train_loss) if train_loss else None
-        try:
-            running_time = parse_running_time(d.get("parameters/running_time"))
-        except ValueError as exc:
-            print(f"WARNING: {log_path}: {exc}", file=sys.stderr)
-            running_time = None
-        per_epoch = running_time / epochs if running_time is not None and epochs else None
-
-        num_params = d.get("parameters/sl/num_params") or None
-
-        ic = jc = interval_width = None
-        if conf:
-            v = d.get("sl_test/ic")
-            ic = v[0] if v else None
-            v = d.get("sl_test/jc")
-            jc = v[0] if v else None
-            v = d.get("sl_test/interval_width_mean")
-            interval_width = v[0] if v else None
-
-        channel = k = None
-        for part in log_path.parts:
-            m = _CHANNEL_RE.fullmatch(part)
-            if m:
-                channel = int(m.group(1))
-            m = _K_RE.fullmatch(part)
-            if m:
-                k = int(m.group(1))
-        # The logged value wins over the path tag; k_clusters is only meaningful
-        # when cluster.enabled, since it defaults to 1 on every ordinary run.
-        if d.get("parameters/cluster/enabled"):
-            k = d.get("parameters/cluster/k_clusters", k)
-        elif k is not None:
-            print(f"WARNING: {log_path} sits under a 'k{k}' directory but "
-                  f"parameters/cluster/enabled is not set; treating it as k={k}", file=sys.stderr)
-
-        seed = log_path.parent.name if log_path.parent.name.isdigit() else None
-
-        runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
-                         running_time, per_epoch, num_params, ic, jc, interval_width,
-                         channel, k, seed, log_path))
-    return runs
 
 
 def mean_of(runs: list[Run], attr: str) -> Optional[float]:
@@ -1063,7 +921,7 @@ def main() -> None:
     parser.add_argument("--title", default=None,
                          help="report/section heading, default derived from --logs-root "
                               "(requires an explicit --logs-root)")
-    parser.add_argument("--exclude", action="append", default=[], metavar="SUBSTRING",
+    parser.add_argument("--exclude", action="append", default=[], metavar="NAME",
                          help="skip log.json paths containing this substring, repeatable")
     args = parser.parse_args()
 

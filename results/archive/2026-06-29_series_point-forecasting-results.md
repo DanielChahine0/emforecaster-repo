@@ -1,3 +1,7 @@
+> **Superseded.** Frozen predecessor of the current tables, kept as the
+> provenance record. Live numbers: `results/tables/` (regenerate with
+> `python results/make.py extract && python results/make.py tables`).
+
 # Point-Forecasting Performance
 
 Test-set metrics, averaged over seeds.

@@ -41,6 +41,7 @@ from matplotlib.ticker import FixedLocator, FuncFormatter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plot_metrics as pm
+from emfres.chrome import figure_header, footnote, shared_legend
 
 HERE = Path(__file__).resolve().parent
 SECTION = "Multivariate"
@@ -248,32 +249,16 @@ def complexity_figure(models, params, time_series, style, formats, outdir) -> li
         show_legend=False, label_points=False,
     )
 
-    fig.text(0.5, 0.99, "Multivariate: model complexity and training cost",
-             ha="center", va="top", fontsize=style.title, fontweight="bold",
-             color=pm.INK_PRIMARY)
-    fig.text(0.5, 0.99 - (style.title * 1.35) / 72 / style.combined_size[1],
-             pm.grid_line([(336, 96)]),
-             ha="center", va="top", fontsize=style.subtitle, color=pm.INK_SECONDARY)
+    figure_header(fig, style, "Multivariate: model complexity and training cost",
+                  pm.grid_line([(336, 96)]))
 
-    legend = fig.legend(
-        handles=pm.dot_handles(handles, style),
-        loc="upper center", bbox_to_anchor=(0.5, 0.875),
-        ncol=len(handles), frameon=True, fancybox=True, fontsize=style.legend,
-        handlelength=1.4, handletextpad=0.7, borderpad=0.7, columnspacing=2.0,
-    )
-    frame = legend.get_frame()
-    frame.set_facecolor(pm.LEGEND_FILL)
-    frame.set_edgecolor(pm.LEGEND_EDGE)
-    frame.set_linewidth(1.0)
-    frame.set_boxstyle("round,pad=0.5,rounding_size=0.8")
-    for text in legend.get_texts():
-        text.set_color(pm.INK_PRIMARY)
+    shared_legend(fig, pm.dot_handles(handles, style), style)
 
     pm.add_x_label(fig, [ax_a, ax_b], style, "Model")
-    fig.text(
-        0.985, 0.012,
+    footnote(
+        fig,
         "parameter counts: first logged value per model (channel counts differ across datasets)",
-        ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
+        style,
     )
     return pm.save(fig, outdir, "multivariate_complexity", formats)
 

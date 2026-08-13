@@ -43,6 +43,11 @@ logs/_archive/
 checkpoint/
 **/.neptune
 
+# Per-epoch loss series: 11.7 MB of diagnostic curves rebuilt by
+# `results/make.py extract --epochs`. runs.csv and cells.csv carry every
+# published number and are tracked; this one is not a published number.
+results/frames/epochs.csv
+
 # Generated figures
 figures/
 emforecaster/data_analysis/figures/
