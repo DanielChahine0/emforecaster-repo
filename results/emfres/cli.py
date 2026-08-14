@@ -12,6 +12,20 @@ RESULTS = Path(__file__).resolve().parent.parent
 REPO = RESULTS.parent
 LOGS = REPO / "logs"
 FRAMES = RESULTS / "frames"
+SPECS = RESULTS / "specs"
+
+
+def spec_excludes() -> list[str]:
+    """Run-level exclusions declared in specs/runs.yaml, with their reasons."""
+    path = SPECS / "runs.yaml"
+    if not path.exists():
+        return []
+    try:
+        import yaml
+        return [str(v) for v in (yaml.safe_load(path.read_text()) or {}).get("exclude", [])]
+    except Exception as exc:
+        print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
+        return []
 
 
 def cmd_extract(args) -> int:
@@ -20,7 +34,14 @@ def cmd_extract(args) -> int:
         print(f"not a directory: {logs}", file=sys.stderr)
         return 1
 
-    runs = frames.build_runs(logs, REPO, args.exclude)
+    exclude = list(args.exclude)
+    if not args.no_spec:
+        spec = spec_excludes()
+        if spec:
+            print(f"specs/runs.yaml excludes: {', '.join(spec)}", file=sys.stderr)
+        exclude += spec
+
+    runs = frames.build_runs(logs, REPO, exclude)
     if not runs:
         print(f"no usable log.json under {logs}", file=sys.stderr)
         return 1
@@ -42,11 +63,11 @@ def cmd_extract(args) -> int:
     frames.write_csv(FRAMES / "cells.csv", cells, frames.CELL_FIELDS)
 
     if args.epochs:
-        epochs = frames.build_epochs(logs, REPO, args.exclude)
+        epochs = frames.build_epochs(logs, REPO, exclude)
         frames.write_csv(FRAMES / "epochs.csv", epochs, frames.EPOCH_FIELDS)
         counts["epochs"] = len(epochs)
 
-    frames.write_manifest(FRAMES / "MANIFEST.json", REPO, runs, counts, args.exclude)
+    frames.write_manifest(FRAMES / "MANIFEST.json", REPO, runs, counts, exclude)
 
     rel = FRAMES.relative_to(REPO)
     print(f"wrote {rel}/runs.csv    {len(runs)} runs")
@@ -156,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip runs with this path component, repeatable")
     ex.add_argument("--epochs", action="store_true",
                     help="also write epochs.csv (per-epoch losses; slow, rereads every log)")
+    ex.add_argument("--no-spec", action="store_true",
+                    help="ignore specs/runs.yaml (loads every run, including "
+                         "groups excluded there for a documented reason)")
     ex.add_argument("--dry-run", action="store_true", help="print counts, write nothing")
     ex.set_defaults(func=cmd_extract)
 

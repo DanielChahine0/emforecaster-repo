@@ -1,18 +1,21 @@
 {
   "counts": {
     "cells": 249,
-    "runs": 1685,
+    "runs": 1631,
     "runs_by_setup": {
-      "cluster": 159,
+      "cluster": 105,
       "multivariate": 48,
       "perchannel": 1310,
       "series": 168
     }
   },
-  "exclude": [],
+  "exclude": [
+    "42",
+    "43"
+  ],
   "logs_commit": "fd5810c39911c1277ced1fcb8ef183b26005f76c",
-  "n_runs": 1685,
-  "runs_digest": "c1152c8eea7c1656d2ec29cd84c5ed0079d4feb474fd20bc8080ba3ea887662c",
+  "n_runs": 1631,
+  "runs_digest": "eb149251946dc2cd8c4eeb9b363a5a6b4068894fec4c23afd68d7a4a9915da93",
   "setups": [
     "cluster",
     "multivariate",

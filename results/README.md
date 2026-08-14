@@ -31,6 +31,7 @@ markdown.
 | Path | What lives here | Tracked |
 | :--- | :--- | :--- |
 | `emfres/` | All the code. One flat package. | yes |
+| `specs/` | Declared run exclusions, with the reason for each | yes |
 | `frames/` | `runs.csv`, `cells.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
@@ -95,6 +96,15 @@ inputs change and not otherwise, so a rebuild leaves `git status` clean.
 compares it with the frozen `archive/2026-08-11_tables.md` — 498 of 498 match. `make.py tables` refuses to
 write if any section has drifted, so the CSV path and the legacy markdown
 cannot silently diverge while both exist.
+
+## Which runs count
+
+`specs/runs.yaml` declares what `extract` drops and why. It currently excludes
+the 54 cluster runs stamped seed 42 / seed 43: they are not replicate seeds of
+the canonical 69421-3 set but a different configuration — `cluster/beta` 0.05
+vs 0.3, batch 32 vs 512, `d_ff` 128 vs 256, and three more — so averaging them
+together is a mean across two different models, not a seed mean. `--no-spec`
+loads everything.
 
 ## Known gaps
 

@@ -1,0 +1,32 @@
+# Which runs enter the published numbers.
+#
+# `make.py extract` reads this. Everything under logs/ is loaded unless a rule
+# here drops it, and every drop needs a reason recorded next to it.
+
+exclude:
+  # The 54 cluster runs stamped seed 42 and seed 43 are NOT replicate seeds of
+  # the canonical 69421/69422/69423 set. They are a different configuration
+  # that happens to carry different seed numbers. Every one of the six
+  # hyperparameters below differs across the whole 159-run tree:
+  #
+  #     parameter                  seeds 42/43     seeds 69421-3
+  #     cluster/beta                      0.05               0.3
+  #     sl/batch_size                       32               512
+  #     sl/lr                            0.001    0.0001 / 1e-05
+  #     sl/d_ff                            128         256 /  32
+  #     sl/epochs                           30               100
+  #     early_stopping/patience              5                20
+  #
+  # cluster/beta is the CCM clustering temperature and sl/d_ff changes the
+  # model width (237,248 vs 280,384 parameters), so averaging the two groups
+  # is not a seed mean -- it is a mean across two different models. It
+  # inflated the reported seed stdev roughly threefold (0.0239 vs 0.0081 for
+  # DLinear) and moved every best-k: DLinear 5 -> 3, PatchTST 9 -> 8,
+  # TSMixer 7 -> 1.
+  #
+  # Dropping them restores the 105-run set that results/archive/
+  # 2026-08-11_tables.md was built from. To publish the 42/43 configuration
+  # instead, exclude the canonical seeds here rather than deleting this rule --
+  # the one thing that is never right is averaging the two together.
+  - "42"
+  - "43"
