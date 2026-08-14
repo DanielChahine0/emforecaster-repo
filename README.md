@@ -30,7 +30,7 @@ Model families available through `get_model`: PatchTST, recurrent models (LSTM/R
 ├── multivariate/           # Standalone EMF measurement-analysis CLI (+ its own README)
 ├── data/                   # Proprietary EMF measurement CSVs (see Data)
 ├── logs/                   # Offline training-run logs (per run, per seed)
-├── results/                # Generated outputs (multivariate/ from the CLI, univariate/ from training analysis)
+├── results/                # Tables, figures and the tidy CSVs behind them (see results/README.md)
 ├── pyproject.toml          # Poetry metadata, MIT license, Python >=3.11,<3.14
 ├── requirements.txt        # Fully pinned dependencies (Python 3.12 / macOS arm64)
 └── EMForecaster Paper.pdf  # Original paper (reference)
@@ -198,7 +198,7 @@ python main.py --grid --setup multivariate \
     --model DLinear --dataset ed2022 --window 336x96
 
 # Build the comparison table (adds a k column on the cluster tree)
-python results/extract_results.py --logs-root logs/cluster
+python results/make.py extract && python results/make.py tables
 ```
 
 ### Seeds and outputs
@@ -243,7 +243,7 @@ cd multivariate/src
 ```
 
 Commands are `all`, `emf-levels`, `heatmaps`, and `normalize`.
-Paths are resolved relative to the script, so the working directory does not matter: it reads `data/multivariate/processed/` and writes `results/multivariate/`.
+Paths are resolved relative to the script, so the working directory does not matter: it reads `data/multivariate/processed/` and writes `results/figures/` (override with `--outdir`).
 See `multivariate/README.md` for the full option tables and dataset labels.
 
 ## Experiment tracking and HPC

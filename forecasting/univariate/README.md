@@ -149,7 +149,7 @@ Each run writes to `logs/<exp.ablation_id>_<exp.model_id>_<exp.id>/<seed>/`:
 ## Analysis (`analysis/`)
 
 `analysis/neptune/` (`get_results.py`, `compile_results.py`, `post_hoc.py`, `stats.py`) aggregates Neptune runs.
-`analysis/general/` holds standalone plotting and stats scripts (`adf.py`, `arima.py`, `amplitudes.py`, `plot_loss_curves.py`, `bar_graph.py`, and others).
+`analysis/general/` holds standalone plotting and stats scripts (`adf.py`, `arima.py`, `amplitudes.py`, `bar_graph.py`, and others). Loss curves moved to `results/emfres/fig_curves.py`, which had been duplicated byte-for-byte here and under `forecasting/multivariate/`.
 Neptune is optional and gated on `exp.neptune` plus `NEPTUNE_API_TOKEN`.
 
 ## Directory map
