@@ -48,6 +48,10 @@ checkpoint/
 # published number and are tracked; this one is not a published number.
 results/frames/epochs.csv
 
+# Exploratory renders. Every figure path is generated from the slice being
+# plotted, so anything hand-placed belongs here and nowhere else.
+results/scratch/
+
 # Generated figures
 figures/
 emforecaster/data_analysis/figures/

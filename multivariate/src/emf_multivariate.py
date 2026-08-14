@@ -37,7 +37,15 @@ from matplotlib.colors import Normalize
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = REPO_ROOT / "data" / "multivariate" / "processed"  # input CSVs
-RESULT_DIR = REPO_ROOT / "results" / "multivariate"                # output figures
+# Figures land in the generated, git-ignored results/figures tree under the
+# names emfres.naming builds. --outdir overrides the root.
+RESULT_DIR = REPO_ROOT / "results" / "figures"
+
+
+def _slug(text):
+    """Lowercase, hyphen-joined: the results/ naming charset (rule N1)."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", str(text).strip().lower()).strip("-")
 
 # Timestamp column name in the CSVs.
 TIMESTAMP_COL = "Timestamp"
@@ -544,12 +552,12 @@ OPERATOR_TECH_PANELS = [
 
 # Output file name for each single panel.
 PANEL_FILENAMES = {
-    ("operator", "full"):    "Operators (full period)",
-    ("operator", "zoom"):    "Operators (2 week zoom)",
-    ("technology", "full"):  "Technologies (full period)",
-    ("technology", "zoom"):  "Technologies (2 week zoom)",
-    ("frequency", "full"):   "All frequencies (full period)",
-    ("frequency", "zoom"):   "All frequencies (2 week zoom)",
+    ("operator", "full"):    "operators_full",
+    ("operator", "zoom"):    "operators_zoom14d",
+    ("technology", "full"):  "technologies_full",
+    ("technology", "zoom"):  "technologies_zoom14d",
+    ("frequency", "full"):   "frequencies_full",
+    ("frequency", "zoom"):   "frequencies_zoom14d",
 }
 
 
@@ -641,14 +649,14 @@ def plot_dataset(ds: dict):
         print("  no data in the derived periods; skipping")
         return
 
-    out_dir = RESULT_DIR / "EMF levels" / ds["folder"]
+    out_dir = RESULT_DIR / "emf-levels" / _slug(ds["folder"])
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"  output: {out_dir}")
 
     build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
-                         PANELS, "Combined (operators, technologies, frequencies)")
+                         PANELS, "combined_operators-technologies-frequencies")
     build_stacked_figure(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir,
-                         OPERATOR_TECH_PANELS, "Combined (operators, technologies)")
+                         OPERATOR_TECH_PANELS, "combined_operators-technologies")
     build_separate_figures(df_full, df_zoom, freq_cols, tech_cols, op_cols, out_dir)
 
 
@@ -762,7 +770,7 @@ def generate_dataset_heatmaps(df, dataset_name, dataset_folder):
         freq_data = df[freq_cols].ffill().bfill()
         if not freq_data.empty and freq_data.notna().sum().sum() > 0:
             create_single_heatmap(f"{dataset_name} - Frequency Bands", freq_data,
-                                  dataset_folder, "Frequency bands")
+                                  dataset_folder, "frequency-bands")
         else:
             print(f"   No valid frequency data for {dataset_name}")
     else:
@@ -775,7 +783,7 @@ def generate_dataset_heatmaps(df, dataset_name, dataset_folder):
         tech_data = df[tech_cols].ffill().bfill()
         if not tech_data.empty and tech_data.notna().sum().sum() > 0:
             create_single_heatmap(f"{dataset_name} - Technology Bands", tech_data,
-                                  dataset_folder, "Technology bands", "EMF_")
+                                  dataset_folder, "technology-bands", "EMF_")
         else:
             print(f"   No valid technology data for {dataset_name}")
     else:
@@ -788,7 +796,7 @@ def generate_dataset_heatmaps(df, dataset_name, dataset_folder):
         operator_data = df[operator_cols].ffill().bfill()
         if not operator_data.empty and operator_data.notna().sum().sum() > 0:
             create_single_heatmap(f"{dataset_name} - Operators", operator_data,
-                                  dataset_folder, "Operators", "EMF_")
+                                  dataset_folder, "operators", "EMF_")
         else:
             print(f"   No valid operator data for {dataset_name}")
     else:
@@ -880,7 +888,7 @@ def create_dataset_trio_heatmap(df, dataset_name, dataset_folder):
 
     plt.subplots_adjust(left=0.05, right=0.90, top=0.95, bottom=0.15, wspace=0.2)
 
-    name = "Combined (frequency, technology, operators)"
+    name = "combined_frequency-technology-operators"
     fig.savefig(dataset_folder / f"{name}.png", dpi=300, bbox_inches="tight")
     print(f"   Saved: {name}.png")
     plt.close(fig)
@@ -976,7 +984,7 @@ def create_all_datasets_comparison_heatmap(datasets_info, output_root):
 
     plt.tight_layout()
 
-    name = "All datasets comparison"
+    name = "all-datasets_comparison"
     fig.savefig(output_root / f"{name}.png", dpi=300, bbox_inches="tight")
     print(f"   Saved: {name}.png")
     plt.close(fig)
@@ -989,7 +997,7 @@ def generate_all_heatmaps(datasets_info, output_root):
     """
     print("Generating correlation heatmaps...")
     for df, dataset_name, folder in datasets_info:
-        generate_dataset_heatmaps(df, dataset_name, output_root / folder)
+        generate_dataset_heatmaps(df, dataset_name, output_root / _slug(folder))
     create_all_datasets_comparison_heatmap(datasets_info, output_root)
     print(f"All heatmaps saved in: {output_root}")
 
@@ -1018,7 +1026,7 @@ def run_heatmaps(datasets=None):
         print("No datasets loaded; nothing to do.")
         return
 
-    out_root = RESULT_DIR / "Heatmaps"
+    out_root = RESULT_DIR / "heatmaps"
     out_root.mkdir(parents=True, exist_ok=True)
 
     generate_all_heatmaps(datasets_info, out_root)
@@ -1085,6 +1093,8 @@ def build_parser():
     # all
     p_all = sub.add_parser("all", help="Run emf-levels then heatmaps.",
                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_all.add_argument("--outdir", type=Path, default=None,
+                       help="figure root (default: results/figures)")
     p_all.add_argument("--datasets", nargs="+", metavar="LABEL", choices=labels,
                        help=f"Subset of datasets to process (default: all). "
                             f"Choices: {', '.join(labels)}.")
@@ -1106,6 +1116,8 @@ def build_parser():
     p_emf = sub.add_parser("emf-levels",
                            help="EMF level time-trend plots.",
                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_emf.add_argument("--outdir", type=Path, default=None,
+                       help="figure root (default: results/figures)")
     p_emf.add_argument("--datasets", nargs="+", metavar="LABEL", choices=labels,
                        help=f"Subset of datasets to process (default: all). "
                             f"Choices: {', '.join(labels)}.")
@@ -1126,6 +1138,8 @@ def build_parser():
     # heatmaps
     p_hm = sub.add_parser("heatmaps", help="Correlation heatmaps per dataset.",
                           formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_hm.add_argument("--outdir", type=Path, default=None,
+                       help="figure root (default: results/figures)")
     p_hm.add_argument("--datasets", nargs="+", metavar="LABEL", choices=labels,
                       help=f"Subset of datasets to process (default: all). "
                            f"Choices: {', '.join(labels)}.")
@@ -1143,9 +1157,13 @@ def build_parser():
 
 
 def main(argv=None):
+    global RESULT_DIR
     args = build_parser().parse_args(argv)
 
     global ZOOM_DAYS, REMOVE_OUTLIERS_STD, FREQ_LEGEND_MODE, FREQ_CMAP
+
+    if getattr(args, "outdir", None) is not None:
+        RESULT_DIR = args.outdir
 
     if args.command in ("emf-levels", "all"):
         if getattr(args, "zoom_days", None) is not None:

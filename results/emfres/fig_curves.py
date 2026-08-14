@@ -13,6 +13,9 @@ import argparse
 import glob
 import json
 import os
+import sys
+import pathlib
+import re
 
 import numpy as np
 import yaml
@@ -21,6 +24,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+# The run-directory convention lives with the training code; add the repo
+# root so this works whether it is run as a script or imported as emfres.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
 from forecasting.run_path import iter_run_dirs
 
 # metric -> (per-epoch train key, per-epoch val key, test scalar key, axis label)
@@ -66,12 +72,25 @@ def run_label(model, cfg):
     return f"{model}  L={cfg['L']} O={cfg['O']}  [{cfg['dataset']}]"
 
 
-def run_slug(cfg):
-    return f"{cfg['dataset']}_L{cfg['L']}_O{cfg['O']}"
+def dataset_slug(dataset):
+    """`rf_emf_det` -> `det`: the same dataset spelling frames/ uses."""
+    name = str(dataset or "unknown")
+    if name.lower().startswith("rf_emf_"):
+        name = name[len("rf_emf_"):]
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def window_slug(cfg):
+    return f"l{cfg['L']}_o{cfg['O']}"
 
 
 def out_dir(base, cfg, model=None):
-    path = os.path.join(base, str(cfg["dataset"] or "unknown_dataset"), *([model] if model else []))
+    """One directory per dataset; the model is a filename token, not a level.
+
+    The old layout nested <dataset>/<Model>/ and then repeated both in the
+    filename, so every leaf said its dataset three times.
+    """
+    path = os.path.join(base, "loss-curves", dataset_slug(cfg["dataset"]))
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -138,7 +157,7 @@ def main():
     p.add_argument("--datasets", nargs="+", default=None, help="only runs trained on these datasets")
     p.add_argument("--latest", action="store_true", help="only the most recent run per model")
     p.add_argument("--metric", choices=["loss", "mae", "both"], default="loss")
-    p.add_argument("--out", default="results/univariate/comparison")
+    p.add_argument("--out", default="results/figures")
     p.add_argument("--combined", action="store_true",
                    help="one figure per (dataset, L, O) with a subplot per model")
     p.add_argument("--logy", action="store_true")
@@ -190,18 +209,18 @@ def main():
     if args.combined:
         groups = {}
         for run in runs:
-            groups.setdefault(run_slug(run[1]), []).append(run)
+            groups.setdefault(window_slug(run[1]) + dataset_slug(run[1]["dataset"]), []).append(run)
         for slug, group in groups.items():
             cfg = group[0][1]
             save_figure(group,
                         os.path.join(out_dir(args.out, cfg),
-                                     f"loss_curves_combined_{slug}_{args.metric}.png"),
+                                     f"all-models_{window_slug(cfg)}_{args.metric}.png"),
                         suptitle=f"dataset={cfg['dataset']}  L={cfg['L']}  O={cfg['O']}")
     else:
         for model, cfg, logs in runs:
             save_figure([(model, cfg, logs)],
-                        os.path.join(out_dir(args.out, cfg, model),
-                                     f"loss_curve_{model}_{run_slug(cfg)}_{args.metric}.png"),
+                        os.path.join(out_dir(args.out, cfg),
+                                     f"{model.lower()}_{window_slug(cfg)}_{args.metric}.png"),
                         row_h=4.5)
 
 

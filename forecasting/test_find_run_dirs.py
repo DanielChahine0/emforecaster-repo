@@ -1,5 +1,7 @@
 import os
-from forecasting.multivariate.analysis.general.plot_loss_curves import find_run_dirs
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "results"))
+from emfres.fig_curves import find_run_dirs
 
 
 def _make_run(logs, rel, seeds):
