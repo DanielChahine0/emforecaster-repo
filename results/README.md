@@ -22,9 +22,9 @@ python results/emfres/fig_curves.py --logs-dir logs/univariate --combined
 python multivariate/src/emf_multivariate.py all   # emf-levels + heatmaps
 ```
 
-`extract` reads every `log.json` under `logs/` (1,685 today) and writes one row
-per run. Nothing downstream reads a log file, and nothing downstream parses
-markdown.
+`extract` reads every `log.json` under `logs/` (1,712 today, of which 1,658 are
+published — see *Which runs count*) and writes one row per run. Nothing
+downstream reads a log file, and nothing downstream parses markdown.
 
 ## Layout
 
@@ -93,9 +93,18 @@ their metrics, and the last commit that touched `logs/`. It changes when the
 inputs change and not otherwise, so a rebuild leaves `git status` clean.
 
 `make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
-compares it with the frozen `archive/2026-08-11_tables.md` — 498 of 498 match. `make.py tables` refuses to
-write if any section has drifted, so the CSV path and the legacy markdown
+compares it with the frozen `archive/2026-08-11_tables.md` — 498 of 498 match.
+`make.py tables` runs that same check before writing and refuses if any
+published value fails to reproduce, so the CSV path and the legacy markdown
 cannot silently diverge while both exist.
+
+The gate is deliberately **value-level, not text-level**. It used to diff the
+rendered markdown against the archive and refuse on any difference, which fails
+the moment a section legitimately grows: restoring the cluster lookback ladder
+added nine windows and reshaped the parameter table from one column to ten,
+changing 131 lines while leaving every published number identical. A tripwire
+that fires on correct work only teaches you to pass `--force`. Growth is now
+reported as a `NOTE`; only a changed value is fatal.
 
 ## Which runs count
 
@@ -104,14 +113,24 @@ the 54 cluster runs stamped seed 42 / seed 43: they are not replicate seeds of
 the canonical 69421-3 set but a different configuration — `cluster/beta` 0.05
 vs 0.3, batch 32 vs 512, `d_ff` 128 vs 256, and three more — so averaging them
 together is a mean across two different models, not a seed mean. `--no-spec`
-loads everything.
+loads everything. The full evidence is in `notes/ccm-hyperparameters.md` §8.
+
+Cluster therefore publishes **132** runs: the 105-run k-sweep at L336/O96, plus
+a 27-run lookback ladder restored from commit `9ff78806~1` on 2026-08-14. Only
+the `log.json` and `args.yaml` were restored — 0.7 MB of the 103 MB those runs
+originally occupied, the rest being figures and checkpoints nothing reads.
+Before that restore, `plot_L_ladder.py` drew its `cluster (k = 5)` series from a
+single surviving point per model while the legend advertised a full setup.
 
 ## Known gaps
 
 - `archive/2026-08-11_tables.md` is frozen, but it is not inert: it is what
   `make.py tables --check` and `make.py reconcile` compare against, and what
   `plot_metrics --source tables` reads. Retiring it means giving up that gate,
-  so it stays until there is something better to check against.
+  so it stays until there is something better to check against. It covers only
+  the 498 cells published on 2026-08-11; anything added since is unguarded,
+  which is the cost of checking against a snapshot rather than a second
+  implementation.
 - `frames/epochs.csv` (per-epoch losses) is opt-in behind `--epochs` and
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
 - `emfres/fig_curves.py` still walks `logs/` directly rather than reading

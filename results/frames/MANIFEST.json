@@ -1,9 +1,9 @@
 {
   "counts": {
-    "cells": 249,
-    "runs": 1631,
+    "cells": 276,
+    "runs": 1658,
     "runs_by_setup": {
-      "cluster": 105,
+      "cluster": 132,
       "multivariate": 48,
       "perchannel": 1310,
       "series": 168
@@ -14,8 +14,8 @@
     "43"
   ],
   "logs_commit": "fd5810c39911c1277ced1fcb8ef183b26005f76c",
-  "n_runs": 1631,
-  "runs_digest": "eb149251946dc2cd8c4eeb9b363a5a6b4068894fec4c23afd68d7a4a9915da93",
+  "n_runs": 1658,
+  "runs_digest": "4c4a06817cfdfaa35491cc2cec1f7fdf4aaaa928ccddaa493663520afcd8a771",
   "setups": [
     "cluster",
     "multivariate",

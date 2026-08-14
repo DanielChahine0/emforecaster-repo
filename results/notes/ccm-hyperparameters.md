@@ -1,7 +1,9 @@
 # Clustering (CCM) runs — exact hyperparameters and where they live
 
-Generated 2026-08-11 from the repo source and from the 105 frozen `args.yaml`
-files under `logs/cluster/`.
+Generated 2026-08-11 from the repo source and from the frozen `args.yaml` files
+under `logs/cluster/`. Revised 2026-08-14: the lookback ladder was restored (§6)
+and the excluded `beta = 0.05` group documented (§8), taking the published set
+from 105 runs to 132.
 
 The cluster grid replaces the network with CCM ("From Similarity to Superiority:
 Channel Clustering for Time Series Forecasting", NeurIPS 2024), imported verbatim
@@ -138,7 +140,7 @@ job config's 512 with `accum_steps` 1 (`grid.py:52-56`).
 | --- | --- | --- |
 | `cluster.enabled` | `True` | swaps the whole network for CCM |
 | `cluster.k_clusters` | 1…9 | swept; the value in the log path (`k1`…`k9`) |
-| `cluster.beta` | `0.3` | weight on the auxiliary similarity loss; upstream's default; **identical (0.3) in all 105 runs — beta was never swept** |
+| `cluster.beta` | `0.3` | weight on the auxiliary similarity loss; upstream's default; **0.3 in all 132 published runs.** A second group of 54 runs under `logs/cluster/` uses `beta = 0.05` and is excluded — see §8. Within the published set beta was never swept |
 
 Objective (`models.py:450-480`, `exp.py:495`/`:510`):
 
@@ -271,7 +273,7 @@ run exists on disk.**
 
 ---
 
-## 5. Training / data / conformal settings (identical across all 105 runs)
+## 5. Training / data / conformal settings (identical across all 132 published runs)
 
 ### Optimisation
 
@@ -311,13 +313,21 @@ run exists on disk.**
 ### Seeds
 
 Canonical `69421`; ED2022 DLinear and TSMixer additionally at `69422` and `69423`.
+The lookback ladder is `69421` only. Seeds `42` and `43` are **not** part of this
+set and are not seeds of it — see §8.
 
 ---
 
 ## 6. Runs on disk
 
-105 runs, all at `L336_O96`. Trained 2026-08-06 (59 runs, all nine model × dataset
-pairs) and 2026-08-10 (46 runs, ED2022 only: the `69422`/`69423` seeds plus k = 7, 8).
+**132 runs** that enter the published numbers: the 105-run k-sweep at `L336_O96`
+below, plus the 27-run lookback ladder restored on 2026-08-14 (see the end of this
+section). A further 54 runs sit under `logs/cluster/` and are **excluded** — see
+§8.
+
+The k-sweep: 105 runs, all at `L336_O96`. Trained 2026-08-06 (59 runs, all nine
+model × dataset pairs) and 2026-08-10 (46 runs, ED2022 only: the `69422`/`69423`
+seeds plus k = 7, 8).
 
 | Model | Dataset | k | Seeds | Runs |
 | --- | --- | --- | --- | --- |
@@ -335,12 +345,26 @@ Note the sweep on disk (k = 1…9, one window) is **not** the `k_values = [2, 3,
 × 4 windows declared in `GRIDS["cluster"]`; it was run with explicit `--k` values on
 the 336x96 window. k = 7 and k = 8 exist for ED2022 only.
 
-A second, separate cluster sweep exists **in git but not in the working tree**: the
-2026-08-10 L-ladder (DLinear/PatchTST/TSMixer, ED2022, k = 5, seed 69421,
-L = 48, 96, 144, 192, 240, 288, 384, 432, 480 with O = 96; see
-`logs/grid_report_cluster.json`). Those 27 run directories are currently deleted on
-disk (uncommitted deletions); `git checkout -- logs/cluster` restores them. Their
-hyperparameters are identical to the tables above except for `data.seq_len`.
+### The lookback ladder
+
+A second cluster sweep: the 2026-08-10 L-ladder — DLinear/PatchTST/TSMixer,
+ED2022, k = 5, seed 69421, L = 48, 96, 144, 192, 240, 288, 384, 432, 480 with
+O = 96, 27 runs. With the three `L336` k = 5 cells from the sweep above it makes a
+complete ten-point ladder on the same axis as the multivariate and per-channel
+ladders, which is what `plot_L_ladder.py` overlays.
+
+Commit `9ff78806` ("removed all the other L and O in clsuetering") deleted these
+from the working tree. On **2026-08-14** the 54 `log.json` / `args.yaml` files were
+restored from `9ff78806~1` — text only, 0.7 MB; the 60 MB of PNGs and 42 MB of
+checkpoints that shipped alongside them were left in history, since nothing
+downstream reads them. Their hyperparameters are identical to the tables above
+except for `data.seq_len`.
+
+> Earlier revisions of this note said `git checkout -- logs/cluster` restores
+> them. It does not: the deletion was **committed**, so that command is a no-op
+> here. The working form names the commit —
+> `git checkout 9ff78806~1 -- logs/cluster`. `logs/grid_report_cluster.json`, also
+> cited by earlier revisions, was deleted too and exists only in history.
 
 ---
 
@@ -374,3 +398,39 @@ no-clustering baseline instead.
 cells from commits `2ebc7f08` / `3d2de887` (deleted in `f24cf7a2`) came from that
 older head and are not resumable against the current config — their
 `cluster_method` / `cluster_seed` / `cluster_assignment` fields no longer exist.
+
+---
+
+## 8. The excluded `beta = 0.05` group — read this before quoting any cluster number
+
+`logs/cluster/` holds **two different configurations**, distinguishable only by the
+seed number in the run path. 132 runs are published; 54 are excluded by
+`results/specs/runs.yaml`.
+
+| parameter | published (`69421`/`69422`/`69423`) | excluded (`42`/`43`) |
+| --- | --- | --- |
+| `cluster.beta` | **0.3** | **0.05** |
+| `sl.batch_size` | 512 | 32 |
+| `sl.lr` | 1e-5 / 1e-4 | 1e-3 |
+| `sl.d_ff` | 256 / 32 | 128 |
+| `sl.epochs` | 100 | 30 |
+| `early_stopping.patience` | 20 | 5 |
+
+Six parameters differ across the whole tree, `beta` and `d_ff` among them — `d_ff`
+sets the cluster-assigner embedding dim for DLinear and TSMixer (§4), so the two
+groups are not even the same width: **237,248 vs 280,384 parameters** for DLinear
+at k = 3. Averaging them is a mean over two models, not a mean over seeds.
+
+Doing so inflated the seed stdev roughly threefold (DLinear 0.0239 vs 0.0081) and
+moved every best-k: DLinear 5 → 3, PatchTST 9 → 8, TSMixer 7 → 1.
+
+**The structural defect.** A cluster run's path is
+`<model>/<dataset>/L<L>_O<O>_cp/k<k>/<seed>/` — there is no component for the
+configuration. Two experiments therefore interleave in one tree with nothing but
+`42` vs `69421` to tell them apart, and every tool that globbed the tree silently
+averaged across them. If the `beta = 0.05` arm is ever revived, give it its own
+root rather than another seed number.
+
+To publish that arm instead, exclude the canonical seeds in `specs/runs.yaml`
+rather than deleting the rule. The one thing that is never right is averaging the
+two together.
