@@ -26,4 +26,10 @@ Each row compares a model against itself with CCM at that $k$; **bold** = the lo
 - PatchTST: best at $k$ = 9, MAE 0.3494 vs. plain 0.3868 (-0.0373 (-9.65%)), single seed per cell.
 - TSMixer: best at $k$ = 7, MAE 0.3777 vs. plain 0.3859 (-0.0082 (-2.11%)), mean seed stdev over the sweep 0.0019.
 
-$k$ = 1 is one cluster over all channels, but its run still carries the CCM module's parameters, so it is not the same model as the plain column.
+**Best $k$ per model**, against $k$ = 1 -- the same architecture with clustering switched off. This is the comparison that isolates clustering; the one above also carries the change of backbone.
+
+- DLinear: best at $k$ = 5, MAE 0.4000 vs. $k$ = 1 0.4194 (-0.0195 (-4.64%)); 8 of 8 clustered cells beat $k$ = 1.
+- PatchTST: best at $k$ = 9, MAE 0.3494 vs. $k$ = 1 0.3499 (-0.0005 (-0.14%)); 4 of 8 clustered cells beat $k$ = 1.
+- TSMixer: best at $k$ = 7, MAE 0.3777 vs. $k$ = 1 0.3869 (-0.0092 (-2.38%)); 8 of 8 clustered cells beat $k$ = 1.
+
+$k$ = 1 is one cluster over all channels, but its run still carries the CCM module's parameters, so it is not the same model as the plain column. Where the two baselines disagree, the difference between them is the backbone swap, not the clustering.

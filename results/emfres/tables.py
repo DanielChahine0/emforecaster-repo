@@ -262,7 +262,39 @@ def render_ccm_sweep(cells_csv: Path, *, dataset="ed2022", seq_len=336, pred_len
         out.append(f"- {m}: best at $k$ = {k}, {name} {cell[0]:.4f} vs. plain "
                    f"{_fmt_value(base)} ({delta}){noise}.")
 
+    # The plain column answers "CCM or not", which conflates two changes: the
+    # clustering AND the swap to upstream's backbone. k = 1 is the same
+    # architecture with the clustering switched off (sinkhorn returns all-ones,
+    # the head collapses to one shared linear, the similarity loss loses its
+    # gradient), so it is the only baseline that isolates clustering alone.
+    # Reporting it is not optional decoration: against plain, DLinear reads
+    # +6.06% (clustering hurts); against k = 1 the sign flips to -4.64%. What
+    # hurts DLinear is upstream's backbone -- decomposition kernel 25 vs the
+    # repo's 3 -- not the clustering. See notes/ccm-hyperparameters.md §7(d).
+    out += ["", "**Best $k$ per model**, against $k$ = 1 -- the same architecture with "
+                "clustering switched off. This is the comparison that isolates "
+                "clustering; the one above also carries the change of backbone.", ""]
+
+    for m in models:
+        k, one = best_k[m], ccm.get((m, 1))
+        if k is None or k == 1 or not one or one[0] is None:
+            out.append(f"- {m}: no $k$ = 1 cell to compare against."
+                       if k is None or not one or one[0] is None
+                       else f"- {m}: best $k$ is 1 -- clustering never beats not clustering.")
+            continue
+        cell = ccm[(m, k)]
+        d = cell[0] - one[0]
+        beaten = sum(1 for kk in ks if kk != 1 and (m, kk) in ccm
+                     and ccm[(m, kk)][0] is not None and ccm[(m, kk)][0] < one[0])
+        total = sum(1 for kk in ks if kk != 1 and (m, kk) in ccm
+                    and ccm[(m, kk)][0] is not None)
+        out.append(f"- {m}: best at $k$ = {k}, {name} {cell[0]:.4f} vs. $k$ = 1 "
+                   f"{one[0]:.4f} ({d:+.4f} ({d / one[0] * 100:+.2f}%)); "
+                   f"{beaten} of {total} clustered cells beat $k$ = 1.")
+
     out += ["", "$k$ = 1 is one cluster over all channels, but its run still carries the "
-                "CCM module's parameters, so it is not the same model as the plain column.",
+                "CCM module's parameters, so it is not the same model as the plain column. "
+                "Where the two baselines disagree, the difference between them is the "
+                "backbone swap, not the clustering.",
             ""]
     return "\n".join(out)
