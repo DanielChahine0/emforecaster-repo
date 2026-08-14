@@ -37,6 +37,7 @@ from matplotlib.lines import Line2D
 
 import plot_metrics as pm
 from emfres.chrome import figure_header, footnote, shared_legend
+from emfres.naming import artifact_path
 from emfres.vocab import parse_duration
 
 REPO = Path(__file__).resolve().parent.parent
@@ -255,7 +256,11 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
         "the lookback-336 cells were timed under different GPU load",
         style, y=0.008,
     )
-    for path in pm.save(fig, outdir, f"{DATASET}_O{HORIZON}_L_ladder_by_model", formats):
+    directory, base = artifact_path(outdir, "l-ladder", dataset=DATASET,
+                                    configs=[(L, HORIZON) for L in LOOKBACKS],
+                                    metric="mse", view="facet-model")
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in pm.save(fig, directory, base, formats):
         print(f"  wrote {path.relative_to(REPO)}")
 
 
@@ -308,9 +313,13 @@ def main() -> None:
         style,
     )
 
-    outdir = REPO / "results" / "figures" / "L ladder"
+    outdir = REPO / "results" / "figures"
     outdir.mkdir(parents=True, exist_ok=True)
-    for path in pm.save(fig, outdir, f"{DATASET}_O{HORIZON}_L_ladder", formats):
+    directory, base = artifact_path(outdir, "l-ladder", dataset=DATASET,
+                                    configs=[(L, HORIZON) for L in LOOKBACKS],
+                                    view="strip")
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in pm.save(fig, directory, base, formats):
         print(f"  wrote {path.relative_to(REPO)}")
 
     by_model_figure(style, formats, outdir)

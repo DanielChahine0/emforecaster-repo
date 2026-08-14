@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Turn the result tables in ``tables.md`` into MSE / MAE / training-time figures.
+"""Turn ``frames/cells.csv`` into MSE / MAE / training-time figures.
 
-Each figure puts the models along the x-axis (ordered by year of publication) and
-one line per dataset, so a panel reads as "how this metric moves across model
-generations, per dataset". Three panels - MSE, MAE, total training time - are
-emitted both as one combined strip and as standalone single figures, twice:
-``figures/dataset split/`` keeps datasets as the lines with models along the
-x-axis, and ``figures/model split/`` flips the roles. Each split also gets
-``mv-vs-perchannel_mae``, one panel overlaying both setups' MAE (multivariate
-solid over per-channel dashed). The clustering study (k-grouped channels)
-instead puts the cluster count k on the x-axis and lands in
-``figures/cluster/``.
+Each figure puts the models along the x-axis (ordered by year of publication)
+and one line per dataset, so a panel reads as "how this metric moves across
+model generations, per dataset". Three panels - MSE, MAE, total training time -
+are emitted both as one combined strip and as standalone single figures, twice:
+``figures/by-dataset/`` keeps datasets as the lines with models along the
+x-axis, and ``figures/by-model/`` flips the roles. Each also gets an
+``figures/overlay/`` panel putting both setups' MAE together (multivariate
+solid over per-channel dashed). The clustering study puts the cluster count k
+on the x-axis and lands in ``figures/cluster-sweep/``.
+
+Paths are generated, never typed: emfres.naming builds every one of them from
+the slice actually plotted, so the window is always in the filename. A pooled
+run writes ``l48-480x48_o96_mse.png`` where ``--grid 336/96`` writes
+``l336_o96_mse.png``, side by side in the same directory. This replaces a
+hand-typed ``--outdir``, under which the two were indistinguishable.
 
 Usage
 -----
@@ -20,9 +25,11 @@ Usage
     python3 plot_metrics.py --dataset ED2022         # keep one dataset (repeatable)
     python3 plot_metrics.py --mute DET               # gray one dataset as reference
     python3 plot_metrics.py --style paper            # IEEEtran column sizing
+    python3 plot_metrics.py --source tables          # legacy: read tables.md
     python3 plot_metrics.py --list                   # show what was parsed
 
-The tables are the single source of truth: nothing is duplicated in this file.
+frames/cells.csv is the single source of truth; rebuild it with
+``python results/make.py extract``.
 """
 
 from __future__ import annotations
@@ -66,6 +73,7 @@ from emfres.chrome import (  # noqa: E402
 from emfres.panels import (  # noqa: E402
     Panel, draw_panel, draw_tradeoff_panel,
 )
+from emfres.naming import artifact_path, STEM_SLUGS  # noqa: E402
 
 
 
@@ -384,8 +392,12 @@ def build_figures(
     highlight: str | None,
     muted: set[str],
     label_points: bool,
-    stem: str,
+    family: str,
+    group: str | None,
     split: str,
+    subject: str | None = None,
+    dataset_token: str | None = None,
+    k_token=None,
     title_text: str | None,
     subtitle_text: str | None,
 ) -> list[Path]:
@@ -499,7 +511,12 @@ def build_figures(
         text.set_color(INK_PRIMARY)
 
     add_x_label(fig, axes, style, x_title)
-    written += save(fig, outdir, stem, formats)
+    directory, base = artifact_path(
+        outdir, family, group=group, subject=subject,
+        dataset=dataset_token, configs=first.configs, k=k_token,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    written += save(fig, directory, f"{base}_strip", formats)
 
     # --- 2) One standalone figure per metric --------------------------------- #
     for panel in panels:
@@ -517,8 +534,13 @@ def build_figures(
         if any(v is not None for v in baselines.get(panel.key, [])):
             draw_no_cluster_baselines(ax, panel, baselines[panel.key], style)
         add_x_label(fig, [ax], style, x_title)
-        slug = panel.key.lower().replace(" ", "-")
-        written += save(fig, outdir, f"{stem}_{slug}", formats)
+        directory, base = artifact_path(
+            outdir, family, group=group, subject=subject,
+            dataset=dataset_token, configs=panel.configs, k=k_token,
+            metric=panel.key,
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        written += save(fig, directory, base, formats)
 
     return written
 
@@ -682,7 +704,11 @@ def build_overlay_figure(
         fig.text(0.985, 0.008, "ARIMA is channel-independent - both setups coincide",
                  ha="right", va="bottom", fontsize=style.footnote, color=INK_MUTED)
     add_x_label(fig, [ax], style, x_title)
-    return save(fig, outdir, "mv-vs-perchannel_mae", formats)
+    directory, base = artifact_path(outdir, "overlay", group=split,
+                                    subject="mv-vs-perchannel", configs=drawn,
+                                    metric="MAE")
+    directory.mkdir(parents=True, exist_ok=True)
+    return save(fig, directory, base, formats)
 
 
 # --------------------------------------------------------------------------- #
@@ -724,7 +750,7 @@ def build_tradeoff_figures(
     grid: str | None,
     formats: list[str],
     style: Style,
-    stem: str,
+    group: str | None,
     title_text: str | None,
     subtitle_text: str | None,
 ) -> list[Path]:
@@ -756,7 +782,10 @@ def build_tradeoff_figures(
     fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
              ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
     add_x_label(fig, axes, style, f"Training time ({TIME_UNIT_ABBREV.get(unit, unit)})")
-    written += save(fig, outdir, stem, formats)
+    directory, base = artifact_path(outdir, "tradeoff", group=group,
+                                    configs=panels[0][3])
+    directory.mkdir(parents=True, exist_ok=True)
+    written += save(fig, directory, f"{base}_strip", formats)
 
     # --- 2) One standalone figure per metric --------------------------------- #
     for key, long_title, points, configs in panels:
@@ -766,7 +795,10 @@ def build_tradeoff_figures(
             ax, key, long_title, subtitle_text or grid_line(configs), points, style
         )
         add_x_label(fig, [ax], style, f"Training time ({TIME_UNIT_ABBREV.get(unit, unit)})")
-        written += save(fig, outdir, f"{stem}_{key.lower()}-vs-tt", formats)
+        directory, base = artifact_path(outdir, "tradeoff", group=group,
+                                        configs=configs, metric=f"{key}-vs-tt")
+        directory.mkdir(parents=True, exist_ok=True)
+        written += save(fig, directory, base, formats)
 
     return written
 
@@ -887,12 +919,11 @@ def main(argv: list[str] | None = None) -> int:
 
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
 
-    for split in ("dataset split", "model split"):
-        outdir = args.outdir / split
-        outdir.mkdir(parents=True, exist_ok=True)
+    for split, family in (("dataset split", "by-dataset"), ("model split", "by-model")):
+        outdir = args.outdir
         for section in sections:
             stem = next(k for k, v in SECTION_ALIASES.items() if v == section)
-            print(f"{split} / {section}:")
+            print(f"{family} / {section}:")
             for path in build_figures(
                 records,
                 section,
@@ -903,18 +934,19 @@ def main(argv: list[str] | None = None) -> int:
                 highlight=args.highlight or None,
                 muted=set(args.mute),
                 label_points=args.labels,
-                stem=stem,
+                family=family,
+                group=STEM_SLUGS.get(stem, stem),
                 split=split,
                 title_text=args.title,
                 subtitle_text=args.subtitle,
             ):
                 print(f"  wrote {path}")
         if args.section in ("all", "multivariate", "perchannel"):
-            print(f"{split} / multivariate vs per-channel:")
+            print(f"overlay / {family}:")
             for path in build_overlay_figure(
                 records,
                 outdir=outdir,
-                split=split,
+                split=family,
                 grid=args.grid,
                 formats=formats,
                 style=style,
@@ -923,11 +955,10 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 print(f"  wrote {path}")
 
-    outdir = args.outdir / "time tradeoff"
-    outdir.mkdir(parents=True, exist_ok=True)
+    outdir = args.outdir
     for section in sections:
         stem = next(k for k, v in SECTION_ALIASES.items() if v == section)
-        print(f"time tradeoff / {section}:")
+        print(f"tradeoff / {section}:")
         for path in build_tradeoff_figures(
             records,
             section,
@@ -935,7 +966,7 @@ def main(argv: list[str] | None = None) -> int:
             grid=args.grid,
             formats=formats,
             style=style,
-            stem=stem,
+            group=STEM_SLUGS.get(stem, stem),
             title_text=args.title,
             subtitle_text=args.subtitle,
         ):
@@ -948,20 +979,25 @@ def main(argv: list[str] | None = None) -> int:
             r for r in records
             if short_dataset(r.dataset).lower() == CLUSTER_DEFAULT_DATASET.lower()
         ]
-        outdir = args.outdir / "cluster"
-        outdir.mkdir(parents=True, exist_ok=True)
-        print(f"cluster / {CLUSTER_SECTION}:")
+        # One dataset per cluster figure, so the dataset is a filename token
+        # rather than a directory -- and naming it is what stops a bare and a
+        # --dataset run writing the same bytes to two different places.
+        cluster_ds = short_dataset(cluster_records[0].dataset) if cluster_records else None
+        print(f"cluster-sweep / {CLUSTER_SECTION}:")
         for path in build_figures(
             cluster_records,
             CLUSTER_SECTION,
-            outdir=outdir,
+            outdir=args.outdir,
             grid=args.grid,
             formats=formats,
             style=style,
             highlight=args.highlight or None,
             muted=set(args.mute),
             label_points=args.labels,
-            stem="cluster",
+            family="cluster-sweep",
+            group=None,
+            dataset_token=cluster_ds,
+            k_token="all",
             split="cluster",
             title_text=args.title,
             subtitle_text=args.subtitle,

@@ -42,6 +42,7 @@ from matplotlib.ticker import FixedLocator, FuncFormatter
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plot_metrics as pm
 from emfres.chrome import figure_header, footnote, shared_legend
+from emfres.naming import artifact_path
 
 HERE = Path(__file__).resolve().parent
 SECTION = "Multivariate"
@@ -237,7 +238,11 @@ def complexity_figure(models, params, time_series, style, formats, outdir) -> li
         "parameter counts: first logged value per model (channel counts differ across datasets)",
         style,
     )
-    return pm.save(fig, outdir, "multivariate_complexity", formats)
+    directory, base = artifact_path(outdir, "complexity", subject="multivariate",
+                                    configs=[pm.parse_grid(GRID)],
+                                    metric="params-vs-tt")
+    directory.mkdir(parents=True, exist_ok=True)
+    return pm.save(fig, directory, base, formats)
 
 
 # --------------------------------------------------------------------------- #
@@ -366,7 +371,11 @@ def bubble_figure(models, params, tvals, mvals, datasets, style, formats, outdir
         "datasets averaged · smallest bubbles floored for visibility",
         ha="right", va="bottom", fontsize=style.footnote, color=pm.INK_MUTED,
     )
-    return pm.save(fig, outdir, "multivariate_mae-vs-tt_params", formats)
+    directory, base = artifact_path(outdir, "complexity", subject="multivariate",
+                                    configs=[pm.parse_grid(GRID)],
+                                    metric="mae-vs-tt", view="size-params")
+    directory.mkdir(parents=True, exist_ok=True)
+    return pm.save(fig, directory, base, formats)
 
 
 # --------------------------------------------------------------------------- #
@@ -377,7 +386,7 @@ def bubble_figure(models, params, tvals, mvals, datasets, style, formats, outdir
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--frames", type=Path, default=HERE / "frames" / "cells.csv")
-    parser.add_argument("--outdir", type=Path, default=HERE / "figures" / "complexity")
+    parser.add_argument("--outdir", type=Path, default=HERE / "figures")
     parser.add_argument("--style", choices=sorted(pm.STYLES), default="slide")
     parser.add_argument("--formats", default="png", help="comma-separated output formats")
     args = parser.parse_args()

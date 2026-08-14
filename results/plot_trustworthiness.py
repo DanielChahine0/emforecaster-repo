@@ -43,6 +43,7 @@ from matplotlib.ticker import FixedLocator, FuncFormatter
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plot_metrics as pm
 from emfres.chrome import figure_header, footnote, shared_legend
+from emfres.naming import artifact_path
 
 HERE = Path(__file__).resolve().parent
 SECTION = "Multivariate"
@@ -283,7 +284,7 @@ def main() -> int:
         for _, key, long_title, _, _, _ in PANEL_SPECS
     }
 
-    outdir = HERE / "figures" / "trustworthiness"
+    outdir = HERE / "figures"
     outdir.mkdir(parents=True, exist_ok=True)
 
     subhead = pm.grid_line(panels["Coverage"].configs)
@@ -304,11 +305,14 @@ def main() -> int:
     shared_legend(fig, pm.dot_handles(handles, style), style)
     pm.add_x_label(fig, axes, style, "Model")
     footnote(fig, FOOTNOTE, style, y=0.008)
-    for path in pm.save(fig, outdir, "multivariate_trustworthiness", formats):
+    directory, base = artifact_path(outdir, "trustworthiness", group="multivariate",
+                                    configs=[pm.parse_grid(GRID)], view="strip")
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in pm.save(fig, directory, base, formats):
         print(f"  wrote {path}")
 
     # --- 2) One standalone figure per panel ----------------------------------- #
-    for stem, key, long_title, ylim, target, ref in PANEL_SPECS:
+    for _stem, key, long_title, ylim, target, ref in PANEL_SPECS:
         fig, ax = plt.subplots(figsize=style.single_size)
         fig.subplots_adjust(left=0.125, right=0.965, top=0.84, bottom=0.26)
         draw_trust_panel(
@@ -317,7 +321,11 @@ def main() -> int:
             ylim=ylim, tick_target=target, ref_line=ref, show_legend=True,
         )
         pm.add_x_label(fig, [ax], style, "Model")
-        for path in pm.save(fig, outdir, stem, formats):
+        directory, base = artifact_path(outdir, "trustworthiness",
+                                        group="multivariate",
+                                        configs=[pm.parse_grid(GRID)], metric=key)
+        directory.mkdir(parents=True, exist_ok=True)
+        for path in pm.save(fig, directory, base, formats):
             print(f"  wrote {path}")
 
     return 0
