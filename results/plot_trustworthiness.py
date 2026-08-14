@@ -87,14 +87,17 @@ EXPECTED = {
 }
 
 
-def parse_trust_tables(tables: Path) -> list[pm.Record]:
-    """Reuse pm.parse_tables with the conformal subsections swapped in."""
-    saved = pm.METRICS
-    pm.METRICS = TRUST_METRICS
-    try:
-        return pm.parse_tables(tables)
-    finally:
-        pm.METRICS = saved
+def load_trust_records(frames: Path) -> list[pm.Record]:
+    """The three conformal metrics, read straight from frames/cells.csv.
+
+    This used to swap pm.METRICS for TRUST_METRICS and re-parse tables.md --
+    a monkeypatch whose regexes keyed on the auto-generated 3.1/3.2/3.3
+    numbering, so reordering one table silently pointed it at another
+    section's subsections. The EXPECTED spot-checks below existed to catch
+    exactly that; they now guard a lookup that cannot drift.
+    """
+    from emfres.records import TRUST_COLUMNS, records_from_cells
+    return records_from_cells(frames, HERE, metrics=TRUST_COLUMNS)
 
 
 def build_panel(records, key: str, long_title: str) -> pm.Panel:
@@ -110,10 +113,14 @@ def build_panel(records, key: str, long_title: str) -> pm.Panel:
         if metric != key:
             continue
         row = dict(zip(x_labels, dict(series)[dataset]))
-        if not math.isclose(row[model], expected, abs_tol=1e-9):
+        # The constants were read off the rendered tables, so each asserts
+        # only as many decimals as it is written to. Comparing tighter than
+        # that would just be re-asserting matplotlib's float repr.
+        places = len(str(expected).split(".")[1]) if "." in str(expected) else 0
+        if round(row[model], places) != expected:
             sys.exit(
-                f"parser cross-check failed: {metric} / {dataset} / {model} "
-                f"= {row[model]}, expected {expected}"
+                f"cross-check failed: {metric} / {dataset} / {model} "
+                f"= {row[model]:.{places}f}, expected {expected}"
             )
     return pm.Panel(key, long_title, False, x_labels, series, configs)
 
@@ -259,7 +266,7 @@ FOOTNOTE = "split-conformal, alpha = 0.1 · joint coverage is per-step (uncorrec
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tables", type=Path, default=HERE / "tables.md")
+    parser.add_argument("--frames", type=Path, default=HERE / "frames" / "cells.csv")
     parser.add_argument("--style", choices=sorted(pm.STYLES), default="slide")
     parser.add_argument("--format", action="append", dest="formats",
                         help="png (default), pdf, svg; repeatable")
@@ -270,7 +277,7 @@ def main() -> int:
 
     plt.rcParams.update({**pm.rc_fonts(), "font.size": style.tick})
 
-    records = parse_trust_tables(args.tables)
+    records = load_trust_records(args.frames)
     panels = {
         key: build_panel(records, key, long_title)
         for _, key, long_title, _, _, _ in PANEL_SPECS

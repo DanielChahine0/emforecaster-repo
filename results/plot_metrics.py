@@ -779,7 +779,12 @@ def build_tradeoff_figures(
 def main(argv: list[str] | None = None) -> int:
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tables", type=Path, default=here / "tables.md")
+    parser.add_argument("--frames", type=Path, default=here / "frames" / "cells.csv",
+                        help="aggregated cells to plot (default: frames/cells.csv)")
+    parser.add_argument("--tables", type=Path, default=here / "tables.md",
+                        help="legacy markdown source; only used with --source tables")
+    parser.add_argument("--source", choices=["frames", "tables"], default="frames",
+                        help="where the numbers come from (default: frames)")
     parser.add_argument("--outdir", type=Path, default=here / "figures")
     parser.add_argument(
         "--section", default="all", choices=["all", *SECTION_ALIASES, "cluster"],
@@ -815,7 +820,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", action="store_true", help="show what was parsed and exit")
     args = parser.parse_args(argv)
 
-    if not args.tables.exists():
+    if args.source == "frames" and not args.frames.exists():
+        parser.error(f"frames not found: {args.frames} -- run `python results/make.py extract`")
+    if args.source == "tables" and not args.tables.exists():
         parser.error(f"tables file not found: {args.tables}")
 
     if args.grid:
@@ -824,9 +831,15 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             parser.error(str(exc))
 
-    records = parse_tables(args.tables)
+    if args.source == "frames":
+        from emfres.records import records_from_cells
+        records = records_from_cells(args.frames, here)
+        where = args.frames
+    else:
+        records = parse_tables(args.tables)
+        where = args.tables
     if not records:
-        parser.error(f"no metric tables found in {args.tables}")
+        parser.error(f"no metric records found in {where}")
 
     if args.dataset:
         wanted = {name.lower() for name in args.dataset}

@@ -90,53 +90,26 @@ def human_count(n: float) -> str:
     return f"{n / 1e3:.1f}k"
 
 
-def parse_params(path: Path) -> dict[str, float]:
-    """The 4.1 trainable-weights table of the Multivariate section.
+def params_from_records(records) -> dict[str, float]:
+    """Trainable-weight counts, keyed by short model name.
 
-    Its shape (``Model | L48/O96 | ... | L480/O96``) differs from the metric
-    tables, so plot_metrics' parser skips it; this walks the same file and
-    keeps only the L336/O96 column, keyed by short model name. ARIMA has no
-    row - it is not gradient-trained - and simply stays absent.
+    This replaces a 45-line second copy of the table walker that existed only
+    because the 4.1 parameters table has a different shape (``Model |
+    L48/O96 | ...``) from the metric tables, so plot_metrics' parser skipped
+    it. Read from frames/cells.csv the shape difference simply does not
+    arise. ARIMA has no count -- it is not gradient-trained -- and stays
+    absent, which verify() asserts.
     """
-    params: dict[str, float] = {}
-    in_section = False
-    in_table = False
-    header: list[str] | None = None
-
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.rstrip()
-        if line.startswith("# "):
-            in_section = pm.clean_cell(line[2:]) == SECTION
-            in_table, header = False, None
+    out: dict[str, float] = {}
+    lookback, horizon = pm.parse_grid(GRID)
+    for r in records:
+        if (r.metric != "Parameters" or r.section != SECTION
+                or r.lookback != lookback or r.horizon != horizon):
             continue
-        if not in_section:
+        if math.isnan(r.value):
             continue
-        if line.startswith("### "):
-            subsection = pm.clean_cell(line[4:]).replace("·", "").replace("  ", " ")
-            in_table = subsection.startswith("4.1")
-            header = None
-            continue
-        if line.startswith("## "):
-            in_table, header = False, None
-            continue
-        if not line.startswith("|"):
-            header = None
-            continue
-        if not in_table:
-            continue
-        cells = pm.split_row(line)
-        if set("".join(cells)) <= set("-: "):  # the |---|---| separator row
-            continue
-        if header is None:
-            header = cells
-            continue
-        if header[0] != "Model" or PARAMS_COLUMN not in header:
-            continue
-        value = pm.parse_value(cells[header.index(PARAMS_COLUMN)])
-        if np.isfinite(value):
-            params[pm.short_model(cells[0])] = value
-    return params
-
+        out.setdefault(pm.short_model(r.model), r.value)
+    return out
 
 def cell(values: dict[str, dict[str, float]], dataset: str, model: str) -> float:
     """Look one (dataset, model) cell up by short names in an aggregate dict."""
@@ -157,16 +130,20 @@ def verify(params, tvals, mvals) -> None:
             problems.append(f"params[{model}] = {got!r}, expected {expected}")
     if "ARIMA" in params:
         problems.append(f"params[ARIMA] = {params['ARIMA']!r}, expected absent")
+    # The time and MAE constants were read off the rendered tables, which
+    # round to the second and to 4 dp respectively. Assert at that precision:
+    # the frames carry more, and demanding an exact match would only be
+    # re-asserting the rounding that used to be applied on the way in.
     for (dataset, model), expected in CHECK_TIME_S.items():
         got = cell(tvals, dataset, model)
-        if not math.isclose(got, expected, rel_tol=1e-6):
-            problems.append(f"time[{dataset}, {model}] = {got!r}s, expected {expected}s")
+        if round(got) != expected:
+            problems.append(f"time[{dataset}, {model}] = {got:.1f}s, expected {expected}s")
     for (dataset, model), expected in CHECK_MAE.items():
         got = cell(mvals, dataset, model)
-        if not math.isclose(got, expected, rel_tol=1e-6):
-            problems.append(f"MAE[{dataset}, {model}] = {got!r}, expected {expected}")
+        if round(got, 4) != expected:
+            problems.append(f"MAE[{dataset}, {model}] = {got:.4f}, expected {expected}")
     if problems:
-        raise SystemExit("parsed values disagree with tables.md:\n  " + "\n  ".join(problems))
+        raise SystemExit("values disagree with the spot checks:\n  " + "\n  ".join(problems))
 
 
 # --------------------------------------------------------------------------- #
@@ -399,20 +376,21 @@ def bubble_figure(models, params, tvals, mvals, datasets, style, formats, outdir
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tables", type=Path, default=HERE / "tables.md")
+    parser.add_argument("--frames", type=Path, default=HERE / "frames" / "cells.csv")
     parser.add_argument("--outdir", type=Path, default=HERE / "figures" / "complexity")
     parser.add_argument("--style", choices=sorted(pm.STYLES), default="slide")
     parser.add_argument("--formats", default="png", help="comma-separated output formats")
     args = parser.parse_args()
 
-    records = pm.parse_tables(args.tables)
+    from emfres.records import COMPLEXITY_COLUMNS, records_from_cells
+    records = records_from_cells(args.frames, HERE, metrics=COMPLEXITY_COLUMNS)
     models_full, datasets_full, mvals, _ = pm.aggregate(records, SECTION, "MAE", GRID)
     _, _, tvals, _ = pm.aggregate(records, SECTION, "Training time", GRID)
-    params = parse_params(args.tables)
+    params = params_from_records(records)
     if not models_full:
-        parser.error(f"no {SECTION} L{GRID} cells found in {args.tables}")
+        parser.error(f"no {SECTION} L{GRID} cells found in {args.frames}")
     verify(params, tvals, mvals)
-    print("parsed values match the tables.md spot checks")
+    print("values match the spot checks")
 
     models = [pm.short_model(m) for m in models_full]
     datasets = [pm.short_dataset(d) for d in datasets_full]
