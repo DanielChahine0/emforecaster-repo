@@ -11,7 +11,7 @@ regenerated on demand and git-ignored. `results/` tracks about 1 MB.
 ```bash
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
-python results/make.py reconcile    # check tables.md against frames/
+python results/make.py reconcile    # check the frozen report against frames/
 
 python results/plot_metrics.py          # the benchmark families
 python results/plot_complexity.py
@@ -92,7 +92,7 @@ their metrics, and the last commit that touched `logs/`. It changes when the
 inputs change and not otherwise, so a rebuild leaves `git status` clean.
 
 `make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
-compares it with `tables.md` — 498 of 498 match. `make.py tables` refuses to
+compares it with the frozen `archive/2026-08-11_tables.md` — 498 of 498 match. `make.py tables` refuses to
 write if any section has drifted, so the CSV path and the legacy markdown
 cannot silently diverge while both exist.
 
