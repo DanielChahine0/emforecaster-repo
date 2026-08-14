@@ -97,31 +97,47 @@ def cmd_tables(args) -> int:
     if sweep:
         sections.append(("ccm-sweep", "Channel Clustering (CCM) vs. plain", sweep))
 
-    # Gate: what we render from the CSVs must match what is published today.
+    # Gate: every value the frozen report publishes must still come out of the
+    # CSVs. This is deliberately a *value* check, not a text comparison.
+    #
+    # It used to diff the rendered markdown against the archive and refuse on
+    # any difference. That cannot survive a section legitimately gaining rows:
+    # restoring the cluster L-ladder added nine lookbacks and reshaped the
+    # parameter-count table from one column to ten, changing a great deal of
+    # text while leaving every published number identical. A tripwire that
+    # fires on correct work teaches you to pass --force, which is worse than
+    # having no tripwire. reconcile tolerates growth by construction -- a cell
+    # the archive never had is a cell it cannot contradict.
+    from . import reconcile as R
+
     published = RESULTS / "archive" / "2026-08-11_tables.md"
     if published.exists():
+        if R.reconcile(published, FRAMES / "cells.csv") != 0 and not args.force:
+            print(f"\nA published value no longer reproduces from frames/; refusing "
+                  f"to write. Pass --force to write anyway.", file=sys.stderr)
+            return 1
+
+        # Text drift is reported, never fatal: it says how the report grew.
         import re
         have = {}
         for block in re.split(r"(?m)^(?=# )", published.read_text()):
             if block.startswith("# "):
                 have[block.splitlines()[0][2:].strip()] = block.strip()
-        drift = 0
         for _, title, md in sections:
             old = have.get(title)
             if old is None:
-                print(f"NOTE: '{title}' is new -- not in tables.md", file=sys.stderr)
-            elif old != md.strip():
-                drift += 1
-                print(f"DRIFT: '{title}' differs from tables.md", file=sys.stderr)
-                for line in list(unified_diff(old.splitlines(), md.strip().splitlines(),
-                                              lineterm="", n=0))[:12]:
-                    print(f"  {line}", file=sys.stderr)
-        if drift and not args.force:
-            print(f"\n{drift} section(s) drifted; refusing to write. Pass --force to "
-                  f"write anyway.", file=sys.stderr)
-            return 1
+                print(f"NOTE: '{title}' is new -- not in {published.name}", file=sys.stderr)
+                continue
+            diff = list(unified_diff(old.splitlines(), md.strip().splitlines(),
+                                     lineterm="", n=0))
+            add = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+            rem = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
+            if add or rem:
+                print(f"NOTE: '{title}' has grown since {published.name} "
+                      f"(+{add}/-{rem} lines; every published value still matches)",
+                      file=sys.stderr)
     if args.check:
-        print(f"checked {len(sections)} sections against tables.md -- no drift")
+        print(f"\nchecked {len(sections)} sections -- every published value reproduces")
         return 0
 
     outdir = RESULTS / "tables"
