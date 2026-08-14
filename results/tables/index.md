@@ -14,6 +14,7 @@ Every number here is reproducible with `python results/make.py extract`.
 | Multivariate vs Univariate | [`mv-vs-univariate.md`](mv-vs-univariate.md) |
 | CCM vs Base (No Clustering) | [`ccm-vs-base.md`](ccm-vs-base.md) |
 | Ultimate Comparison | [`pipelines.md`](pipelines.md) |
+| Channel Clustering (CCM) vs. plain | [`ccm-sweep.md`](ccm-sweep.md) |
 
 Per-setup cell values, one row per aggregated cell:
 

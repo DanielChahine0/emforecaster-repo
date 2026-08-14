@@ -1291,3 +1291,31 @@ Cost of the whole strategy, so the per-channel row is the mean single-channel ru
 | EMF2023 (University-5 w/ PTV) | Cluster (k=6) | - | **2m 40s** | <u>4m 46s</u> | 14m 55s | - | - | - |
 | EMF2023 (University-5 w/ PTV) | Cluster (k=9) | - | **1m 21s** | <u>3m 38s</u> | 4m 25s | - | - | - |
 | EMF2023 (University-5 w/ PTV) | Multivariate | 56m 32s | **48s** | <u>2m 12s</u> | 4m 43s | 1h 44m 16s | 5m 59s | - |
+
+# Channel Clustering (CCM) vs. plain · ED2022 · MAE
+
+- Dataset: ED2022, $L$ = 336, $O$ = 96
+- Metric: MAE; `±` is the sample stdev across seeds
+- Runs: 120 logs. Seed replicates per cell: DLinear 1 plain / 5 + CCM, PatchTST 1 plain / 3 + CCM, TSMixer 1 plain / 5 + CCM
+
+Each row compares a model against itself with CCM at that $k$; **bold** = the lower of the pair, <u>underline</u> = that model's best $k$. The plain columns have no $k$, so their single value repeats down the column as the fixed reference.
+
+| $k$ | DLinear | DLinear + CCM | PatchTST | PatchTST + CCM | TSMixer | TSMixer + CCM |
+|:---|---:|---:|---:|---:|---:|---:|
+| 1 | **0.3771** | 0.3955 ±0.0328 | 0.3868 | **0.3459 ±0.0035** | 0.3859 | **<u>0.3766 ±0.0142</u>** |
+| 2 | **0.3771** | 0.3958 ±0.0347 | 0.3868 | **0.3465 ±0.0036** | 0.3859 | **0.3776 ±0.0095** |
+| 3 | **0.3771** | <u>0.3870 ±0.0240</u> | 0.3868 | **0.3480 ±0.0020** | 0.3859 | **0.3800 ±0.0042** |
+| 4 | **0.3771** | 0.3977 ±0.0251 | 0.3868 | **0.3476 ±0.0051** | 0.3859 | **0.3796 ±0.0017** |
+| 5 | **0.3771** | 0.3903 ±0.0133 | 0.3868 | **0.3461 ±0.0038** | 0.3859 | **0.3820 ±0.0038** |
+| 6 | **0.3771** | 0.3925 ±0.0194 | 0.3868 | **0.3464 ±0.0030** | 0.3859 | **0.3803 ±0.0022** |
+| 7 | **0.3771** | 0.3955 ±0.0209 | 0.3868 | **0.3508 ±0.0012** | 0.3859 | **0.3810 ±0.0050** |
+| 8 | **0.3771** | 0.3924 ±0.0177 | 0.3868 | **<u>0.3459 ±0.0035</u>** | 0.3859 | **0.3831 ±0.0045** |
+| 9 | **0.3771** | 0.3949 ±0.0272 | 0.3868 | **0.3461 ±0.0029** | **0.3859** | 0.3869 ±0.0057 |
+
+**Best $k$ per model**, against its plain run:
+
+- DLinear: best at $k$ = 3, MAE 0.3870 vs. plain 0.3771 (+0.0099 (+2.62%)), mean seed stdev over the sweep 0.0239.
+- PatchTST: best at $k$ = 8, MAE 0.3459 vs. plain 0.3868 (-0.0409 (-10.58%)), mean seed stdev over the sweep 0.0032.
+- TSMixer: best at $k$ = 1, MAE 0.3766 vs. plain 0.3859 (-0.0092 (-2.40%)), mean seed stdev over the sweep 0.0057.
+
+$k$ = 1 is one cluster over all channels, but its run still carries the CCM module's parameters, so it is not the same model as the plain column.

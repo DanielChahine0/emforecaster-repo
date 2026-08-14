@@ -813,7 +813,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--frames", type=Path, default=here / "frames" / "cells.csv",
                         help="aggregated cells to plot (default: frames/cells.csv)")
-    parser.add_argument("--tables", type=Path, default=here / "tables.md",
+    parser.add_argument("--tables", type=Path,
+                        default=here / "archive" / "2026-08-11_tables.md",
                         help="legacy markdown source; only used with --source tables")
     parser.add_argument("--source", choices=["frames", "tables"], default="frames",
                         help="where the numbers come from (default: frames)")

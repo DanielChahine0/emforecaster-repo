@@ -72,9 +72,12 @@ def cmd_tables(args) -> int:
 
     sections = (T.render_sections(runs_csv, REPO, RESULTS)
                 + T.render_cross_sections(runs_csv, REPO, RESULTS))
+    sweep = T.render_ccm_sweep(FRAMES / "cells.csv")
+    if sweep:
+        sections.append(("ccm-sweep", "Channel Clustering (CCM) vs. plain", sweep))
 
     # Gate: what we render from the CSVs must match what is published today.
-    published = RESULTS / "tables.md"
+    published = RESULTS / "archive" / "2026-08-11_tables.md"
     if published.exists():
         import re
         have = {}
@@ -165,7 +168,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rc = sub.add_parser(
         "reconcile", help="check tables.md's published cells against frames/cells.csv")
-    rc.add_argument("--tables", type=Path, default=RESULTS / "tables.md")
+    rc.add_argument("--tables", type=Path,
+                    default=RESULTS / "archive" / "2026-08-11_tables.md")
     rc.set_defaults(func=cmd_reconcile)
 
     args = parser.parse_args(argv)

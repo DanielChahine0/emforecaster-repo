@@ -146,3 +146,123 @@ def cells_csv_twins(cells_csv: Path, outdir: Path) -> list[Path]:
             w.writerows(rows)
         written.append(path)
     return written
+
+
+# --------------------------------------------------------------------------- #
+# CCM sweep: each model against itself with clustering, k-major
+# --------------------------------------------------------------------------- #
+
+MISSING = "-"
+
+
+def _cell_cols(row, metric):
+    """(mean, spread, n_seeds) for one cells.csv row and metric."""
+    return _f(row[metric]), _f(row.get(f"{metric}_std", "")), _i(row.get("n_seeds", ""))
+
+
+def _fmt_value(cell) -> str:
+    if cell is None or cell[0] is None:
+        return MISSING
+    mean, spread, _ = cell
+    return f"{mean:.4f}" if spread is None else f"{mean:.4f} ±{spread:.4f}"
+
+
+def render_ccm_sweep(cells_csv: Path, *, dataset="ed2022", seq_len=336, pred_len=96,
+                     models=("DLinear", "PatchTST", "TSMixer"), metric="mae") -> str:
+    """CCM at each k against the same model without it, with the seed spread.
+
+    Ported from results/clustering/make_tables.py, which was a fork of the
+    extractor's loader and the only renderer in the repo that showed variance.
+    That matters more now that cluster is a five-seed setup: a best-k margin is
+    only interesting next to the seed noise it sits in, which is what the
+    closing paragraph reports.
+    """
+    import statistics
+
+    plain, ccm, n_runs = {}, {}, 0
+    with open(cells_csv) as f:
+        for row in csv.DictReader(f):
+            if (row["dataset"] != dataset or int(row["seq_len"]) != seq_len
+                    or int(row["pred_len"]) != pred_len or row["model"] not in models):
+                continue
+            if row["setup"] == "multivariate" and row["k"] == "":
+                plain[row["model"]] = _cell_cols(row, metric)
+                n_runs += int(row["n_runs"])
+            elif row["setup"] == "cluster" and row["k"] != "":
+                ccm[(row["model"], int(row["k"]))] = _cell_cols(row, metric)
+                n_runs += int(row["n_runs"])
+
+    if not ccm:
+        return ""
+
+    models = [m for m in models if any(mm == m for mm, _ in ccm)]
+    ks = sorted({k for _, k in ccm})
+    name = metric.upper()
+    ds_label = dataset.upper()
+
+    def seeds_of(source, model):
+        counts = sorted({c[2] for key, c in source.items()
+                         if (key[0] if isinstance(key, tuple) else key) == model
+                         and c[2] is not None})
+        return "/".join(str(n) for n in counts) if counts else MISSING
+
+    out = [f"# Channel Clustering (CCM) vs. plain · {ds_label} · {name}", "",
+           f"- Dataset: {ds_label}, $L$ = {seq_len}, $O$ = {pred_len}",
+           f"- Metric: {name}; `±` is the sample stdev across seeds",
+           f"- Runs: {n_runs} logs. Seed replicates per cell: "
+           + ", ".join(f"{m} {seeds_of(plain, m)} plain / {seeds_of(ccm, m)} + CCM"
+                       for m in models),
+           "",
+           "Each row compares a model against itself with CCM at that $k$; **bold** = the "
+           "lower of the pair, <u>underline</u> = that model's best $k$. The plain columns "
+           "have no $k$, so their single value repeats down the column as the fixed "
+           "reference.", ""]
+
+    best_k = {m: min((k for k in ks if (m, k) in ccm and ccm[(m, k)][0] is not None),
+                     key=lambda k: ccm[(m, k)][0], default=None) for m in models}
+
+    rows = []
+    for k in ks:
+        row = [str(k)]
+        for m in models:
+            base, cell = plain.get(m), ccm.get((m, k))
+            base_txt, cell_txt = _fmt_value(base), _fmt_value(cell)
+            if best_k[m] == k:
+                cell_txt = f"<u>{cell_txt}</u>"
+            if base and cell and base[0] is not None and cell[0] is not None:
+                if cell[0] < base[0]:
+                    cell_txt = f"**{cell_txt}**"
+                else:
+                    base_txt = f"**{base_txt}**"
+            row += [base_txt, cell_txt]
+        rows.append(row)
+
+    header = ["$k$"]
+    for m in models:
+        header += [m, f"{m} + CCM"]
+    align = ["|:---"] + ["|---:"] * (len(header) - 1)
+    out += ["| " + " | ".join(header) + " |", "".join(align) + "|"]
+    out += ["| " + " | ".join(r) + " |" for r in rows]
+    out += ["", "**Best $k$ per model**, against its plain run:", ""]
+
+    for m in models:
+        k = best_k[m]
+        if k is None:
+            out.append(f"- {m}: no CCM cell.")
+            continue
+        cell, base = ccm[(m, k)], plain.get(m)
+        spreads = [c[1] for (mm, _), c in ccm.items() if mm == m and c[1] is not None]
+        noise = (f", mean seed stdev over the sweep {statistics.mean(spreads):.4f}"
+                 if spreads else ", single seed per cell")
+        if base and base[0]:
+            d = cell[0] - base[0]
+            delta = f"{d:+.4f} ({d / base[0] * 100:+.2f}%)"
+        else:
+            delta = MISSING
+        out.append(f"- {m}: best at $k$ = {k}, {name} {cell[0]:.4f} vs. plain "
+                   f"{_fmt_value(base)} ({delta}){noise}.")
+
+    out += ["", "$k$ = 1 is one cluster over all channels, but its run still carries the "
+                "CCM module's parameters, so it is not the same model as the plain column.",
+            ""]
+    return "\n".join(out)

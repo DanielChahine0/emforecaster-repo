@@ -34,10 +34,9 @@ markdown.
 | `frames/` | `runs.csv`, `cells.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
-| `archive/` | Frozen predecessors, read-only | yes |
 | `figures/` | Every figure. 100% derived. | **no** |
 | `scratch/` | Exploratory renders | **no** |
-| `tables.md` | Legacy single-file report, still the plotters' fallback | yes |
+| `archive/` | Frozen predecessors, incl. the legacy single-file report | yes |
 
 ## Naming
 
@@ -99,11 +98,11 @@ cannot silently diverge while both exist.
 
 ## Known gaps
 
-- `clustering/make_tables.py` is a fork of the extractor's loader. It holds the
-  only k-major standard-deviation renderer in the repo, which should be lifted
-  into `tables.py` before it is deleted — more relevant now that cluster is a
-  5-seed setup and `cells.csv` carries `mse_std` / `n_seeds`.
-- `tables.md` and `plot_metrics.parse_tables` survive as the `--source tables`
-  fallback and as the reconciliation gate. Both go when the legacy file does.
+- `archive/2026-08-11_tables.md` is frozen, but it is not inert: it is what
+  `make.py tables --check` and `make.py reconcile` compare against, and what
+  `plot_metrics --source tables` reads. Retiring it means giving up that gate,
+  so it stays until there is something better to check against.
 - `frames/epochs.csv` (per-epoch losses) is opt-in behind `--epochs` and
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
+- `emfres/fig_curves.py` still walks `logs/` directly rather than reading
+  `epochs.csv`, so loss curves are the one family outside the frames pipeline.
