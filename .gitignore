@@ -34,9 +34,9 @@ notify-completion.js
 logs.bak/
 old_logs/
 emforecaster/hpc/logs/
-# logs/_archive/ is deliberately NOT ignored: superseded runs are kept there as
-# the provenance record for the benchmark, and an untracked archive was lost to
-# an rm on 2026-07-23. See logs/_archive/PROVENANCE.md.
+# Superseded runs live in logs/_archive/ on disk only (untracked since
+# 2026-08-25). It is the sole copy -- an earlier untracked archive was lost to an
+# rm on 2026-07-23 -- so back it up before deleting anything there.
 logs/_archive/
 
 # Experiment tracking / checkpoints
