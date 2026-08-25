@@ -1,4 +1,4 @@
-"""Import bridge to the vendored CCM reference implementation.
+"""Import bridge to the vendored CCM reference implementation -- layers only.
 
 CCM ("From Similarity to Superiority: Channel Clustering for Time Series
 Forecasting", NeurIPS 2024) ships as a flat script tree in TimeSeriesCCM-main/,
@@ -8,9 +8,31 @@ hyphen, so it can never be a package itself.
 
 Rather than copy the classes in (a fork that silently drifts from the paper's
 code), this module puts the CCM root on sys.path once and re-exports the pieces
-the cluster grid needs. Everything below therefore executes upstream's code
-verbatim; the only repo-side code is forecasting/multivariate/models/ccm.py,
-which adapts our config and tensor layout to their constructors.
+the cluster grid needs. Everything imported here therefore executes upstream's
+code verbatim.
+
+What is exported changed on 2026-08-25. The bridge used to hand out upstream's
+whole model wrappers (DLinearC, PatchTSTC, TSMixerC, TimesNetC), so a cluster
+cell ran an entirely different network implementation from the multivariate cell
+it is compared against -- different init, RevIN, decomposition kernel. Now only
+the CLUSTERING layers cross the bridge:
+
+  Cluster_assigner     the learned soft channel-to-cluster assignment (cosine
+                       similarity against k trainable cluster embeddings,
+                       sinkhorn-normalized) plus the cross-attention refresh of
+                       those embeddings.
+  Cluster_wise_linear  k parallel Linear layers over every channel, mixed by
+                       the assignment -- the drop-in for a per-channel temporal
+                       nn.Linear.
+  sinkhorn             upstream's row normalization (a temperature softmax; the
+                       released code runs zero Sinkhorn iterations despite the
+                       name). Exported for tests and sanity checks.
+
+They are threaded through THIS repo's own models (see models/dlinear.py,
+models/tsmixer.py, layers/patchtst/backbone.py, orchestrated by models/ccm.py),
+so the clustering mechanism is the paper's code while the forecasting network,
+its hyperparameters and its init are exactly the multivariate cell's. The
+upstream model wrappers are deliberately not imported anywhere any more.
 
 Putting the CCM root on sys.path exposes `models`, `utils`, `exp` and `data` as
 importable top-level names. That is safe here only because nothing in this repo
@@ -19,8 +41,12 @@ imports those bare names -- every internal import is fully qualified from
 any future tie.
 
 The upstream tree also contains exp/, data/ and utils/ modules that pull in wandb
-and torchinfo. None of those are imported here: only the four model wrappers and
-the two cluster layers, which need nothing beyond torch, numpy and einops.
+and torchinfo. None of those are imported here: the two cluster layers need
+nothing beyond torch, numpy and einops.
+
+This module is imported lazily, from inside the cluster branches of the model
+constructors and CCMForecaster, so a missing vendored tree only breaks cluster
+cells -- with the error below -- and never a multivariate or per-channel run.
 """
 
 import os
@@ -40,40 +66,21 @@ CCM_ROOT = os.path.join(
 if not os.path.isdir(CCM_ROOT):
     raise ImportError(
         f"CCM reference implementation not found at {CCM_ROOT}. The cluster "
-        f"grid runs upstream's code directly; restore the TimeSeriesCCM-main/ "
-        f"directory (it is tracked in git) before running --setup cluster."
+        f"grid runs upstream's clustering layers directly; restore the "
+        f"TimeSeriesCCM-main/ directory (it is tracked in git) before running "
+        f"--setup cluster."
     )
 
 if CCM_ROOT not in sys.path:
     sys.path.append(CCM_ROOT)
 
 # Imported after the sys.path append, so these resolve inside TimeSeriesCCM-main/.
-from models.Dlinear import DLinearC  # noqa: E402
-from models.layers import Cluster_assigner  # noqa: E402
+from models.layers import Cluster_assigner, sinkhorn  # noqa: E402
 from models.patch_layer import Cluster_wise_linear  # noqa: E402
-from models.patchtst import PatchTSTC  # noqa: E402
-from models.timesnet import TimesNetC  # noqa: E402
-from models.tsmixer import TSMixerC  # noqa: E402
-
-# Our model_id (as it appears in the job configs and in the logs/ path) -> the
-# upstream wrapper that implements it with clustering threaded through its
-# layers. These four are exactly the models CCM provides wrappers for; a model
-# outside this map has no upstream counterpart and cannot join the cluster grid
-# without an adaptation that would no longer be the paper's code.
-UPSTREAM_MODELS = {
-    "DLinear": DLinearC,
-    "PatchTST": PatchTSTC,
-    "TSMixer": TSMixerC,
-    "TimesNet": TimesNetC,
-}
 
 __all__ = [
     "CCM_ROOT",
-    "UPSTREAM_MODELS",
     "Cluster_assigner",
     "Cluster_wise_linear",
-    "DLinearC",
-    "PatchTSTC",
-    "TSMixerC",
-    "TimesNetC",
+    "sinkhorn",
 ]

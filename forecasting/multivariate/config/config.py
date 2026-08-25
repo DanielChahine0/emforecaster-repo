@@ -778,19 +778,27 @@ class ModernTCN(BaseModel):
 class Cluster(BaseModel):
     """CCM channel clustering (forecasting/multivariate/models/ccm.py).
 
-    When enabled, the whole network is replaced by CCM's own implementation of
-    it, imported from the vendored TimeSeriesCCM-main/ tree. Channels are
-    assigned to k clusters by a learned, soft, sinkhorn-normalized assignment
-    against trainable cluster embeddings, and k parallel Linear layers are mixed
-    by that assignment. Only DLinear, PatchTST, TSMixer and TimesNet have
-    upstream CCM wrappers; any other model_id is rejected at model build.
+    When enabled, the model_id's ordinary network is built with its per-channel
+    temporal linears swapped for cluster-wise ones and wrapped with CCM's
+    cluster assigner -- both modules upstream's own code, imported verbatim
+    from the vendored TimeSeriesCCM-main/ tree: channels are assigned to k
+    clusters by a learned, soft, sinkhorn-normalized assignment against
+    trainable cluster embeddings, and k parallel Linear layers are mixed by
+    that assignment. Only DLinear, PatchTST and TSMixer have that per-channel
+    structure; any other model_id is rejected at model build.
 
-    This replaced a static KMeans-partition head on 2026-08-06. That version
-    precomputed a hard channel partition from the training split's correlation
-    matrix and gave each group its own Linear; it produced the k1/k9 cells in
-    commits 2ebc7f08 and 3d2de887, which were deleted in f24cf7a2. Those runs are
-    not resumable against this config -- the cluster_method / cluster_seed /
-    cluster_assignment fields they recorded no longer exist.
+    Two prior implementations produced runs under logs/ trees that are NOT
+    resumable against the current code:
+      - Until 2026-08-25 the cluster grid ran the paper's whole released
+        networks (DLinearC, PatchTSTC, ...), a different implementation from
+        the multivariate cells it was compared against; its L-ladder rungs were
+        retired to logs/_archive/, and any upstream-era cell still under
+        logs/cluster/ needs the same treatment before its rerun lands.
+      - Before 2026-08-06 a static KMeans-partition head precomputed a hard
+        channel partition from the training split's correlation matrix (k1/k9
+        cells of commits 2ebc7f08 and 3d2de887, deleted in f24cf7a2); its
+        cluster_method / cluster_seed / cluster_assignment fields no longer
+        exist.
     """
 
     enabled: bool = Field(

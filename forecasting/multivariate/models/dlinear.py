@@ -20,6 +20,7 @@ class DLinear(nn.Module):
         moving_avg=25,
         individual=False,
         return_head=True,
+        n_clusters=None,
     ):
         """
         Args:
@@ -30,12 +31,22 @@ class DLinear(nn.Module):
             num_classes (int): Number of classes for classification task.
             moving_avg (int): Window size of moving average.
             individual (bool): Whether shared model among different variates.
+            n_clusters (int): CCM cluster grid only (models/ccm.py). Replaces the
+                seasonal/trend linears with k cluster-wise ones mixed by the soft
+                membership that forward() then requires; sits between individual
+                (one linear per channel) and shared (one for all). None = off.
         """
 
         super(DLinear, self).__init__()
         self.task = task
         self.seq_len = seq_len
         self.return_head = return_head
+        self.n_clusters = n_clusters
+        if n_clusters is not None and individual:
+            raise ValueError(
+                "n_clusters replaces the individual-vs-shared choice; "
+                "set individual=False on cluster cells."
+            )
         if self.task == "classification":
             self.pred_len = seq_len
         elif self.task == "forecasting":
@@ -48,7 +59,26 @@ class DLinear(nn.Module):
         self.individual = individual
         self.channels = num_channels
 
-        if self.individual:
+        if self.n_clusters is not None:
+            # Upstream's own cluster-wise layer, run verbatim from the vendored
+            # tree (lazy import so only cluster cells touch it). Its trailing
+            # device arg is unused by the released class.
+            from forecasting.multivariate.utils.ccm_upstream import Cluster_wise_linear
+
+            self.Linear_Seasonal = Cluster_wise_linear(
+                self.n_clusters, self.channels, self.seq_len, self.pred_len, None
+            )
+            self.Linear_Trend = Cluster_wise_linear(
+                self.n_clusters, self.channels, self.seq_len, self.pred_len, None
+            )
+            # The same moving-average init the shared/individual linears get, so
+            # every cluster's map starts where the baseline's does and only the
+            # membership routing differentiates them.
+            for linear in [*self.Linear_Seasonal.linears, *self.Linear_Trend.linears]:
+                linear.weight = nn.Parameter(
+                    (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len])
+                )
+        elif self.individual:
             self.Linear_Seasonal = nn.ModuleList()
             self.Linear_Trend = nn.ModuleList()
 
@@ -76,7 +106,7 @@ class DLinear(nn.Module):
         if self.task == "classification":
             self.projection = nn.Linear(num_channels * seq_len, num_classes)
 
-    def encoder(self, x):
+    def encoder(self, x, cluster_prob=None):
         x = x.permute(
             0, 2, 1
         )  # (batch_size, num_channels, seq_len) -> (batch_size, seq_len, num_channels)
@@ -84,7 +114,10 @@ class DLinear(nn.Module):
         seasonal_init, trend_init = seasonal_init.permute(0, 2, 1), trend_init.permute(
             0, 2, 1
         )
-        if self.individual:
+        if self.n_clusters is not None:
+            seasonal_output = self.Linear_Seasonal(seasonal_init, cluster_prob)
+            trend_output = self.Linear_Trend(trend_init, cluster_prob)
+        elif self.individual:
             seasonal_output = torch.zeros(
                 [seasonal_init.size(0), seasonal_init.size(1), self.pred_len],
                 dtype=seasonal_init.dtype,
@@ -104,7 +137,7 @@ class DLinear(nn.Module):
         x = seasonal_output + trend_output
         return x.permute(0, 2, 1)
 
-    def forecast(self, x_enc):
+    def forecast(self, x_enc, cluster_prob=None):
         # Ensure correct size (3D tensor)
         if len(x_enc.size()) == 2:
             x_enc = x_enc.unsqueeze(
@@ -116,7 +149,7 @@ class DLinear(nn.Module):
             ), f"Input sequence length {seq_len} is not equal to the model sequence length {self.seq_len}."
 
         # Encoder
-        return self.encoder(x_enc)
+        return self.encoder(x_enc, cluster_prob)
 
     def classification(self, x_enc):
         # Encoder
@@ -127,9 +160,14 @@ class DLinear(nn.Module):
             output = self.projection(output)  # (batch_size, num_classes)
         return output
 
-    def forward(self, x_enc):
+    def forward(self, x_enc, cluster_prob=None):
+        if self.n_clusters is not None and cluster_prob is None:
+            raise ValueError(
+                "This DLinear was built with n_clusters; forward() needs the "
+                "ClusterAssigner's membership (see models/ccm.py)."
+            )
         if self.task == "forecasting":
-            dec_out = self.forecast(x_enc)
+            dec_out = self.forecast(x_enc, cluster_prob)
             return dec_out[:, -self.pred_len :, :].permute(
                 0, 2, 1
             )  # (batch_size, num_channels, pred_len)

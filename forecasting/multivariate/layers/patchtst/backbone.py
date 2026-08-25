@@ -25,6 +25,7 @@ class PatchTSTBackbone(nn.Module):
         head_type="linear",
         channel_independent=False,
         target_channels: Optional[list] = None,
+        n_clusters=None,
     ):
         super(PatchTSTBackbone, self).__init__()
 
@@ -35,6 +36,12 @@ class PatchTSTBackbone(nn.Module):
         self.return_head = return_head
         self.pred_len = pred_len
         self.target_channels = target_channels
+        self.n_clusters = n_clusters
+        if n_clusters is not None and (head_type != "linear" or target_channels):
+            raise ValueError(
+                "n_clusters only replaces the plain linear head; cluster cells "
+                "run head_type='linear' with no target_channels."
+            )
 
         # Encoder
         self.enc = nn.Sequential(
@@ -59,7 +66,17 @@ class PatchTSTBackbone(nn.Module):
         num_output_channels = (
             len(target_channels) if target_channels is not None else num_channels
         )
-        if head_type == "linear":
+        if n_clusters is not None:
+            # The channel-independent head with k cluster-wise copies routed by
+            # the soft membership -- upstream's own Cluster_wise_linear, run
+            # verbatim from the vendored tree (lazy import so only cluster
+            # cells touch it; its trailing device arg is unused).
+            from forecasting.multivariate.utils.ccm_upstream import Cluster_wise_linear
+
+            self.head = Cluster_wise_linear(
+                n_clusters, num_channels, num_patches * d_model, pred_len, None
+            )
+        elif head_type == "linear":
             if channel_independent:
                 self.head = nn.Linear(num_patches * d_model, pred_len)
             elif target_channels is not None or not channel_independent:
@@ -82,7 +99,8 @@ class PatchTSTBackbone(nn.Module):
             raise ValueError(f"Invalid head type: {head_type}")
 
     def forward(
-        self, x: torch.Tensor, y: torch.Tensor = None, ch_ids: torch.Tensor = None
+        self, x: torch.Tensor, y: torch.Tensor = None, ch_ids: torch.Tensor = None,
+        cluster_prob: torch.Tensor = None,
     ) -> torch.Tensor:
 
         # Encoding
@@ -100,7 +118,10 @@ class PatchTSTBackbone(nn.Module):
             if self.target_channels is not None:
                 x = x[:, self.target_channels, :]
 
-            out = self.head(x)
+            if self.n_clusters is not None:
+                out = self.head(x, cluster_prob)
+            else:
+                out = self.head(x)
         else:
             out = x.view(batch_size, self.num_channels, self.num_patches, -1)
 

@@ -1,13 +1,20 @@
 """Tests for the CCM cluster grid.
 
-The cluster grid runs CCM (Channel Clustering Module, NeurIPS 2024) from the
-vendored TimeSeriesCCM-main/ tree, adapted in
-forecasting/multivariate/models/ccm.py. These tests cover the adapter's contract
-with the rest of the pipeline (shapes, loss, checkpointing) and the grid wiring
-that gets a cell from `--setup cluster --k N` to logs/cluster/.
+The cluster grid threads CCM (Channel Clustering Module, NeurIPS 2024) through
+this repo's own model implementations: get_model builds the multivariate cell's
+exact network with its per-channel temporal linears swapped for upstream's own
+Cluster_wise_linear (imported verbatim from the vendored TimeSeriesCCM-main/
+tree via utils/ccm_upstream.py) and wraps it in CCMForecaster
+(forecasting/multivariate/models/ccm.py), which drives upstream's
+Cluster_assigner and owns the similarity loss. These tests cover that
+mechanism's contract with the rest of the pipeline (shapes, routing, loss,
+checkpointing) and the grid wiring that gets a cell from `--setup cluster --k N`
+to logs/cluster/.
 
-They replaced the tests for the KMeans-partition head this grid used until
-2026-08-06; that head, its clustering module and its config fields are gone.
+They replaced the tests for the whole-network upstream adapter this grid ran
+until 2026-08-25 (which had themselves replaced the KMeans-partition head's
+tests on 2026-08-06); the upstream model wrappers and their TimesNet cells are
+gone, and the shape-bug regression moved into the wrapper's refresh tests.
 """
 
 import json
@@ -18,8 +25,11 @@ import torch
 
 from forecasting import grid, grids
 from forecasting.multivariate.config.config import Global
-from forecasting.multivariate.models.ccm import CCMForecaster
-from forecasting.multivariate.utils.ccm_upstream import UPSTREAM_MODELS
+from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
+from forecasting.multivariate.models.dlinear import DLinear
+from forecasting.multivariate.utils.ccm_upstream import (Cluster_assigner,
+                                                         Cluster_wise_linear,
+                                                         sinkhorn)
 from forecasting.multivariate.utils.models import (compute_aux_loss, compute_loss,
                                                    get_model)
 
@@ -46,8 +56,6 @@ def make_args(model_id, k=K, beta=0.3):
     args.sl.d_ff = 16
     args.sl.num_heads = 2
     args.sl.num_enc_layers = 1
-    args.timesnet.d_model = 8
-    args.timesnet.d_ff = 8
     args.cluster.enabled = True
     args.cluster.k_clusters = k
     args.cluster.beta = beta
@@ -55,28 +63,88 @@ def make_args(model_id, k=K, beta=0.3):
 
 
 # ---------------------------------------------------------------------------
-# CCM adapter
+# Upstream's CCM layers, as this repo drives them
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("model_id", sorted(UPSTREAM_MODELS))
+def test_sinkhorn_rows_are_distributions():
+    prob = sinkhorn(torch.randn(NUM_CHANNELS, K))
+    torch.testing.assert_close(prob.sum(dim=1), torch.ones(NUM_CHANNELS))
+    assert (prob > 0).all()
+
+
+def test_cluster_wise_linear_blends_by_membership():
+    # Upstream's trailing device arg is unused by the released class.
+    layer = Cluster_wise_linear(K, NUM_CHANNELS, SEQ_LEN, PRED_LEN, None)
+    x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
+    prob = sinkhorn(torch.randn(NUM_CHANNELS, K))
+    out = layer(x, prob)
+    assert out.shape == (4, NUM_CHANNELS, PRED_LEN)
+    expected = sum(
+        prob[:, j].view(1, -1, 1) * layer.linears[j](x) for j in range(K)
+    )
+    torch.testing.assert_close(out, expected)
+
+
+def test_cluster_wise_linear_k1_is_the_plain_shared_linear():
+    # The --k 1 cell is the grid's controlled no-clustering baseline, which
+    # only works if the blend genuinely collapses to the single linear.
+    layer = Cluster_wise_linear(1, NUM_CHANNELS, SEQ_LEN, PRED_LEN, None)
+    x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
+    prob = sinkhorn(torch.randn(NUM_CHANNELS, 1))
+    torch.testing.assert_close(prob, torch.ones(NUM_CHANNELS, 1))
+    torch.testing.assert_close(layer(x, prob), layer.linears[0](x))
+
+
+def test_assigner_prob_is_a_normalized_channel_by_cluster_matrix():
+    assigner = Cluster_assigner(NUM_CHANNELS, K, SEQ_LEN, 16, device="cpu")
+    assigner.eval()
+    # Upstream layout: (batch, seq_len, num_channels), cluster_emb passed in.
+    prob, _ = assigner(torch.randn(4, SEQ_LEN, NUM_CHANNELS),
+                       assigner.cluster_emb)
+    assert prob.shape == (NUM_CHANNELS, K)
+    # sinkhorn row-normalizes, so each channel's assignment is a distribution
+    # over clusters -- soft membership, not a hard partition.
+    torch.testing.assert_close(prob.sum(dim=1), torch.ones(NUM_CHANNELS))
+    assert (prob > 0).all()
+
+
+def test_wrapper_refreshes_cluster_emb_on_training_forwards_only():
+    """Also the regression test for upstream's refresh shape bug: the assigner
+    returns a [batch, k, d_model] cross-attention result, and writing it back
+    unpooled kills training batch two in the released code. The wrapper must
+    pool it to [k, d_model] and only on training forwards.
+    """
+    model = get_model(make_args("DLinear"))
+    x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
+
+    model.eval()
+    before = model.cluster_emb.clone()
+    with torch.no_grad():
+        model(x)
+    torch.testing.assert_close(model.cluster_emb, before)
+
+    model.train()
+    model(x)
+    assert not torch.allclose(model.cluster_emb, before)
+    assert model.cluster_emb.shape == (K, 16)
+
+
+# ---------------------------------------------------------------------------
+# CCMForecaster on the repo's models
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
 def test_ccm_forward_shape(model_id):
-    model = CCMForecaster(make_args(model_id), device="cpu")
+    model = get_model(make_args(model_id))
     x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
     assert model(x).shape == (2, NUM_CHANNELS, PRED_LEN)
 
 
-@pytest.mark.parametrize("model_id", sorted(UPSTREAM_MODELS))
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
 def test_ccm_survives_multiple_training_steps(model_id):
-    """Regression test for the upstream shape bug in the cluster-emb refresh.
-
-    Cluster_assigner returns a [batch, k, d_model] cross-attention result but
-    consumes a [k, d_model] table. Upstream writes the 3-D tensor straight back,
-    so the second if_update=True forward dies on `.t()`. The adapter pools it
-    back to 2-D; without that fix this test fails on step two, and no cluster
-    cell could finish a single epoch.
-    """
-    model = CCMForecaster(make_args(model_id), device="cpu")
+    model = get_model(make_args(model_id))
     x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
     model.train()
     for _ in range(3):
@@ -85,17 +153,20 @@ def test_ccm_survives_multiple_training_steps(model_id):
         assert model.cluster_emb.shape[0] == K
 
 
-@pytest.mark.parametrize("model_id", sorted(UPSTREAM_MODELS))
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
 def test_ccm_state_dict_is_stable_across_training_steps(model_id):
-    """Upstream registers a new Parameter mid-forward; the adapter must not.
+    """The key set must not depend on how many steps have run.
 
-    A key set that depends on how many steps have run would make
-    supervised.pth unloadable into a freshly built model, which is exactly what
-    Experiment.test() does before the conformal recalibration.
+    Experiment.test() loads supervised.pth into a freshly built model with
+    strict=True before the conformal recalibration, so the cluster-embedding
+    state has to live in a registered buffer, not appear mid-training.
     """
-    model = CCMForecaster(make_args(model_id), device="cpu")
+    model = get_model(make_args(model_id))
     before = set(model.state_dict())
     assert "cluster_emb" in before
+    # The assigner's own bare-tensor attribute must never become tracked state:
+    # the wrapper's buffer is the one canonical copy.
+    assert "assigner.cluster_emb" not in before
 
     x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
     model.train()
@@ -106,16 +177,15 @@ def test_ccm_state_dict_is_stable_across_training_steps(model_id):
         model(x)
 
     assert set(model.state_dict()) == before
-    assert "net.cluster_emb" not in model.state_dict()
 
 
 def test_ccm_checkpoint_round_trips_into_a_fresh_model():
-    model = CCMForecaster(make_args("DLinear"), device="cpu")
+    model = get_model(make_args("DLinear"))
     x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
     model.train()
     model(x)  # mutates cluster_emb away from its init
 
-    fresh = CCMForecaster(make_args("DLinear"), device="cpu")
+    fresh = get_model(make_args("DLinear"))
     fresh.load_state_dict(model.state_dict())  # strict=True, as Experiment.test does
     torch.testing.assert_close(fresh.cluster_emb, model.cluster_emb)
 
@@ -125,27 +195,67 @@ def test_ccm_checkpoint_round_trips_into_a_fresh_model():
         torch.testing.assert_close(model(x), fresh(x))
 
 
-def test_ccm_cluster_prob_is_a_normalized_channel_by_cluster_matrix():
-    model = CCMForecaster(make_args("DLinear"), device="cpu")
-    model(torch.randn(4, NUM_CHANNELS, SEQ_LEN))
-    prob = model.cluster_prob
-    assert prob.shape == (NUM_CHANNELS, K)
-    # sinkhorn() row-normalizes, so each channel's assignment is a distribution
-    # over clusters -- soft membership, not a hard partition.
-    torch.testing.assert_close(prob.sum(dim=1), torch.ones(NUM_CHANNELS))
-    assert (prob > 0).all()
+def test_ccm_membership_routes_the_cluster_wise_layers():
+    # With k>1, the same input under a different membership must produce a
+    # different forecast; otherwise the "clustering" is decoration.
+    model = get_model(make_args("DLinear"))
+    model.eval()
+    x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
+    one_hot = torch.eye(K)[torch.tensor([0] * NUM_CHANNELS)]
+    other = torch.eye(K)[torch.tensor([1] * NUM_CHANNELS)]
+    with torch.no_grad():
+        out_a = model.backbone(x, cluster_prob=one_hot)
+        out_b = model.backbone(x, cluster_prob=other)
+    assert not torch.allclose(out_a, out_b)
 
 
-def test_ccm_rejects_a_model_without_an_upstream_wrapper():
-    # EMForecaster was in the cluster grid under the old KMeans head. CCM has no
-    # wrapper for it, and building something else under its name would put a
-    # column in the results table that is not the method it claims to be.
-    with pytest.raises(ValueError, match="no upstream CCM wrapper"):
-        CCMForecaster(make_args("EMForecaster"), device="cpu")
+def test_ccm_k1_dlinear_matches_the_multivariate_implementation():
+    """The whole point of the native rewrite: the cluster cell's network IS the
+    multivariate cell's. At k=1 the blend collapses to the single shared linear,
+    so with the weights copied over, the forecasts must match exactly (the old
+    upstream DLinearC could not do this -- different kernel, different init).
+    """
+    args = make_args("DLinear", k=1)
+    ccm = get_model(args)
+
+    plain_args = make_args("DLinear", k=1)
+    plain_args.cluster.enabled = False
+    plain = get_model(plain_args)
+    assert isinstance(plain, DLinear)
+
+    with torch.no_grad():
+        for src, dst in ((plain.Linear_Seasonal, ccm.backbone.Linear_Seasonal),
+                         (plain.Linear_Trend, ccm.backbone.Linear_Trend)):
+            dst.linears[0].weight.copy_(src.weight)
+            dst.linears[0].bias.copy_(src.bias)
+
+    ccm.eval()
+    plain.eval()
+    x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
+    with torch.no_grad():
+        torch.testing.assert_close(ccm(x), plain(x))
+
+
+def test_get_model_rejects_a_model_without_a_ccm_adaptation():
+    # EMForecaster (and TimesNet, since the upstream bridge left) have no
+    # per-channel temporal linear to route; building something else under their
+    # name would put a column in the results table that is not the method it
+    # claims to be.
+    for model_id in ("EMForecaster", "TimesNet"):
+        with pytest.raises(ValueError, match="no CCM adaptation"):
+            get_model(make_args(model_id))
+
+
+def test_cluster_built_models_require_the_membership_at_forward():
+    # A cluster-built backbone silently run without its membership would be an
+    # un-clustered model wearing the cluster cell's name.
+    model = get_model(make_args("DLinear"))
+    with pytest.raises(ValueError, match="needs the"):
+        model.backbone(torch.randn(2, NUM_CHANNELS, SEQ_LEN))
 
 
 def test_channel_similarity_is_a_symmetric_channel_matrix():
-    x = torch.randn(4, SEQ_LEN, NUM_CHANNELS)  # upstream layout
+    x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
     sim = CCMForecaster.channel_similarity(x)
     assert sim.shape == (NUM_CHANNELS, NUM_CHANNELS)
     torch.testing.assert_close(sim, sim.t())
@@ -155,7 +265,7 @@ def test_channel_similarity_is_a_symmetric_channel_matrix():
 
 
 def test_similarity_loss_is_finite_and_needs_a_forward_first():
-    model = CCMForecaster(make_args("DLinear"), device="cpu")
+    model = get_model(make_args("DLinear"))
     x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
 
     with pytest.raises(RuntimeError, match="before forward"):
@@ -167,28 +277,27 @@ def test_similarity_loss_is_finite_and_needs_a_forward_first():
 
 
 def test_ccm_backward_reaches_the_cluster_assigner():
-    model = CCMForecaster(make_args("DLinear"), device="cpu")
+    model = get_model(make_args("DLinear"))
     x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
     model.train()
     out = model(x)
     (out.square().mean() + model.similarity_loss(x)).backward()
     # The assigner's projection is the learned part of the assignment; if it got
     # no gradient the clustering would never adapt to the data.
-    grad = model.net.Cluster_assigner.linear.weight.grad
+    grad = model.assigner.linear.weight.grad
     assert grad is not None and grad.abs().sum() > 0
 
 
-def test_ccm_timesnet_uses_its_own_config_block():
-    # get_model reads args.timesnet for TimesNet, so the CCM shim must too --
-    # falling through to args.sl's 128-wide default would build a different-sized
-    # model than the multivariate cell it is compared against.
-    args = make_args("TimesNet")
-    args.timesnet.d_model, args.timesnet.d_ff = 8, 8
-    args.sl.d_model, args.sl.d_ff = 128, 256
-    from forecasting.multivariate.models.ccm import build_ccm_args
-
-    ccm_args = build_ccm_args(args, "cpu")
-    assert (ccm_args.d_model, ccm_args.d_ff) == (8, 8)
+def test_multivariate_models_are_untouched_when_clustering_is_off():
+    # The MV and per-channel grids must keep building the exact baselines: no
+    # cluster modules in the tree, and the plain forward signature still works.
+    args = make_args("DLinear")
+    args.cluster.enabled = False
+    model = get_model(args)
+    assert not any(isinstance(m, (Cluster_wise_linear, Cluster_assigner))
+                   for m in model.modules())
+    assert model(torch.randn(2, NUM_CHANNELS, SEQ_LEN)).shape == (
+        2, NUM_CHANNELS, PRED_LEN)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +306,9 @@ def test_ccm_timesnet_uses_its_own_config_block():
 
 
 def test_get_model_returns_ccm_when_clustering_is_enabled():
-    assert isinstance(get_model(make_args("DLinear")), CCMForecaster)
+    model = get_model(make_args("DLinear"))
+    assert isinstance(model, CCMForecaster)
+    assert isinstance(model.backbone, DLinear)
 
 
 def test_get_model_ignores_cluster_when_disabled():
@@ -214,7 +325,7 @@ def test_compute_loss_stays_the_forecast_loss_on_a_cluster_run():
     cell's loss incomparable to every other cell.
     """
     args = make_args("DLinear", beta=0.5)
-    model = CCMForecaster(args, device="cpu")
+    model = get_model(args)
     x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
     y = torch.randn(4, NUM_CHANNELS, PRED_LEN)
     out = model(x)
@@ -225,7 +336,7 @@ def test_compute_loss_stays_the_forecast_loss_on_a_cluster_run():
 
 def test_compute_aux_loss_is_the_beta_scaled_similarity_term():
     args = make_args("DLinear", beta=0.5)
-    model = CCMForecaster(args, device="cpu")
+    model = get_model(args)
     x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
     model(x)
 
@@ -238,7 +349,7 @@ def test_compute_aux_loss_is_the_beta_scaled_similarity_term():
 
 def test_compute_aux_loss_is_none_when_there_is_no_aux_term():
     args = make_args("DLinear")
-    model = CCMForecaster(args, device="cpu")
+    model = get_model(args)
     x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
     model(x)
 
@@ -294,10 +405,17 @@ def test_kmeans_cluster_fields_are_gone():
 # ---------------------------------------------------------------------------
 
 
-def test_cluster_models_are_exactly_ccms_own_four():
+def test_cluster_models_are_exactly_the_natively_adapted_three():
     ids = {model_id for _, model_id, _ in grids.CLUSTER_MODELS}
-    assert ids == set(UPSTREAM_MODELS)
-    assert ids == {"DLinear", "PatchTST", "TSMixer", "TimesNet"}
+    assert ids == set(CCM_MODELS)
+    assert ids == {"DLinear", "PatchTST", "TSMixer"}
+
+
+def test_cluster_models_all_have_multivariate_baselines():
+    # The grid exists to compare clustering against the multivariate and
+    # per-channel paradigms, so every cluster cell needs its baseline cells.
+    mv = {model_id for _, model_id, _ in grids.MV_MODELS}
+    assert {model_id for _, model_id, _ in grids.CLUSTER_MODELS} <= mv
 
 
 def test_cluster_grid_job_configs_resolve():

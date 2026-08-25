@@ -51,11 +51,13 @@ def _memory_profile(model_id, dataset, seq_len):
 
     No cluster-grid entry, deliberately. CCM adds k parallel per-cluster layers,
     so cost does grow with k, but from a small base: measured backward peak at 27
-    channels / L336_O96 / batch 512, k=2 -> k=9, is DLinear 1.05 -> 1.26 GiB,
-    PatchTST 3.15 -> 3.19, TSMixer 1.54 -> 1.82, TimesNet 2.11 -> 2.27, against a
-    31.3 GiB card. Every cluster cell therefore runs at its job config's own batch
-    size, matching the multivariate cell it is compared against, and OOM_RETRIES
-    still covers a co-tenant squeezing the card.
+    channels / L336_O96 / batch 512, k=2 -> k=9, was DLinear 1.05 -> 1.26 GiB,
+    PatchTST 3.15 -> 3.19, TSMixer 1.54 -> 1.82 against a 31.3 GiB card
+    (measured on the retired upstream-network implementation; the native one has
+    the same layer structure, so the shape of the growth carries over). Every
+    cluster cell therefore runs at its job config's own batch size, matching the
+    multivariate cell it is compared against, and OOM_RETRIES still covers a
+    co-tenant squeezing the card.
     """
     if model_id == "EMForecaster" and (
         seq_len >= 336 or dataset == "EMF_2023_university_5_with_PTV"
@@ -333,12 +335,13 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
                 args.cluster.enabled = True
                 args.cluster.k_clusters = k
                 args.exp.id = run_tag
-                # CCM rebinds module attributes inside forward (cluster_prob
-                # every pass, cluster_emb on training passes), which torch.compile
-                # cannot trace stably -- it graph-breaks each step and can capture
-                # a stale cluster_emb. hardware.normalize_config turns compile on
-                # for PatchTST, which IS in this grid, so switch it back off here
-                # rather than relying on the per-model default.
+                # CCM mutates module state inside forward (rebinds cluster_prob
+                # every pass, refreshes the cluster_emb buffer on training
+                # passes), which torch.compile cannot trace stably -- it
+                # graph-breaks each step and can capture a stale cluster_emb.
+                # hardware.normalize_config turns compile on for PatchTST, which
+                # IS in this grid, so switch it back off here rather than
+                # relying on the per-model default.
                 args.exp.compile = False
             profile = _memory_profile(model_id, dataset, seq_len)
             if profile is not None:

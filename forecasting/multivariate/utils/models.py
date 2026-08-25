@@ -23,7 +23,7 @@ from forecasting.multivariate.models.timesnet import TimesNet
 from forecasting.multivariate.models.tsmixer import TSMixer
 from forecasting.multivariate.models.emforecaster import EMForecaster
 from forecasting.multivariate.models.arima import ARIMAForecaster
-from forecasting.multivariate.models.ccm import CCMForecaster
+from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
 
 # Unsupervised models
 from tslearn.neighbors import KNeighborsTimeSeriesClassifier
@@ -42,14 +42,23 @@ from forecasting import hardware
 
 
 def get_model(args, generator=torch.Generator()):
-    # The cluster grid swaps the whole network for CCM's own implementation of
-    # it (forecasting/multivariate/models/ccm.py), so this branch comes before
-    # the model_id dispatch rather than passing cluster kwargs down into each
-    # model. Everything else about the run -- data, optimizer, conformal
-    # recalibration, logging -- is unchanged, so a cluster cell differs from its
-    # multivariate counterpart only in the model.
-    if args.cluster.enabled:
-        return CCMForecaster(args)
+    # The cluster grid runs the SAME constructors below with n_clusters set --
+    # the model's per-channel temporal linears become upstream's own
+    # Cluster_wise_linear, imported verbatim from the vendored
+    # TimeSeriesCCM-main/ tree -- and wraps the result in CCMForecaster
+    # (forecasting/multivariate/models/ccm.py), which drives upstream's
+    # Cluster_assigner and owns the similarity loss. Everything else about the
+    # run -- data, optimizer, conformal recalibration, logging -- is unchanged,
+    # so a cluster cell differs from its multivariate counterpart only in the
+    # clustering module.
+    n_clusters = args.cluster.k_clusters if args.cluster.enabled else None
+    if n_clusters is not None and args.exp.model_id not in CCM_MODELS:
+        raise ValueError(
+            f"{args.exp.model_id} has no CCM adaptation. The cluster grid "
+            f"covers exactly the models whose implementations have a "
+            f"per-channel temporal linear to route: "
+            f"{', '.join(sorted(CCM_MODELS))}."
+        )
 
     if args.exp.model_id == "PatchTST":
         model = PatchTST(
@@ -73,6 +82,7 @@ def get_model(args, generator=torch.Generator()):
             stride=args.data.patch_stride,
             head_type=args.sl.head_type,
             channel_independent=args.sl.channel_independent,
+            n_clusters=n_clusters,
         )
     # "LSTM" is an alias for the LSTM-backboned RecurrentModel. It exists so the
     # grid gets a self-documenting logs/ dir (build_run_dir stamps model_id
@@ -117,6 +127,7 @@ def get_model(args, generator=torch.Generator()):
             moving_avg=args.dlinear.moving_avg,
             individual=args.dlinear.individual,
             return_head=args.sl.return_head,
+            n_clusters=n_clusters,
         )
     elif args.exp.model_id == "EMForecaster":
         model = EMForecaster(
@@ -214,8 +225,9 @@ def get_model(args, generator=torch.Generator()):
             revin_affine=args.sl.revin_affine,
             revout=args.sl.revout,
             eps_revin=args.sl.eps_revin,
+            n_clusters=n_clusters,
         )
-    
+
     elif args.exp.model_id == "RF_EMF_MLP":
         model = RF_EMF_MLP(
             seq_len=args.data.seq_len,
@@ -261,6 +273,9 @@ def get_model(args, generator=torch.Generator()):
         )
     else:
         raise ValueError("Please select a valid model_id.")
+
+    if n_clusters is not None:
+        model = CCMForecaster(args, model)
     return model
 
 

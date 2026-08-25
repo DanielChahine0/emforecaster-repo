@@ -188,14 +188,15 @@ def test_select_windows_filters_and_keeps_grid_order():
     assert grids.select_windows("336x336,192x96", windows) == [(192, 96), (336, 336)]
 
 
-def test_select_windows_rejects_window_not_in_grid():
+def test_select_windows_allows_off_grid_windows_after_grid_ones():
+    # Off-grid windows run as one-offs since the L-ladder sweep (2026-08-10):
+    # they sort ascending after the grid's own, and run_grid logs them so a
+    # one-off cell is never mistaken for part of the canonical sweep. Malformed
+    # tokens still fail loudly in parse_window_spec.
     windows = grids.GRIDS["univariate"]["windows"]
-    try:
-        grids.select_windows("500x500", windows)
-    except ValueError as exc:
-        assert "not in grid windows" in str(exc)
-    else:
-        raise AssertionError("a window outside the grid should be rejected")
+    assert grids.select_windows("500x500", windows) == [(500, 500)]
+    assert grids.select_windows("720x96,336x96,480x96", windows) == [
+        (336, 96), (480, 96), (720, 96)]
 
 
 def test_run_grid_window_filter_limits_cells(tmp_path):

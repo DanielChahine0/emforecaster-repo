@@ -34,6 +34,7 @@ class PatchTST(nn.Module):
         head_type="linear",
         channel_independent=False,  # Head only
         target_channels: Optional[list] = None,  # Head only
+        n_clusters=None,  # CCM cluster grid only (models/ccm.py); head only
     ) -> None:
         super(PatchTST, self).__init__()
 
@@ -44,6 +45,7 @@ class PatchTST(nn.Module):
         self.revin_affine = revin_affine
         self.target_channels = target_channels
         self.revout = revout
+        self.n_clusters = n_clusters
 
         # Initialize layers
         if revin:
@@ -71,6 +73,7 @@ class PatchTST(nn.Module):
             head_type=head_type,
             channel_independent=channel_independent,
             target_channels=target_channels,
+            n_clusters=n_clusters,
         )
 
         # Weight initialization
@@ -84,7 +87,12 @@ class PatchTST(nn.Module):
             affine=self.revin_affine,
         )
 
-    def forward(self, x, y=None, ch_ids=None):
+    def forward(self, x, y=None, ch_ids=None, cluster_prob=None):
+        if self.n_clusters is not None and cluster_prob is None:
+            raise ValueError(
+                "This PatchTST was built with n_clusters; forward() needs the "
+                "ClusterAssigner's membership (see models/ccm.py)."
+            )
 
         # RevIN
         if self._revin:
@@ -97,7 +105,7 @@ class PatchTST(nn.Module):
         x = self.pos_enc(x)
 
         # Transformer + Linear Head
-        x = self.backbone(x, y, ch_ids)
+        x = self.backbone(x, y, ch_ids, cluster_prob)
 
         # RevOUT
         if self.revout:

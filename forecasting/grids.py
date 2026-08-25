@@ -14,11 +14,12 @@ Four grids share the same WINDOWS so their cells line up one-to-one:
 - "univariate_series" The original single-series sweep over the DET/PTV
                       monitoring CSVs. It was renamed from "univariate" when that
                       name was repurposed for the per-band grid above.
-- "cluster"           The multivariate sweep run through CCM (Channel Clustering
-                      Module, NeurIPS 2024), whose learned soft channel clustering
-                      replaces the model's ordinary head. Adds a k dimension
-                      (k_values) to every cell; four models, since CCM ships
-                      wrappers for exactly four. See CLUSTER_MODELS below and
+- "cluster"           The multivariate sweep with CCM's learned soft channel
+                      clustering (Channel Clustering Module, NeurIPS 2024)
+                      threaded through this repo's own models: the multivariate
+                      cell's exact network with its per-channel temporal linears
+                      swapped for cluster-wise ones. Adds a k dimension
+                      (k_values) to every cell. See CLUSTER_MODELS below and
                       forecasting/multivariate/models/ccm.py.
 
 The first three carry the same seven models since 2026-08-03 -- EMForecaster, DLinear,
@@ -79,29 +80,36 @@ UNIVARIATE_MODELS = MV_MODELS
 # The CCM cluster grid (forecasting/multivariate/models/ccm.py). CCM assigns
 # channels to k clusters with a learned, soft, sinkhorn-normalized assignment and
 # mixes k parallel per-cluster layers by it, rather than partitioning channels up
-# front. The clustering is threaded through the backbone, not bolted onto the
-# output, so a model is only in this grid if CCM implements it.
+# front. The clustering modules are upstream's own code, imported verbatim from
+# the vendored TimeSeriesCCM-main/ tree (utils/ccm_upstream.py); since
+# 2026-08-25 they are threaded through THIS REPO'S OWN model implementations --
+# a cluster cell is the multivariate cell's exact network, same job config and
+# init, with its per-channel temporal linears swapped for upstream's
+# Cluster_wise_linear -- so a model is in this grid iff its implementation in
+# models/ has a per-channel temporal linear for CCM to route. That is exactly
+# these three, and all three are in MV_MODELS, so every cluster cell has
+# same-window multivariate and per-channel baselines beside it.
 #
-# That is exactly these four: DLinear, PatchTST, TSMixer and TimesNet are the
-# wrappers in TimeSeriesCCM-main/models/. EMForecaster, Transformer, LSTM and
-# ARIMA have no upstream counterpart -- clustering them would mean an adaptation
-# of our own rather than the paper's method, so they are out. CCMForecaster
-# raises on any model_id outside this set instead of silently building something
-# else.
+# EMForecaster, Transformer, LSTM and ARIMA lack that per-channel structure (or,
+# for ARIMA, any gradient path) and are out; get_model raises on them instead of
+# silently building something else.
 #
-# Two consequences worth knowing when reading the results:
-#   - This list is NOT a subset of MV_MODELS. TimesNet has a job config
-#     (rf_emf_mv/timesnet) and runs fine, but it is not in the multivariate grid,
-#     so its cluster cells have no same-window multivariate baseline to sit
-#     beside. Add TimesNet to MV_MODELS if that comparison is wanted.
-#   - The set changed on 2026-08-06, when CCM replaced the KMeans-partition head.
-#     PatchTST and TSMixer were excluded under the old head and are back;
-#     EMForecaster and LSTM were included and are gone.
+# History, for reading old results: until 2026-08-25 this grid ran the paper's
+# whole released networks (DLinearC, PatchTSTC, ...) -- a different
+# implementation from the multivariate cells (different init, RevIN,
+# decomposition kernel). Runs made by those wrappers are NOT comparable to runs
+# made by this code and must not share a logs tree with them: the L-ladder
+# cluster rungs were retired to logs/_archive/ on 2026-08-25, and any
+# upstream-era cell still under logs/cluster/ (the L336_O96 benchmark tree)
+# needs the same treatment before its rerun lands. TimesNet was in that version
+# of the grid (upstream ships a wrapper for it); our TimesNet embeds all
+# channels jointly from the first layer, has nothing per-channel to route, and
+# never had an MV baseline, so it left with the wrappers. Before 2026-08-06 the
+# grid was a static KMeans-partition head; those config fields are gone too.
 CLUSTER_MODELS = [
     ("DLinear", "DLinear", "rf_emf_mv/dlinear"),
     ("PatchTST", "PatchTST", "rf_emf_mv/patchtst"),
     ("TSMixer", "TSMixer", "rf_emf_mv/tsmixer"),
-    ("TimesNet", "TimesNet", "rf_emf_mv/timesnet"),
 ]
 
 # The single-series counterpart list. Job names here are "rf_emf/*", NOT

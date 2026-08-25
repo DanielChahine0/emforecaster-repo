@@ -1,0 +1,60 @@
+{
+  "setup": "cluster",
+  "finished": "2026-08-25_14-26-08",
+  "seeds": [
+    69421
+  ],
+  "k_values": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "models": [
+    "DLinear",
+    "PatchTST",
+    "TSMixer"
+  ],
+  "datasets": [
+    "ED2022"
+  ],
+  "windows": [
+    "L336_O96"
+  ],
+  "passed": [
+    "[ 1/27] DLinear      ED2022/L336/O96 k=1",
+    "[ 2/27] DLinear      ED2022/L336/O96 k=2",
+    "[ 3/27] DLinear      ED2022/L336/O96 k=3",
+    "[ 4/27] DLinear      ED2022/L336/O96 k=4",
+    "[ 5/27] DLinear      ED2022/L336/O96 k=5",
+    "[ 6/27] DLinear      ED2022/L336/O96 k=6",
+    "[ 7/27] DLinear      ED2022/L336/O96 k=7",
+    "[ 8/27] DLinear      ED2022/L336/O96 k=8",
+    "[ 9/27] DLinear      ED2022/L336/O96 k=9",
+    "[10/27] PatchTST     ED2022/L336/O96 k=1",
+    "[11/27] PatchTST     ED2022/L336/O96 k=2",
+    "[12/27] PatchTST     ED2022/L336/O96 k=3",
+    "[13/27] PatchTST     ED2022/L336/O96 k=4",
+    "[14/27] PatchTST     ED2022/L336/O96 k=5",
+    "[15/27] PatchTST     ED2022/L336/O96 k=6",
+    "[16/27] PatchTST     ED2022/L336/O96 k=7",
+    "[17/27] PatchTST     ED2022/L336/O96 k=8",
+    "[18/27] PatchTST     ED2022/L336/O96 k=9",
+    "[19/27] TSMixer      ED2022/L336/O96 k=1",
+    "[20/27] TSMixer      ED2022/L336/O96 k=2",
+    "[21/27] TSMixer      ED2022/L336/O96 k=3",
+    "[22/27] TSMixer      ED2022/L336/O96 k=4",
+    "[23/27] TSMixer      ED2022/L336/O96 k=5",
+    "[24/27] TSMixer      ED2022/L336/O96 k=6",
+    "[25/27] TSMixer      ED2022/L336/O96 k=7",
+    "[26/27] TSMixer      ED2022/L336/O96 k=8",
+    "[27/27] TSMixer      ED2022/L336/O96 k=9"
+  ],
+  "skipped": [],
+  "failed": []
+}
