@@ -65,6 +65,7 @@ ULTIMATE_SETTING = (336, 96)
 from emfres.runlogs import (  # noqa: E402
     Cell, Run, excluded, load_runs, parse_running_time,
 )
+from emfres.frames import is_archive  # noqa: E402
 
 
 
@@ -932,7 +933,10 @@ def main() -> None:
             parser.error("--output/--title require an explicit --logs-root")
         if not DEFAULT_LOGS_DIR.is_dir():
             parser.error(f"no --logs-root given and {DEFAULT_LOGS_DIR} is not a directory")
-        logs_roots = sorted(p for p in DEFAULT_LOGS_DIR.iterdir() if p.is_dir())
+        # Same archive rule the frames extractor applies, so a bare run here
+        # and `make.py extract` cover the same tree.
+        logs_roots = sorted(p for p in DEFAULT_LOGS_DIR.iterdir()
+                            if p.is_dir() and not is_archive(p))
         if not logs_roots:
             parser.error(f"no subdirectories found under {DEFAULT_LOGS_DIR}")
 

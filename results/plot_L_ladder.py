@@ -5,7 +5,9 @@ One strip of three panels with the lookback length L on the x-axis and one
 line per (model, setup) pair: the multivariate runs solid with filled markers,
 the per-channel runs dashed with hollow ones, colour carrying the model in
 both. Unlike plot_metrics.py this reads the logs directly - the ladder's
-off-grid windows (L = 48..480 by 48) never land in tables.md.
+off-grid windows (L = 48..480 by 48) never land in tables.md, and since
+2026-08-14 they are not in frames/ either: every rung but L336 lives under
+logs/_archive/, which the frames extractor skips. See cell_dir().
 
 Per-channel accuracy comes from each cell's aggregate.json (channel-averaged,
 the same convention as the multivariate test MSE/MAE). Per-channel training
@@ -47,10 +49,25 @@ SEED = 69421
 DATASET = "ed2022"
 MODELS = ["DLinear", "PatchTST", "TSMixer"]
 
-MV_ROOT = REPO / "logs" / "multivariate"
-PC_ROOT = REPO / "logs" / "univariate (per channel)"
-CL_ROOT = REPO / "logs" / "cluster"
+LOGS = REPO / "logs"
+ARCHIVE = LOGS / "_archive"
+MV_SETUP = "multivariate"
+PC_SETUP = "univariate (per channel)"
+CL_SETUP = "cluster"
 K_CLUSTER = 5
+
+
+def cell_dir(setup: str, model: str, lookback: int) -> Path:
+    """The run directory for one ladder rung, live tree or archive.
+
+    The off-grid rungs moved under logs/_archive/ on 2026-08-14; L336 stayed
+    in the live tree because it is also the benchmark cell. Resolving both
+    keeps the ladder buildable without duplicating that rung -- and keeps
+    working if a rung is ever restored, since the live tree wins.
+    """
+    tail = Path(setup) / model / DATASET / f"L{lookback}_O{HORIZON}_cp"
+    live = LOGS / tail
+    return live if live.exists() else ARCHIVE / tail
 
 def running_seconds(text: str | None) -> float:
     """Seconds from the logger's ``43min 10s`` / ``1h 5min 2s`` / ``22s`` form.
@@ -74,7 +91,7 @@ def scalar(value) -> float:
 
 def mv_cell(model: str, lookback: int) -> tuple[float, float, float]:
     """(mse, mae, train seconds) of one multivariate cell, NaN where unlogged."""
-    path = MV_ROOT / model / DATASET / f"L{lookback}_O{HORIZON}_cp" / str(SEED) / "log.json"
+    path = cell_dir(MV_SETUP, model, lookback) / str(SEED) / "log.json"
     if not path.exists():
         return (float("nan"),) * 3
     log = json.loads(path.read_text())
@@ -87,7 +104,7 @@ def mv_cell(model: str, lookback: int) -> tuple[float, float, float]:
 
 def cluster_cell(model: str, lookback: int) -> tuple[float, float, float]:
     """(mse, mae, train seconds) of one CCM cluster cell at k = K_CLUSTER."""
-    path = (CL_ROOT / model / DATASET / f"L{lookback}_O{HORIZON}_cp"
+    path = (cell_dir(CL_SETUP, model, lookback)
             / f"k{K_CLUSTER}" / str(SEED) / "log.json")
     if not path.exists():
         return (float("nan"),) * 3
@@ -101,7 +118,7 @@ def cluster_cell(model: str, lookback: int) -> tuple[float, float, float]:
 
 def pc_cell(model: str, lookback: int) -> tuple[float, float, float]:
     """(mse, mae, summed band-train seconds) of one per-channel cell."""
-    cell = PC_ROOT / model / DATASET / f"L{lookback}_O{HORIZON}_cp"
+    cell = cell_dir(PC_SETUP, model, lookback)
     agg_path = cell / "aggregate.json"
     if not agg_path.exists():
         return (float("nan"),) * 3

@@ -30,3 +30,25 @@ exclude:
   # the one thing that is never right is averaging the two together.
   - "42"
   - "43"
+
+# Cells that archive/2026-08-11_tables.md publishes but frames/ no longer
+# carries, because the runs behind them moved out of the published tree.
+#
+# `make.py reconcile` counts these as expected-absent instead of missing. The
+# snapshot is provenance and is never regenerated, so without a rule here an
+# intentional archival is indistinguishable from a silently dropped run -- and
+# a permanently red gate is a gate nobody reads. Anything absent and NOT
+# matched here still fails, which is the whole point of writing it down.
+archived:
+  - reason: >
+      The ED2022 lookback ladder (L = 48..480 by 48 at O = 96) moved to
+      logs/_archive/ on 2026-08-14. It was always a sensitivity sweep rather
+      than a benchmark result: one seed per cell, ED2022 only, and its L336
+      rung is the benchmark cell, which stays in the live tree. The numbers
+      survive as figures/l-ladder/*.png and as raw logs under logs/_archive/.
+      To republish, move the rungs back and delete this rule -- do not edit
+      the snapshot.
+    setups: [multivariate, perchannel, cluster]
+    dataset: ED2022
+    lookbacks: [48, 96, 144, 192, 240, 288, 384, 432, 480]
+    horizon: 96

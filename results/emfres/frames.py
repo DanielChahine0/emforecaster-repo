@@ -35,6 +35,15 @@ SETUPS = {
     "cluster": "cluster",
 }
 
+# logs/ subdirectories holding runs kept for provenance but out of the
+# published numbers. The "_" prefix is the convention; logs/_archive is the
+# ED2022 lookback ladder (L = 48..480 by 48, O = 96, 81 cells over
+# multivariate/per-channel/cluster), parked there 2026-08-14, with its L336
+# rung left in the live tree as the benchmark cell. The unprefixed spellings
+# are a safety net: an archive that misses this test does not vanish from the
+# frames, it silently reappears as a setup named after its own directory.
+ARCHIVE_DIRS = {"archive", "archived"}
+
 RUN_FIELDS = [
     "setup", "model", "dataset", "seq_len", "pred_len", "k", "channel", "seed",
     "conf", "mse", "mae", "running_time", "per_epoch", "num_params",
@@ -55,6 +64,18 @@ EPOCH_FIELDS = ["setup", "model", "dataset", "seq_len", "pred_len", "k",
 def setup_of(logs_dir: Path) -> str:
     """The setup slug for a logs/ subdirectory, falling back to its own name."""
     return SETUPS.get(logs_dir.name.lower(), logs_dir.name.lower())
+
+
+def is_archive(logs_dir: Path) -> bool:
+    """True for a logs/ subdirectory that is provenance rather than data.
+
+    Matches the "_" prefix and the bare spellings alike, because the fallback
+    in setup_of() is silent: anything not in SETUPS becomes a setup named
+    after its own directory, so an archive that is not skipped here does not
+    vanish from the frames -- it reappears under a setup nobody reads, with
+    its paradigm collapsed into one label.
+    """
+    return logs_dir.name.startswith("_") or logs_dir.name.lower() in ARCHIVE_DIRS
 
 
 def _row(run: Run, setup: str, repo: Path) -> dict:
@@ -90,7 +111,7 @@ def build_runs(logs_dir: Path, repo: Path, exclude: list[str]) -> list[dict]:
     """One row per log.json across every setup under ``logs_dir``."""
     rows = []
     for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
-        if sub.name.startswith("_"):       # logs/_archive is provenance, not data
+        if is_archive(sub):
             continue
         setup = setup_of(sub)
         for run in load_runs(sub, exclude):
@@ -106,7 +127,7 @@ def build_epochs(logs_dir: Path, repo: Path, exclude: list[str]) -> list[dict]:
     """
     rows = []
     for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
-        if sub.name.startswith("_"):
+        if is_archive(sub):
             continue
         setup = setup_of(sub)
         for run in load_runs(sub, exclude):

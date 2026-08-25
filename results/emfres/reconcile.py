@@ -41,6 +41,39 @@ DATASET_SLUG = {
 }
 
 
+def load_archived(spec: Path) -> list[dict]:
+    """Deliberately-unpublished cells declared in specs/runs.yaml.
+
+    A rule matches on (setup, dataset, lookback, horizon); every field it
+    omits is a wildcard. Returned as-is so an unreadable spec degrades to "no
+    allowances" -- the gate then over-reports rather than under-reports, which
+    is the safe direction for a tripwire.
+    """
+    if not spec.exists():
+        return []
+    try:
+        import yaml
+        return list((yaml.safe_load(spec.read_text()) or {}).get("archived", []))
+    except Exception as exc:
+        print(f"WARNING: could not read {spec}: {exc}", file=sys.stderr)
+        return []
+
+
+def is_archived(rules: list[dict], setup: str, dataset: str,
+                lookback: int, horizon: int) -> bool:
+    for rule in rules:
+        if "setups" in rule and setup not in rule["setups"]:
+            continue
+        if "dataset" in rule and dataset.upper() != str(rule["dataset"]).upper():
+            continue
+        if "lookbacks" in rule and lookback not in rule["lookbacks"]:
+            continue
+        if "horizon" in rule and horizon != rule["horizon"]:
+            continue
+        return True
+    return False
+
+
 def load_cells(path: Path) -> dict:
     out = {}
     with open(path) as f:
@@ -52,14 +85,17 @@ def load_cells(path: Path) -> dict:
     return out
 
 
-def reconcile(tables: Path, cells_csv: Path) -> int:
+def reconcile(tables: Path, cells_csv: Path, spec: Path | None = None) -> int:
     sys.path.insert(0, str(tables.parent))
     import plot_metrics as pm
 
     cells = load_cells(cells_csv)
     records = pm.parse_tables(tables)
+    if spec is None:
+        spec = Path(__file__).resolve().parent.parent / "specs" / "runs.yaml"
+    archived_rules = load_archived(spec)
 
-    checked = missing = mismatched = 0
+    checked = missing = mismatched = archived = 0
     problems: list[str] = []
 
     skipped_absent = 0
@@ -101,6 +137,13 @@ def reconcile(tables: Path, cells_csv: Path) -> int:
             if row:
                 break
 
+        if row is None and is_archived(archived_rules, setup, ds,
+                                       r.lookback, r.horizon):
+            # Published once, deliberately withdrawn since. Not counted as
+            # checked: there is nothing left to check it against.
+            archived += 1
+            continue
+
         checked += 1
         if row is None:
             missing += 1
@@ -125,6 +168,9 @@ def reconcile(tables: Path, cells_csv: Path) -> int:
     print(f"checked   {checked} published MSE/MAE cells against frames/cells.csv")
     print(f"absent    {skipped_absent} cells are '-' in tables.md (never run) "
           f"and have no frames row -- as expected")
+    if archived or archived_rules:
+        print(f"archived  {archived} cells withdrawn by specs/runs.yaml "
+              f"'archived' rules -- not checked")
     print(f"matched   {checked - missing - mismatched}")
     print(f"missing   {missing}")
     print(f"mismatch  {mismatched}")
