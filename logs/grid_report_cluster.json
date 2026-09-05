@@ -1,6 +1,6 @@
 {
   "setup": "cluster",
-  "finished": "2026-08-25_14-26-08",
+  "finished": "2026-08-25_17-32-11",
   "seeds": [
     69421
   ],
@@ -11,8 +11,6 @@
     4,
     5,
     6,
-    7,
-    8,
     9
   ],
   "models": [
@@ -21,40 +19,57 @@
     "TSMixer"
   ],
   "datasets": [
-    "ED2022"
+    "UH2022",
+    "EMF_2023_university_5_with_PTV"
   ],
   "windows": [
     "L336_O96"
   ],
   "passed": [
-    "[ 1/27] DLinear      ED2022/L336/O96 k=1",
-    "[ 2/27] DLinear      ED2022/L336/O96 k=2",
-    "[ 3/27] DLinear      ED2022/L336/O96 k=3",
-    "[ 4/27] DLinear      ED2022/L336/O96 k=4",
-    "[ 5/27] DLinear      ED2022/L336/O96 k=5",
-    "[ 6/27] DLinear      ED2022/L336/O96 k=6",
-    "[ 7/27] DLinear      ED2022/L336/O96 k=7",
-    "[ 8/27] DLinear      ED2022/L336/O96 k=8",
-    "[ 9/27] DLinear      ED2022/L336/O96 k=9",
-    "[10/27] PatchTST     ED2022/L336/O96 k=1",
-    "[11/27] PatchTST     ED2022/L336/O96 k=2",
-    "[12/27] PatchTST     ED2022/L336/O96 k=3",
-    "[13/27] PatchTST     ED2022/L336/O96 k=4",
-    "[14/27] PatchTST     ED2022/L336/O96 k=5",
-    "[15/27] PatchTST     ED2022/L336/O96 k=6",
-    "[16/27] PatchTST     ED2022/L336/O96 k=7",
-    "[17/27] PatchTST     ED2022/L336/O96 k=8",
-    "[18/27] PatchTST     ED2022/L336/O96 k=9",
-    "[19/27] TSMixer      ED2022/L336/O96 k=1",
-    "[20/27] TSMixer      ED2022/L336/O96 k=2",
-    "[21/27] TSMixer      ED2022/L336/O96 k=3",
-    "[22/27] TSMixer      ED2022/L336/O96 k=4",
-    "[23/27] TSMixer      ED2022/L336/O96 k=5",
-    "[24/27] TSMixer      ED2022/L336/O96 k=6",
-    "[25/27] TSMixer      ED2022/L336/O96 k=7",
-    "[26/27] TSMixer      ED2022/L336/O96 k=8",
-    "[27/27] TSMixer      ED2022/L336/O96 k=9"
+    "[ 9/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=2",
+    "[10/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=3",
+    "[11/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=4",
+    "[12/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=5",
+    "[13/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=6",
+    "[14/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=9",
+    "[15/42] PatchTST     UH2022/L336/O96 k=1",
+    "[16/42] PatchTST     UH2022/L336/O96 k=2",
+    "[17/42] PatchTST     UH2022/L336/O96 k=3",
+    "[18/42] PatchTST     UH2022/L336/O96 k=4",
+    "[19/42] PatchTST     UH2022/L336/O96 k=5",
+    "[20/42] PatchTST     UH2022/L336/O96 k=6",
+    "[21/42] PatchTST     UH2022/L336/O96 k=9",
+    "[22/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=1",
+    "[23/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=2",
+    "[24/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=3",
+    "[25/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=4",
+    "[26/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=5",
+    "[27/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=6",
+    "[28/42] PatchTST     EMF_2023_university_5_with_PTV/L336/O96 k=9",
+    "[29/42] TSMixer      UH2022/L336/O96 k=1",
+    "[30/42] TSMixer      UH2022/L336/O96 k=2",
+    "[31/42] TSMixer      UH2022/L336/O96 k=3",
+    "[32/42] TSMixer      UH2022/L336/O96 k=4",
+    "[33/42] TSMixer      UH2022/L336/O96 k=5",
+    "[34/42] TSMixer      UH2022/L336/O96 k=6",
+    "[35/42] TSMixer      UH2022/L336/O96 k=9",
+    "[36/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=1",
+    "[37/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=2",
+    "[38/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=3",
+    "[39/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=4",
+    "[40/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=5",
+    "[41/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=6",
+    "[42/42] TSMixer      EMF_2023_university_5_with_PTV/L336/O96 k=9"
   ],
-  "skipped": [],
+  "skipped": [
+    "[ 1/42] DLinear      UH2022/L336/O96 k=1",
+    "[ 2/42] DLinear      UH2022/L336/O96 k=2",
+    "[ 3/42] DLinear      UH2022/L336/O96 k=3",
+    "[ 4/42] DLinear      UH2022/L336/O96 k=4",
+    "[ 5/42] DLinear      UH2022/L336/O96 k=5",
+    "[ 6/42] DLinear      UH2022/L336/O96 k=6",
+    "[ 7/42] DLinear      UH2022/L336/O96 k=9",
+    "[ 8/42] DLinear      EMF_2023_university_5_with_PTV/L336/O96 k=1"
+  ],
   "failed": []
 }
