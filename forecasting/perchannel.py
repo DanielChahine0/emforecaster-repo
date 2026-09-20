@@ -118,7 +118,7 @@ def channel_done(model_id, dataset, seq_len, pred_len, channel, seed=SEED,
 
 
 def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
-                     workers=None, model_id=None):
+                     workers=None, model_id=None, concurrency=1):
     """Config overrides turning a joint multivariate job into one band's run.
 
     `workers` overrides the dataloader worker count that hardware.normalize_config
@@ -154,6 +154,13 @@ def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
         "global.exp.neptune": False,
         "global.exp.seed_list": [seed],
         "global.exp.seed": seed,
+        # Eager for every band, matching grid.cell_ablation: a compiled run is
+        # not run-to-run deterministic, and the joint cell it is compared to
+        # runs eager too (contract C5 in .personal/PLAN.md).
+        "global.exp.compile": False,
+        # The pool width, stamped so a band's timing is read as contended
+        # (contract C7).
+        "global.exp.concurrency": int(concurrency),
     }
     if workers is not None:
         ablation["global.data.num_workers"] = workers
@@ -165,10 +172,11 @@ def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
 
 
 def run_channel(job, dataset, seq_len, pred_len, channel, alpha, seed=SEED,
-                workers=None, threads=None, model_id=None):
+                workers=None, threads=None, model_id=None, concurrency=1):
     """Train one band in its own process. Returns (ok, error_tail)."""
     ablation = channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed,
-                                workers=workers, model_id=model_id)
+                                workers=workers, model_id=model_id,
+                                concurrency=concurrency)
     cmd = [sys.executable, os.path.join(_REPO_ROOT, "main.py"), job,
            "--ablation", json.dumps(ablation)]
     env = dict(os.environ)
@@ -325,7 +333,7 @@ def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="lo
         label, model_id, job, dataset, seq_len, pred_len, channel, seed = item
         ok, err = run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                               seed=seed, workers=workers, threads=threads,
-                              model_id=model_id)
+                              model_id=model_id, concurrency=jobs)
         return item, ok, err
 
     # Threads, not processes: each one only blocks on subprocess.run, so the GIL

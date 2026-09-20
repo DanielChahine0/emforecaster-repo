@@ -1,3 +1,14 @@
+> **Superseded on 2026-08-25.** This note documents the *upstream-wrapper* era of the
+> cluster grid (`DLinearC` / `PatchTSTC` / `TSMixerC` from `TimeSeriesCCM-main/`). Those
+> runs were retired to `logs/_archive/cluster/` on 2026-08-25 and replaced by a native
+> rerun: the repo's own DLinear / PatchTST / TSMixer with upstream's `Cluster_assigner`
+> and `Cluster_wise_linear` threaded through their per-channel linears
+> (`forecasting/multivariate/models/ccm.py`, `utils/ccm_upstream.py`). Everything below
+> about hyperparameters, β, the sinkhorn temperature and the seed-42/43 exclusion still
+> describes the archived runs; §4's per-backbone wrapper details and §7(d)'s "backbone
+> swap" explanation no longer apply to the live tree, where k = 1 reproduces the plain
+> multivariate DLinear cell exactly. See `.personal/PLAN.md` §2.1 for the audit.
+
 # Clustering (CCM) runs — exact hyperparameters and where they live
 
 Generated 2026-08-11 from the repo source and from the frozen `args.yaml` files

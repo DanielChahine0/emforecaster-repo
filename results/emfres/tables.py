@@ -262,18 +262,21 @@ def render_ccm_sweep(cells_csv: Path, *, dataset="ed2022", seq_len=336, pred_len
         out.append(f"- {m}: best at $k$ = {k}, {name} {cell[0]:.4f} vs. plain "
                    f"{_fmt_value(base)} ({delta}){noise}.")
 
-    # The plain column answers "CCM or not", which conflates two changes: the
-    # clustering AND the swap to upstream's backbone. k = 1 is the same
-    # architecture with the clustering switched off (sinkhorn returns all-ones,
-    # the head collapses to one shared linear, the similarity loss loses its
-    # gradient), so it is the only baseline that isolates clustering alone.
-    # Reporting it is not optional decoration: against plain, DLinear reads
-    # +6.06% (clustering hurts); against k = 1 the sign flips to -4.64%. What
-    # hurts DLinear is upstream's backbone -- decomposition kernel 25 vs the
-    # repo's 3 -- not the clustering. See notes/ccm-hyperparameters.md §7(d).
+    # k = 1 is the same architecture with the clustering switched off (sinkhorn
+    # returns all-ones, the head collapses to one shared linear, the similarity
+    # loss loses its gradient), so it is the baseline that isolates clustering
+    # alone; the plain column additionally differs by the assigner's parameters
+    # and, for PatchTST, by having trained compiled. Reporting both is not
+    # decoration: in the retired upstream-wrapper era the plain column also
+    # carried a different backbone, and DLinear read +6.06% against plain but
+    # -4.64% against k = 1 -- a sign flip caused by the backbone, not the
+    # clustering (notes/ccm-hyperparameters.md §7(d), now superseded).
     out += ["", "**Best $k$ per model**, against $k$ = 1 -- the same architecture with "
-                "clustering switched off. This is the comparison that isolates "
-                "clustering; the one above also carries the change of backbone.", ""]
+                "clustering switched off (all-ones sinkhorn assignment, one shared "
+                "cluster-wise linear, no similarity gradient). This is the comparison "
+                "that isolates clustering; the one above also carries the cluster "
+                "assigner's parameters, which at $k$ = 1 change nothing on DLinear "
+                "(its $k$ = 1 cell reproduces the plain cell to four decimals).", ""]
 
     for m in models:
         k, one = best_k[m], ccm.get((m, 1))
@@ -292,9 +295,12 @@ def render_ccm_sweep(cells_csv: Path, *, dataset="ed2022", seq_len=336, pred_len
                    f"{one[0]:.4f} ({d:+.4f} ({d / one[0] * 100:+.2f}%)); "
                    f"{beaten} of {total} clustered cells beat $k$ = 1.")
 
-    out += ["", "$k$ = 1 is one cluster over all channels, but its run still carries the "
-                "CCM module's parameters, so it is not the same model as the plain column. "
-                "Where the two baselines disagree, the difference between them is the "
-                "backbone swap, not the clustering.",
+    out += ["", "$k$ = 1 is one cluster over all channels: the plain network plus the "
+                "cluster assigner, whose output cannot change a one-cluster forecast. "
+                "Since the 2026-08-25 native rerun the two baselines agree on DLinear "
+                "exactly; where they still differ (PatchTST, TSMixer) the gap is the "
+                "assigner's extra parameters and eager-vs-compiled training of the "
+                "plain cell, not a different backbone. Runs from the retired upstream "
+                "wrappers are in logs/_archive and are not in this table.",
             ""]
     return "\n".join(out)

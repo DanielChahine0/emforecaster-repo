@@ -42,8 +42,13 @@ class ForecastingDataset(Dataset):
         self.seq_len = seq_len
         self.pred_len = pred_len
 
-        # Legacy start count (the final possible start is left unused).
-        num_starts = max(self.data.shape[1] - seq_len - pred_len, 0)
+        # Every start whose input and target both fit. The last one is
+        # data.shape[1] - seq_len - pred_len, so there are that many plus one --
+        # the same count create_windows gives the per-channel path
+        # ((N - w) // stride + 1). Until 2026-09-19 the final start was left
+        # unused here, so a multivariate cell scored one window fewer per split
+        # than its per-channel twin.
+        num_starts = max(self.data.shape[1] - seq_len - pred_len + 1, 0)
         if synthetic is None:
             self.valid_starts = None
             self.num_windows = num_starts

@@ -168,6 +168,15 @@ class Experiment(BaseModel):
         default=5,
         description="Number of splits for Cross (CVAP) Venn-ABERS calibration.",
     )
+    concurrency: int = Field(
+        default=1,
+        description=(
+            "How many trainings shared the machine while this run trained (the "
+            "grid's --jobs). Stamped into log.json by Experiment.init_logger so a "
+            "timing is only ever compared against timings measured under the same "
+            "contention; it changes nothing about training itself."
+        ),
+    )
 
 
 class Data(BaseModel):

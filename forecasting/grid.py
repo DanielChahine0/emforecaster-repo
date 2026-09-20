@@ -126,7 +126,7 @@ def cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(SEED,),
 
 
 def cell_ablation(model_id, dataset, seq_len, pred_len, alpha, seed, k=None,
-                  run_tag="", workers=None):
+                  run_tag="", workers=None, concurrency=1):
     """The --ablation payload that makes `main.py <job>` run exactly one cell.
 
     Mirrors the in-process overrides in run_grid field for field, so a jobs>1 run
@@ -146,13 +146,22 @@ def cell_ablation(model_id, dataset, seq_len, pred_len, alpha, seed, k=None,
         "global.exp.ablation_id": 1,
         "global.exp.seed_list": [seed],
         "global.exp.seed": seed,
+        # Every benchmark cell runs eager. hardware.normalize_config turns
+        # torch.compile on for PatchTST and the Transformer on CUDA, and a
+        # compiled run is not run-to-run deterministic (~0.5% drift measured on
+        # the Transformer), so the compiled multivariate PatchTST cell could
+        # never be matched by its eager cluster twin (0.5439 vs 0.5447 on
+        # ED2022 L336/O96). CCM additionally cannot be traced at all: it
+        # rebinds module attributes inside forward. Contract C5 in
+        # .personal/PLAN.md.
+        "global.exp.compile": False,
+        # How many trainings share the GPU, stamped into the run so a timing
+        # is only compared under the same contention (contract C7).
+        "global.exp.concurrency": int(concurrency),
     }
     if k is not None:
         ablation["global.cluster.enabled"] = True
         ablation["global.cluster.k_clusters"] = k
-        # Same reason as the in-process path: CCM rebinds module attributes
-        # inside forward, which torch.compile cannot trace stably.
-        ablation["global.exp.compile"] = False
     if workers is not None:
         ablation["global.data.num_workers"] = workers
     profile = _memory_profile(model_id, dataset, seq_len)
@@ -335,14 +344,11 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
                 args.cluster.enabled = True
                 args.cluster.k_clusters = k
                 args.exp.id = run_tag
-                # CCM mutates module state inside forward (rebinds cluster_prob
-                # every pass, refreshes the cluster_emb buffer on training
-                # passes), which torch.compile cannot trace stably -- it
-                # graph-breaks each step and can capture a stale cluster_emb.
-                # hardware.normalize_config turns compile on for PatchTST, which
-                # IS in this grid, so switch it back off here rather than
-                # relying on the per-model default.
-                args.exp.compile = False
+            # Eager for every cell, not only cluster ones -- see cell_ablation
+            # for why (determinism; CCM is untraceable besides).
+            args.exp.compile = False
+            # This path trains one cell at a time.
+            args.exp.concurrency = 1
             profile = _memory_profile(model_id, dataset, seq_len)
             if profile is not None:
                 args.sl.batch_size, args.sl.accum_steps = profile
@@ -453,7 +459,7 @@ def _run_grid_parallel(setup, grid_def, runs, jobs, logs_dir, seeds, k_values,
     def _one(item):
         cell_tag, model_id, job, dataset, seq_len, pred_len, k, run_tag, seed = item
         ablation = cell_ablation(model_id, dataset, seq_len, pred_len, alpha,
-                                 seed, k=k, run_tag=run_tag)
+                                 seed, k=k, run_tag=run_tag, concurrency=jobs)
         ok, err = run_cell_subprocess(job, ablation, threads=threads)
         return cell_tag, ok, err
 

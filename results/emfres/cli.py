@@ -13,6 +13,10 @@ REPO = RESULTS.parent
 LOGS = REPO / "logs"
 FRAMES = RESULTS / "frames"
 SPECS = RESULTS / "specs"
+# The frozen report every published value is gated against (make.py tables /
+# reconcile). Re-frozen when a set of numbers is accepted as published; the
+# previous snapshots stay in archive/ as provenance.
+PUBLISHED = RESULTS / "archive" / "2026-09-19_tables.md"
 
 
 def spec_excludes() -> list[str]:
@@ -23,6 +27,19 @@ def spec_excludes() -> list[str]:
     try:
         import yaml
         return [str(v) for v in (yaml.safe_load(path.read_text()) or {}).get("exclude", [])]
+    except Exception as exc:
+        print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
+        return []
+
+
+def spec_inferred() -> list[dict]:
+    """Commit-inference rules for unstamped runs, from specs/provenance.yaml."""
+    path = SPECS / "provenance.yaml"
+    if not path.exists():
+        return []
+    try:
+        import yaml
+        return list((yaml.safe_load(path.read_text()) or {}).get("inferred", []))
     except Exception as exc:
         print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
         return []
@@ -41,11 +58,25 @@ def cmd_extract(args) -> int:
             print(f"specs/runs.yaml excludes: {', '.join(spec)}", file=sys.stderr)
         exclude += spec
 
-    runs = frames.build_runs(logs, REPO, exclude)
+    runs = frames.build_runs(logs, REPO, exclude, inferred=spec_inferred())
     if not runs:
         print(f"no usable log.json under {logs}", file=sys.stderr)
         return 1
     cells = frames.build_cells(runs)
+
+    # Contract C1 (.personal/PLAN.md): a comparison is only as good as the
+    # code behind it. Say how many runs predate provenance stamping and
+    # whether the stamped ones span more than one commit.
+    commits = sorted({r["git_commit"] for r in runs if r["git_commit"]})
+    inferred = sum(1 for r in runs if r["commit_source"] == "inferred")
+    unstamped = sum(1 for r in runs if not r["git_commit"])
+    if inferred or unstamped:
+        print(f"NOTE: {inferred} of {len(runs)} runs take their commit from "
+              f"specs/provenance.yaml and {unstamped} have none (all logged before "
+              f"provenance stamping, 2026-09-19)", file=sys.stderr)
+    if len(commits) > 1:
+        print(f"WARNING: the published runs span {len(commits)} code commits: "
+              + ", ".join(c[:8] for c in commits), file=sys.stderr)
 
     counts = {"runs": len(runs), "cells": len(cells)}
     per_setup = {}
@@ -110,7 +141,7 @@ def cmd_tables(args) -> int:
     # the archive never had is a cell it cannot contradict.
     from . import reconcile as R
 
-    published = RESULTS / "archive" / "2026-08-11_tables.md"
+    published = PUBLISHED
     if published.exists():
         if R.reconcile(published, FRAMES / "cells.csv") != 0 and not args.force:
             print(f"\nA published value no longer reproduces from frames/; refusing "
@@ -208,8 +239,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rc = sub.add_parser(
         "reconcile", help="check tables.md's published cells against frames/cells.csv")
-    rc.add_argument("--tables", type=Path,
-                    default=RESULTS / "archive" / "2026-08-11_tables.md")
+    rc.add_argument("--tables", type=Path, default=PUBLISHED)
     rc.set_defaults(func=cmd_reconcile)
 
     args = parser.parse_args(argv)

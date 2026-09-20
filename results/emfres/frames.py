@@ -36,10 +36,12 @@ SETUPS = {
 }
 
 # logs/ subdirectories holding runs kept for provenance but out of the
-# published numbers. The "_" prefix is the convention; logs/_archive is the
+# published numbers. The "_" prefix is the convention; logs/_archive holds the
 # ED2022 lookback ladder (L = 48..480 by 48, O = 96, 81 cells over
-# multivariate/per-channel/cluster), parked there 2026-08-14, with its L336
-# rung left in the live tree as the benchmark cell. The unprefixed spellings
+# multivariate/per-channel/cluster), parked there 2026-08-14 with its L336
+# rung left in the live tree as the benchmark cell, and since 2026-08-25 the
+# retired upstream-network cluster runs (seeds 42/43 and 69421-3 alike) that
+# the native-CCM rerun replaced. The unprefixed spellings
 # are a safety net: an archive that misses this test does not vanish from the
 # frames, it silently reappears as a setup named after its own directory.
 ARCHIVE_DIRS = {"archive", "archived"}
@@ -47,7 +49,12 @@ ARCHIVE_DIRS = {"archive", "archived"}
 RUN_FIELDS = [
     "setup", "model", "dataset", "seq_len", "pred_len", "k", "channel", "seed",
     "conf", "mse", "mae", "running_time", "per_epoch", "num_params",
-    "ic", "jc", "interval_width", "source", "path",
+    "ic", "jc", "interval_width",
+    # Provenance (forecasting/provenance.py): the commit that produced the run
+    # and how many trainings shared the GPU. Blank on runs logged before
+    # 2026-09-19.
+    "git_commit", "commit_source", "concurrency",
+    "source", "path",
 ]
 
 CELL_FIELDS = [
@@ -55,6 +62,9 @@ CELL_FIELDS = [
     "mse", "mse_std", "mae", "mae_std", "running_time", "per_epoch",
     "num_params", "ic", "jc", "interval_width",
     "n_runs", "n_seeds", "n_channels",
+    # Distinct commits behind the cell's runs, ';'-joined; more than one means
+    # the cell mixes code versions and is not a clean seed mean.
+    "commits",
 ]
 
 EPOCH_FIELDS = ["setup", "model", "dataset", "seq_len", "pred_len", "k",
@@ -97,6 +107,9 @@ def _row(run: Run, setup: str, repo: Path) -> dict:
         "ic": _num(run.ic),
         "jc": _num(run.jc),
         "interval_width": _num(run.interval_width),
+        "git_commit": run.git_commit or "",
+        "commit_source": run.commit_source,
+        "concurrency": "" if run.concurrency is None else run.concurrency,
         "source": "log",
         "path": run.path.relative_to(repo).as_posix(),
     }
@@ -107,14 +120,19 @@ def _num(v: Optional[float]) -> str:
     return "" if v is None else repr(float(v))
 
 
-def build_runs(logs_dir: Path, repo: Path, exclude: list[str]) -> list[dict]:
-    """One row per log.json across every setup under ``logs_dir``."""
+def build_runs(logs_dir: Path, repo: Path, exclude: list[str],
+               inferred: Optional[list[dict]] = None) -> list[dict]:
+    """One row per log.json across every setup under ``logs_dir``.
+
+    ``inferred`` is the rule list from specs/provenance.yaml, used to assign a
+    commit to runs logged before provenance stamping (see runlogs.infer_commit).
+    """
     rows = []
     for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
         if is_archive(sub):
             continue
         setup = setup_of(sub)
-        for run in load_runs(sub, exclude):
+        for run in load_runs(sub, exclude, setup=setup, inferred=inferred):
             rows.append(_row(run, setup, repo))
     return rows
 
@@ -193,6 +211,7 @@ def build_cells(runs: list[dict]) -> list[dict]:
             "n_runs": len(rs),
             "n_seeds": len(seeds) or "",
             "n_channels": len(channels) or "",
+            "commits": ";".join(sorted({r["git_commit"] for r in rs if r["git_commit"]})),
         })
     return out
 
@@ -232,8 +251,17 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
     digest = hashlib.sha256()
     for r in sorted(runs, key=lambda r: r["path"]):
         digest.update(f"{r['path']}|{r['mse']}|{r['mae']}|{r['running_time']}\n".encode())
+    commits = sorted({r["git_commit"] for r in runs if r.get("git_commit")})
+    sources = {"stamped": 0, "inferred": 0, "unstamped": 0}
+    for r in runs:
+        sources[{"log": "stamped", "inferred": "inferred"}.get(r.get("commit_source"), "unstamped")] += 1
     payload = {
         "logs_commit": _logs_commit(repo),
+        # The code commits behind the runs: stamped by the run itself (since
+        # 2026-09-19) or inferred from specs/provenance.yaml for older runs.
+        # One entry is the goal: contract C1 in .personal/PLAN.md.
+        "code_commits": commits,
+        "provenance": sources,
         "n_runs": len(runs),
         "runs_digest": digest.hexdigest(),
         "counts": counts,

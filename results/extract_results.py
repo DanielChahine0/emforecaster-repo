@@ -594,11 +594,15 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
     ]
     if any(p.k == 1 for p in pipelines):
         items.append(
-            ("Caveat", f"`Cluster (k=1)` is not a re-run of "
-                       f"`{short_label(MULTIVARIATE_TITLE)}` -- it still replaces the model's own "
-                       f"head with one channel-mixing ClusteredHead, which changes the weight "
-                       f"count (see each tree's Model size table). Every row is a whole strategy, "
-                       f"not the same network under a different loader."))
+            ("Caveat", f"`Cluster (k=1)` is the multivariate network with CCM's "
+                       f"clustering switched off (an all-ones sinkhorn assignment, one "
+                       f"shared cluster-wise linear, no similarity gradient), so it is "
+                       f"the controlled no-clustering baseline. It still carries the "
+                       f"cluster assigner's parameters, which is why its weight count "
+                       f"exceeds `{short_label(MULTIVARIATE_TITLE)}`'s; on DLinear the two "
+                       f"cells reproduce each other to four decimals. Runs made before "
+                       f"2026-08-25 by the upstream wrappers are in logs/_archive and are "
+                       f"not in these tables."))
     items.append(
         ("Conformal prediction",
          "on for every run" if [a[0] for a in axes] == [True] else
@@ -672,8 +676,9 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
         ("Configuration", f"{setting_label(sl, pl)} only -- the window the k sweep covers"),
         ("Caveat", "the + CCM cell's k is chosen post hoc by test MSE per (dataset, "
                    "model) and reused for MAE - an oracle bound, where the paper "
-                   "tunes k on validation data. CCM at k = 1 is already a different "
-                   "network than the base (see the Ultimate Comparison caveat)."),
+                   "tunes k on validation data. The base column is the plain "
+                   "multivariate cell; `Cluster (k=1)` in the Ultimate Comparison is "
+                   "the same network with clustering off and is the stricter baseline."),
         ("Conformal prediction", "on for every run"),
     ])
 

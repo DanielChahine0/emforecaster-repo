@@ -309,3 +309,33 @@ def test_run_grid_records_failures_and_continues(tmp_path, monkeypatch):
     failed = grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path))
     # Every cell raised, but the grid kept going and recorded them all as failed.
     assert len(failed) == EXPECTED_CELLS["multivariate"]
+
+
+def test_cell_ablation_forces_eager_mode_and_records_concurrency():
+    plain = grid.cell_ablation("DLinear", "ED2022", 336, 96, 0.1, grid.SEED)
+    assert plain["global.exp.compile"] is False
+    assert plain["global.exp.concurrency"] == 1
+    pooled = grid.cell_ablation("PatchTST", "ED2022", 336, 96, 0.1, grid.SEED,
+                                k=3, run_tag="k3", concurrency=4)
+    assert pooled["global.exp.compile"] is False
+    assert pooled["global.exp.concurrency"] == 4
+    assert pooled["global.cluster.enabled"] is True
+
+
+def test_run_grid_in_process_cells_run_eager_with_concurrency_one(tmp_path, monkeypatch):
+    # hardware.normalize_config turns compile on for PatchTST on CUDA; the grid
+    # must switch it back off for every cell, not only the cluster ones.
+    def load_patchtst(path):
+        cfg = _fake_load_config(path)
+        cfg.exp.model_id = "PatchTST"
+        return cfg
+
+    seen = []
+    monkeypatch.setattr(grid, "setup_modules",
+                        lambda setup: (load_patchtst, _fake_experiment(
+                            lambda args: seen.append((args.exp.compile,
+                                                      args.exp.concurrency)))))
+    grid.run_grid("multivariate", dry_run=False, logs_dir=str(tmp_path),
+                  windows=[(336, 96)])
+    assert seen
+    assert all(compiled is False and n == 1 for compiled, n in seen)

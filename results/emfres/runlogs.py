@@ -14,6 +14,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -49,6 +50,13 @@ class Run:
     k: Optional[int]
     seed: Optional[str]
     path: Path
+    # Stamped by Experiment.init_logger since 2026-09-19 (forecasting/provenance.py);
+    # None on every run logged before that.
+    git_commit: Optional[str] = None
+    concurrency: Optional[int] = None
+    # "log" when the run stamped git_commit itself, "inferred" when a
+    # specs/provenance.yaml rule supplied it, "" when neither.
+    commit_source: str = ""
 
 
 @dataclass
@@ -83,7 +91,38 @@ def excluded(log_path: Path, exclude: list[str]) -> bool:
     )
 
 
-def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
+def infer_commit(rules: list[dict], setup: Optional[str], model: str,
+                 exp_time: Optional[str]) -> Optional[str]:
+    """The commit a specs/provenance.yaml rule assigns to an unstamped run.
+
+    A rule matches on the frames setup slug, an optional model list, and a
+    half-open exp/time window [from, to); the first match wins. None when no
+    rule applies or the run has no parseable parameters/exp/time.
+    """
+    if not rules or not exp_time:
+        return None
+    try:
+        when = datetime.strptime(str(exp_time), "%Y-%m-%d_%H-%M-%S")
+    except ValueError:
+        return None
+    for rule in rules:
+        if rule.get("setup") not in (None, setup):
+            continue
+        models = rule.get("models")
+        if models and model not in models:
+            continue
+        try:
+            lo = datetime.fromisoformat(str(rule["from"]))
+            hi = datetime.fromisoformat(str(rule["to"]))
+        except (KeyError, ValueError):
+            continue
+        if lo <= when < hi:
+            return str(rule["commit"])
+    return None
+
+
+def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = None,
+              inferred: Optional[list[dict]] = None) -> list[Run]:
     runs = []
     for log_path in sorted(logs_root.rglob("log.json")):
         if excluded(log_path, exclude):
@@ -152,7 +191,18 @@ def load_runs(logs_root: Path, exclude: list[str]) -> list[Run]:
 
         seed = log_path.parent.name if log_path.parent.name.isdigit() else None
 
+        git_commit = d.get("parameters/exp/git_commit") or None
+        commit_source = "log" if git_commit else ""
+        if git_commit is None:
+            hit = infer_commit(inferred or [], setup, model, d.get("parameters/exp/time"))
+            if hit:
+                git_commit, commit_source = hit, "inferred"
+        concurrency = d.get("parameters/exp/concurrency")
+        concurrency = int(concurrency) if concurrency not in (None, "") else None
+
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
                          running_time, per_epoch, num_params, ic, jc, interval_width,
-                         channel, k, seed, log_path))
+                         channel, k, seed, log_path,
+                         git_commit=git_commit, concurrency=concurrency,
+                         commit_source=commit_source))
     return runs

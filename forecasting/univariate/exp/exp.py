@@ -49,6 +49,7 @@ from forecasting.univariate.utils.classification import (
 )
 from forecasting.univariate.conformal.coverage import get_all_critical_scores, get_coverage
 from forecasting.run_path import build_run_dir
+from forecasting import provenance
 from forecasting import hardware
 
 # Logger
@@ -284,6 +285,12 @@ class Experiment:
             self.print_master("Offline logger initialized.")
 
         log_pydantic(self.logger, self.args, "parameters")
+
+        # Provenance: which code, which machine, and how many trainings shared
+        # the GPU. A run that lacks these cannot be placed in a paradigm
+        # comparison (see .personal/PLAN.md, contract C1/C7).
+        for key, value in provenance.run_provenance(self.args).items():
+            self.logger[f"parameters/exp/{key}"] = value
 
         # Conformal prediction (logdir)
         if self.args.conf.conf:

@@ -89,14 +89,22 @@ appear only inside rendered content.
 ## Provenance
 
 `frames/MANIFEST.json` records the run count, a digest over the input paths and
-their metrics, and the last commit that touched `logs/`. It changes when the
-inputs change and not otherwise, so a rebuild leaves `git status` clean.
+their metrics, the last commit that touched `logs/`, and — since 2026-09-19 —
+the set of *code* commits the runs themselves were stamped with
+(`code_commits`, from `parameters/exp/git_commit`) plus how many runs predate
+that stamping (`unstamped_runs`). `runs.csv` carries `git_commit` and
+`concurrency` (the grid's `--jobs` while the run trained) per run, and
+`cells.csv` carries `commits`, the distinct commits behind a cell. It changes
+when the inputs change and not otherwise, so a rebuild leaves `git status` clean.
 
 `make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
-compares it with the frozen `archive/2026-08-11_tables.md` — 498 of 498 match.
-`make.py tables` runs that same check before writing and refuses if any
-published value fails to reproduce, so the CSV path and the legacy markdown
-cannot silently diverge while both exist.
+compares it with the frozen snapshot named by `PUBLISHED` in `emfres/cli.py`,
+currently `archive/2026-09-19_tables.md` — 390 of 390 match. `make.py tables`
+runs that same check before writing and refuses if any published value fails to
+reproduce, so the CSV path and the frozen report cannot silently diverge.
+The previous snapshot, `archive/2026-08-11_tables.md`, is kept as provenance:
+its cluster section describes the upstream-wrapper runs that were retired to
+`logs/_archive/cluster/` on 2026-08-25, which is why it was superseded.
 
 The gate is deliberately **value-level, not text-level**. It used to diff the
 rendered markdown against the archive and refuse on any difference, which fails
@@ -108,29 +116,36 @@ reported as a `NOTE`; only a changed value is fatal.
 
 ## Which runs count
 
-`specs/runs.yaml` declares what `extract` drops and why. It currently excludes
-the 54 cluster runs stamped seed 42 / seed 43: they are not replicate seeds of
-the canonical 69421-3 set but a different configuration — `cluster/beta` 0.05
-vs 0.3, batch 32 vs 512, `d_ff` 128 vs 256, and three more — so averaging them
-together is a mean across two different models, not a seed mean. `--no-spec`
-loads everything. The full evidence is in `notes/ccm-hyperparameters.md` §8.
+`specs/runs.yaml` declares what `extract` drops and why. It still excludes the
+54 cluster runs stamped seed 42 / seed 43 — a different configuration, not
+replicate seeds (`notes/ccm-hyperparameters.md` §8) — though since 2026-08-25
+those runs live under `logs/_archive/cluster/` and are skipped as an archive
+anyway; the rule stays so they cannot come back silently. `--no-spec` loads
+everything.
 
-Cluster therefore publishes **132** runs: the 105-run k-sweep at L336/O96, plus
-a 27-run lookback ladder restored from commit `9ff78806~1` on 2026-08-14. Only
-the `log.json` and `args.yaml` were restored — 0.7 MB of the 103 MB those runs
-originally occupied, the rest being figures and checkpoints nothing reads.
-Before that restore, `plot_L_ladder.py` drew its `cluster (k = 5)` series from a
-single surviving point per model while the legend advertised a full setup.
+Cluster publishes **105** runs: the native-CCM k-sweep at L336/O96 rerun on
+2026-08-25 (`forecasting/multivariate/models/ccm.py` threading upstream's
+clustering layers through the repo's own DLinear / PatchTST / TSMixer). The
+earlier upstream-wrapper sweep and the 27-run lookback ladder are in
+`logs/_archive/`; the ladder survives as `figures/l-ladder/*.png`.
 
 ## Known gaps
 
-- `archive/2026-08-11_tables.md` is frozen, but it is not inert: it is what
-  `make.py tables --check` and `make.py reconcile` compare against, and what
-  `plot_metrics --source tables` reads. Retiring it means giving up that gate,
-  so it stays until there is something better to check against. It covers only
-  the 498 cells published on 2026-08-11; anything added since is unguarded,
-  which is the cost of checking against a snapshot rather than a second
-  implementation.
+- The frozen snapshot (`PUBLISHED` in `emfres/cli.py`, currently
+  `archive/2026-09-19_tables.md`) is what `make.py tables --check` and
+  `make.py reconcile` compare against. It covers only the cells published when
+  it was frozen; anything added since is unguarded, which is the cost of
+  checking against a snapshot rather than a second implementation. Re-freeze
+  it (copy `tables/all.md` into `archive/` and repoint `PUBLISHED`) whenever a
+  new set of numbers is accepted as published.
+- Every run in the live tree predates provenance stamping. `specs/provenance.yaml`
+  assigns 707 of them a commit by setup and `exp/time` window (`commit_source`
+  = `inferred` in `runs.csv`; the audit behind each rule is written next to it),
+  the 168 single-series runs get none, and runs made from 2026-09-19 on stamp
+  the commit themselves (`commit_source` = `log`). `MANIFEST.json` counts the
+  three under `provenance` and lists the resulting `code_commits` — three today
+  (`401ba0a2`, `cbaab8d0`, `e30d4f08`), which is the reason the Phase 2 rerun in
+  `.personal/PLAN.md` exists.
 - `frames/epochs.csv` (per-epoch losses) is opt-in behind `--epochs` and
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
 - `emfres/fig_curves.py` still walks `logs/` directly rather than reading

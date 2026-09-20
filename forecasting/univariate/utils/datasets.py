@@ -36,7 +36,9 @@ class ForecastingDataset(Dataset):
         self.pred_len = pred_len
 
     def __len__(self):
-        return self.data.shape[1] - self.seq_len - self.pred_len
+        # Every start whose input and target both fit; kept in step with the
+        # multivariate twin's ForecastingDataset (+1 added 2026-09-19).
+        return max(self.data.shape[1] - self.seq_len - self.pred_len + 1, 0)
 
     def __getitem__(self, idx):
         input_data = self.data[:, idx : idx + self.seq_len]

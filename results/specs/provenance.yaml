@@ -1,0 +1,60 @@
+# Code commits inferred for runs logged BEFORE provenance stamping (2026-09-19).
+#
+# From 2026-09-19 every run writes parameters/exp/git_commit itself
+# (forecasting/provenance.py) and needs nothing from this file. The runs that
+# predate it -- all 875 in the live tree on that date -- carry only
+# parameters/exp/time, so `make.py extract` assigns them a commit from the
+# rules below and marks the row commit_source = "inferred" (a stamped run reads
+# "log"; a run no rule covers reads ""). A rule matches on the frames setup
+# slug, an optional model list, and a half-open exp/time window [from, to);
+# the first match wins. `basis` says why that commit and how sure it is.
+#
+# What "inferred" can and cannot claim: it is the last commit whose code the
+# run could have used, dated from the commit log. Uncommitted edits present at
+# run time are invisible to it -- that is exactly the gap stamping closes.
+# The reproduction probe of 2026-09-19 (.personal/PLAN.md, Phase 0.5) is the
+# empirical check behind the multivariate/per-channel rules.
+inferred:
+  - setup: multivariate
+    from: 2026-08-01
+    to: 2026-08-03
+    commit: 401ba0a2210a5025439f878484dad153321c8974
+    basis: >
+      401ba0a2 ("hybrid updates", 2026-08-01 14:38) is the last commit before
+      the six 2026-08-01 multivariate cells (15:42-21:50); the next commit is
+      e84faec4 on 08-03. DLinear, TSMixer, LSTM, ARIMA and EMForecaster reproduce
+      these cells bit-for-bit at HEAD (probe 2026-09-19, .personal/probe_2026-09-19.txt),
+      so the training path was equivalent to today's; the Transformer cell trained
+      compiled and is not reproducible eagerly.
+  - setup: multivariate
+    models: [PatchTST]
+    from: "2026-08-03 16:11"
+    to: "2026-08-03 16:32"
+    commit: cbaab8d01d6e3db3909a5804736762f987a9bee3
+    basis: >
+      cbaab8d0 ("updated the grid to have all models for all setups", 16:11)
+      put PatchTST back into MV_MODELS; its three cells ran 16:12-16:17 and were
+      committed as c2910b50 at 16:32. The cells trained compiled (hardware
+      profile), so they do not reproduce eagerly and are rerun in Phase 2.
+  - setup: perchannel
+    from: 2026-08-01
+    to: 2026-08-03
+    commit: 401ba0a2210a5025439f878484dad153321c8974
+    basis: >
+      Same window and same last commit as the multivariate cells above
+      (581 band runs, 2026-08-01 22:08 - 2026-08-02 17:05). Band 0 of five
+      models reproduces bit-for-bit at HEAD; the PatchTST and Transformer bands
+      trained compiled and differ by 0.05-0.9%.
+  - setup: cluster
+    from: 2026-08-25
+    to: 2026-08-26
+    commit: e30d4f082c29732fd31a8d2d12d109c12485ec4c
+    basis: >
+      e30d4f08 ("added the new results for clustering", 2026-08-25 15:04)
+      committed these 105 runs together with the native-CCM code that produced
+      them (models/ccm.py, dlinear/tsmixer/patchtst n_clusters path); the runs
+      are stamped 14:50-17:32 and forecasting/ is byte-identical between that
+      commit and HEAD. Stronger than the date alone: the code and the logs
+      landed in one commit.
+# The single-series tree (logs/univariate, setup "series") is outside the
+# paradigm comparison and is deliberately left without a rule.

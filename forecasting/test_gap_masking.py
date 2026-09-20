@@ -51,10 +51,14 @@ def test_repair_interpolates_short_and_flat_fills_long_gaps():
     assert (repaired.iloc[40:60, 0] == 39.0).all()
 
 
-def test_forecasting_dataset_without_flags_keeps_legacy_window_count():
+def test_forecasting_dataset_without_flags_counts_every_fitting_start():
     data = np.random.rand(3, 50)
     ds = ForecastingDataset(data, seq_len=8, pred_len=4)
-    assert len(ds) == 50 - 8 - 4
+    assert len(ds) == 50 - 8 - 4 + 1
+    # The final start is a real window: input [38, 46), target [46, 50).
+    x, y = ds[len(ds) - 1]
+    assert torch.equal(x, torch.from_numpy(data[:, 38:46]).float())
+    assert torch.equal(y, torch.from_numpy(data[:, 46:50]).float())
 
     ds_masked = ForecastingDataset(data, 8, 4, synthetic=np.zeros(50, dtype=bool))
     assert len(ds_masked) == len(ds)
@@ -72,7 +76,7 @@ def test_forecasting_dataset_excludes_windows_overlapping_flags():
 
     ds = ForecastingDataset(data, seq_len, pred_len, synthetic=synthetic)
     # Valid starts: [i, i + 12) must miss [20, 25) -> i <= 8 or i >= 25.
-    expected = [i for i in range(50 - window) if i + window <= 20 or i >= 25]
+    expected = [i for i in range(50 - window + 1) if i + window <= 20 or i >= 25]
     assert list(ds.valid_starts) == expected
     assert len(ds) == len(expected)
 
@@ -99,7 +103,7 @@ def test_clean_datasets_have_no_synthetic_rows(dataset):
         assert syn is not None and not syn.any()
     # No flags set -> window counts identical to the unmasked behavior.
     ds = ForecastingDataset(test, 192, 96, synthetic=test_syn)
-    assert len(ds) == test.shape[1] - 192 - 96
+    assert len(ds) == test.shape[1] - 192 - 96 + 1
 
 
 def test_emf2023_test_split_excludes_the_outage():
@@ -116,7 +120,7 @@ def test_emf2023_test_split_excludes_the_outage():
 
     ds = ForecastingDataset(test, 192, 96, synthetic=test_syn)
     window = 192 + 96
-    assert 0 < len(ds) < test.shape[1] - window
+    assert 0 < len(ds) < test.shape[1] - window + 1
     # No valid window may touch a flat-filled step.
     starts = ds.valid_starts
     flagged = np.flatnonzero(test_syn)
@@ -125,3 +129,17 @@ def test_emf2023_test_split_excludes_the_outage():
     # Exhaustive: windowed cumulative count of flags is zero at every kept start.
     cumsum = np.concatenate(([0], np.cumsum(test_syn)))
     assert (cumsum[starts + window] - cumsum[starts] == 0).all()
+
+
+def test_forecasting_dataset_matches_the_per_channel_window_count():
+    # The joint path (this class) and the per-channel path (create_windows)
+    # must score the same windows, or a multivariate cell and its per-channel
+    # twin are not evaluated on the same support.
+    from forecasting.multivariate.utils.dataloading import create_windows
+
+    data = np.random.rand(3, 50).astype(np.float32)
+    ds = ForecastingDataset(data, seq_len=8, pred_len=4)
+    windows = create_windows(torch.from_numpy(data[0]), 8 + 4, 1)
+    assert len(ds) == windows.shape[0] == 50 - 12 + 1
+    x, y = ds[len(ds) - 1]
+    assert torch.equal(torch.cat([x[0], y[0]]), windows[-1])

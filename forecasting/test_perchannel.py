@@ -183,7 +183,7 @@ def test_window_filter_runs_only_the_selected_window(tmp_path, monkeypatch):
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                          seed=perchannel.SEED, workers=None, threads=None,
-                         model_id=None):
+                         model_id=None, concurrency=1):
         calls.append((seq_len, pred_len, dataset, channel))
         return True, ""
 
@@ -204,7 +204,7 @@ def test_seeds_multiply_band_runs_and_aggregate_per_seed(tmp_path, monkeypatch):
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                          seed=perchannel.SEED, workers=None, threads=None,
-                         model_id=None):
+                         model_id=None, concurrency=1):
         calls.append((dataset, channel, seed))
         return True, ""
 
@@ -248,7 +248,7 @@ def test_run_grid_skips_completed_bands_and_records_failures(tmp_path, monkeypat
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                          seed=perchannel.SEED, workers=None, threads=None,
-                         model_id=None):
+                         model_id=None, concurrency=1):
         calls.append((job, dataset, seq_len, pred_len, channel))
         return False, "boom"
 
@@ -263,3 +263,11 @@ def test_run_grid_skips_completed_bands_and_records_failures(tmp_path, monkeypat
     calls.clear()
     perchannel.run_per_channel_grid(jobs=4, logs_dir=str(tmp_path))
     assert len(calls) == expected - 1
+
+
+def test_ablation_forces_eager_mode_and_records_concurrency():
+    plain = perchannel.channel_ablation("ED2022", 336, 96, 0, 0.1)
+    assert plain["global.exp.compile"] is False
+    assert plain["global.exp.concurrency"] == 1
+    pooled = perchannel.channel_ablation("ED2022", 336, 96, 0, 0.1, concurrency=8)
+    assert pooled["global.exp.concurrency"] == 8
