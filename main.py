@@ -140,7 +140,9 @@ if __name__ == "__main__":
     parser.add_argument("--grid", action="store_true",
                         help="Run a full model x dataset x window grid instead of one job.")
     parser.add_argument("--setup",
-                        choices=["univariate", "multivariate", "univariate_series", "cluster"],
+                        choices=["univariate", "multivariate", "univariate_series",
+                                 "cluster", "voip", "voip_perchannel",
+                                 "voip_cluster"],
                         default=None,
                         help="Grid setup. 'univariate' trains one model per frequency "
                              "band on the multivariate datasets and averages the bands; "
@@ -148,7 +150,12 @@ if __name__ == "__main__":
                              "'univariate_series' is the DET/PTV single-series sweep; "
                              "'cluster' runs the same cells through CCM's learned "
                              "channel clustering, sweeping k in addition to model/"
-                             "dataset/window. If omitted in grid mode, you are prompted.")
+                             "dataset/window. 'voip', 'voip_perchannel' and "
+                             "'voip_cluster' are those same three paradigms on the "
+                             "pooled VoIP call-quality datasets (VOIP_MOBILE / "
+                             "VOIP_FIXED, 6 channels, windows L48_O12 and L24_O6); "
+                             "they must be named explicitly. If omitted in grid "
+                             "mode, you are prompted for one of the four EMF grids.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Grid mode only: list cells and targets without training.")
     parser.add_argument("--jobs", type=int, default=None,

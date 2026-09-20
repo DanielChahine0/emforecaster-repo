@@ -23,6 +23,7 @@ from forecasting.multivariate.models.timesnet import TimesNet
 from forecasting.multivariate.models.tsmixer import TSMixer
 from forecasting.multivariate.models.emforecaster import EMForecaster
 from forecasting.multivariate.models.arima import ARIMAForecaster
+from forecasting.multivariate.models.persistence import Persistence
 from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
 
 # Unsupervised models
@@ -271,6 +272,8 @@ def get_model(args, generator=torch.Generator()):
                 args.data.target_channel if args.data.single_channel else None
             ),
         )
+    elif args.exp.model_id == "Persistence":
+        model = Persistence(pred_len=args.data.pred_len)
     else:
         raise ValueError("Please select a valid model_id.")
 
@@ -409,6 +412,7 @@ def forward_pass(args, model, batch, model_id, device):
         "CyclicalEMForecaster",
         "LSTM",
         "ARIMA",
+        "Persistence",
     }:
 
         x = batch[0]
@@ -513,6 +517,7 @@ def compute_loss(output, batch, criterion, model_id, args, device):
         "CyclicalEMForecaster",
         "LSTM",
         "ARIMA",
+        "Persistence",
     }:
         out, target = prepare_output_and_target(output, batch[1], args, device)
         # output = output.squeeze()

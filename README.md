@@ -17,7 +17,7 @@ The repository contains a single deep-learning forecasting package with two para
 Both training setups are driven by the root `main.py`, which selects the setup automatically from the job name.
 Both share the same conformal-prediction uncertainty quantification (independent/joint coverage and the paper's Trade-off Score), the same hyperparameter-tuning entrypoint, and the same optional Neptune logging and HPC submission paths.
 
-Model families available through `get_model`: PatchTST, recurrent models (LSTM/RNN/GRU/Mamba via `backbone_id`, reachable as `RecurrentModel` or under the grid's `LSTM` alias), Linear, DLinear, EMForecaster, ModernTCN, TimesNet, KNN, TSMixer, ARIMA (classical, non-gradient; see `exp.no_train`), and four RF baselines (RF_EMF_MLP, RF_EMF_CNN, RF_EMF_LSTM, RF_EMF_Transformer).
+Model families available through `get_model`: PatchTST, recurrent models (LSTM/RNN/GRU/Mamba via `backbone_id`, reachable as `RecurrentModel` or under the grid's `LSTM` alias), Linear, DLinear, EMForecaster, ModernTCN, TimesNet, KNN, TSMixer, ARIMA and Persistence (both classical and non-gradient; see `exp.no_train`), and four RF baselines (RF_EMF_MLP, RF_EMF_CNN, RF_EMF_LSTM, RF_EMF_Transformer).
 
 ## Repository layout
 
@@ -28,7 +28,8 @@ Model families available through `get_model`: PatchTST, recurrent models (LSTM/R
 │   ├── univariate/         # Univariate forecasting setup
 │   └── multivariate/       # Multivariate forecasting setup
 ├── multivariate/           # Standalone EMF measurement-analysis CLI (+ its own README)
-├── data/                   # Proprietary EMF measurement CSVs (see Data)
+├── data/                   # Measurement data (see Data)
+│   ├── ML_DATASETS/        # Raw VoIP traces + build_voip.py
 ├── logs/                   # Offline training-run logs (per run, per seed)
 ├── results/                # Tables, figures and the tidy CSVs behind them (see results/README.md)
 ├── pyproject.toml          # Poetry metadata, MIT license, Python >=3.11,<3.14
@@ -89,6 +90,14 @@ Multivariate data lives in `data/multivariate/`:
 Each processed multivariate CSV has a `Timestamp` column, per-frequency-band columns in V/m, and `EMF_*` aggregate columns.
 The multivariate dataloader drops `Timestamp`, the `EMF_*` aggregates, and `PTV` (to avoid target leakage), interpolates missing bands, and then sets `data.num_channels` automatically from the data (27 or 29), so the value in `args.yaml` is advisory only.
 
+### VoIP call-quality data
+
+A second, unrelated corpus lives in `data/ML_DATASETS/`: 16 VoIP call traces, one per (access type, codec) over `{Mobile, Fixed}` x `{g711, g722, g729, gsm, mpeg16, opus, spx8000, spx16000}`, each a `Time,MOS,BW,RTT,JIT,DJB,SNR` table of 161-820 rows.
+
+`python data/ML_DATASETS/build_voip.py` pools them into `data/multivariate/processed/VOIP_MOBILE.csv` and `VOIP_FIXED.csv` (eight traces each, six channels, a `Trace` column naming the codec). Its only cleaning is to null and interpolate the three physically impossible `JIT` values in `mob_g729` (up to 9.9e11); RTT outliers and the leading `RTT = 0` rows are kept deliberately.
+
+The loader splits **each trace on its own** and then concatenates the parts, so every split carries the same codec mix, and flags one row per join so no window can span two calls (`pooled_trace_splits` in `utils/dataloading.py`). The traces are far shorter than the EMF files, so these datasets run at their own windows (`L48_O12`, `L24_O6`) and their own split (0.6/0.2/0.2) - see the `voip*` grids below.
+
 ## Usage: running experiments
 
 Run from the repository root. `main.py` has two modes:
@@ -142,7 +151,7 @@ Single-job flags:
 Passing `--grid` (or omitting the job name entirely) runs a full sweep over every model x dataset x window cell of a grid defined in `forecasting/grids.py` instead of a single job.
 The exit code is non-zero if any cell failed.
 
-- `--setup {univariate,multivariate,univariate_series,cluster}` selects which grid to run:
+- `--setup {univariate,multivariate,univariate_series,cluster,voip,voip_perchannel,voip_cluster}` selects which grid to run:
   The first three sweep the same seven models — EMForecaster, DLinear, PatchTST, TSMixer, Transformer, LSTM, ARIMA — over 3 datasets x 4 windows, so every grid is 84 cells and a model's column exists in every table.
 
   - `multivariate` - one model per cell, forecasting all 27/29 frequency bands jointly, over the `ED2022`, `UH2022`, and `EMF_2023_university_5_with_PTV` datasets. (PatchTST left this sweep on 2026-07-24 and rejoined it on 2026-08-03. Its pre-drop cells are not on disk: commit `e84faec4` deleted `logs/multivariate/PatchTST/` along with the other three windows of every model, leaving only the `L336_O96` slice. `git checkout e84faec4^ -- logs/multivariate` restores the old tree.)
@@ -159,7 +168,11 @@ The exit code is non-zero if any cell failed.
 
     Finally, this grid replaced a KMeans-partition head on 2026-08-06; the k1/k9 cells in commits `2ebc7f08` / `3d2de887` (deleted in `f24cf7a2`) came from that head and are not resumable against the current config.
 
-  If `--setup` is omitted in grid mode, you are prompted interactively to pick one (`u`/`m`/`s`/`h`).
+  - `voip`, `voip_perchannel`, `voip_cluster` - the multivariate, per-channel and CCM-clustering paradigms over the pooled VoIP datasets (`VOIP_MOBILE`, `VOIP_FIXED`; 6 channels; windows `L48_O12` and `L24_O6`; `k_values = [2, 3]`, with `k = 1` and `k = 6` reachable through `--k`). They run the same drivers, job configs and log trees as their EMF counterparts - a VoIP cell lands in `logs/multivariate/<model>/voip_mobile/...` beside the EMF ones, one dataset slug apart - and add a **Persistence** column (`rf_emf_mv/persistence`, `exp.no_train`), which the EMF grids deliberately do not carry: four of the six VoIP channels repeat their previous value in 80-99% of steps, so without a last-value baseline a low error cannot be told apart from having learned nothing.
+
+    Every cell of these three grids also takes `grids.VOIP_OVERRIDES` on top of its job config (`sl.batch_size` 64, `data.train_split` 0.6, `data.val_split` 0.2). The split is the wider one because a 10% validation split of a 400-row trace leaves too few windows to calibrate a conformal interval on, and the batch is smaller because a pooled VoIP train split is ~1,900 windows, where a 512 batch would be four optimizer steps per epoch.
+
+  If `--setup` is omitted in grid mode, you are prompted interactively to pick one of the four EMF grids (`u`/`m`/`s`/`c`); the VoIP grids must be named explicitly.
 - `--window <spec>` restricts the sweep to specific lookback/horizon window(s) instead of all four. Every grid uses the same four `(seq_len, pred_len)` windows: `192x96`, `192x336`, `336x96`, `336x336`. Each window is written as `LxO` (e.g. `336x96`), `L_O` (`336_96`), or the `logs/` directory form `L336_O96`; comma-separate to select several (e.g. `--window 336x96,336x336`). The spec is validated against the grid up front, so a typo or a window not in the grid is a clean error rather than a mid-run failure. Omit to run every window.
 - `--seeds <spec>` trains every cell on more than one seed instead of just the canonical `69421` (default: 1 seed). A count counts up from the canonical seed, so `--seeds 3` runs `69421`, `69422`, `69423`; a comma-separated list (`--seeds 69422,69423`) selects those seeds exactly, for topping up a grid that already has `69421`. Because the canonical seed comes first and resume is per `(cell, seed)`, adding seeds to a finished sweep re-runs only the new ones — the existing runs are skipped, not retrained. Seeds are run seed-major (the whole grid at one seed, then the next), so an interrupted multi-seed sweep leaves a complete grid at one seed rather than a handful of cells with error bars. Note that on the per-channel grid a seed multiplies *band* runs: a second seed on the full `--setup univariate` grid is another ~1,700 trainings.
 - `--k <spec>` applies to the `cluster` grid only: restrict the sweep to specific cluster count(s) instead of every `k` in the grid. A single value (`--k 5`) or a comma-separated list (`--k 1,2`); duplicates collapse and the values run in ascending order. Unlike `--window`, a requested `k` need *not* be one of the grid's own `k_values`: the degenerate endpoints `k=1` (every channel in one cluster) and `k=num_channels` (one cluster per channel) are deliberately outside the sweep so they can be run as one-off sanity checks, and `--k 1` reaches them without editing `forecasting/grids.py`. An off-grid value is logged as `[NOTE ] ... running as a one-off` so it is never mistaken for part of the sweep, and the `k_values` actually covered are recorded in `logs/grid_report_cluster.json`. Passing `--k` to a grid without a `k` dimension is a clean error.

@@ -183,7 +183,7 @@ def test_window_filter_runs_only_the_selected_window(tmp_path, monkeypatch):
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                          seed=perchannel.SEED, workers=None, threads=None,
-                         model_id=None, concurrency=1):
+                         model_id=None, concurrency=1, overrides=None):
         calls.append((seq_len, pred_len, dataset, channel))
         return True, ""
 
@@ -204,7 +204,7 @@ def test_seeds_multiply_band_runs_and_aggregate_per_seed(tmp_path, monkeypatch):
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                          seed=perchannel.SEED, workers=None, threads=None,
-                         model_id=None, concurrency=1):
+                         model_id=None, concurrency=1, overrides=None):
         calls.append((dataset, channel, seed))
         return True, ""
 
@@ -248,7 +248,7 @@ def test_run_grid_skips_completed_bands_and_records_failures(tmp_path, monkeypat
 
     def fake_run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                          seed=perchannel.SEED, workers=None, threads=None,
-                         model_id=None, concurrency=1):
+                         model_id=None, concurrency=1, overrides=None):
         calls.append((job, dataset, seq_len, pred_len, channel))
         return False, "boom"
 

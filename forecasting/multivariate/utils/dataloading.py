@@ -113,6 +113,76 @@ def _repair_missing_values(df, max_interp_gap=MAX_INTERP_GAP, long_gap=None):
 
 
 # <-----------------Forecasting------------------------>
+def _trace_split_bounds(n, seq_len, train_split, val_split):
+    """[lo, hi) row ranges of one trace's train / val / test parts.
+
+    Mirrors the contiguous split in load_forecasting field for field, including
+    the seq_len back-extension that gives val and test a full lookback of
+    preceding context, so a pooled dataset and a single-series one are split by
+    the same rule. The back-extension is clamped at 0 for traces shorter than
+    one lookback.
+    """
+    test_split = 1 - train_split - val_split
+    num_train = int(n * train_split)
+    num_test = int(n * test_split)
+    num_val = n - num_train - num_test
+    return (
+        (0, num_train),
+        (max(0, num_train - seq_len), num_train + num_val),
+        (max(0, n - num_test - seq_len), n),
+    )
+
+
+def pooled_trace_splits(df, channels, seq_len, train_split, val_split,
+                        trace_column="Trace"):
+    """Split every trace on its own, then pool the parts split by split.
+
+    A pooled dataset (the VoIP corpus: one trace per codec, 161-820 rows each)
+    is too short per trace to calibrate a conformal interval on, but
+    concatenating the traces first and splitting once would put whole codecs in
+    different splits and test on codecs never trained on. Each trace is
+    therefore split chronologically on its own and the parts concatenated, so
+    every split carries the same codec mix.
+
+    Concatenation creates joins that are not time steps. The last row of every
+    part except the final one is flagged synthetic, which is exactly enough to
+    exclude every window spanning two traces: such a window contains rows from
+    both traces and so must contain that last row. It also costs one legitimate
+    window per join -- the one ending exactly at the flag -- which is uniform
+    across models and paradigms and so biases no comparison.
+
+    Returns ((train, train_syn), (val, val_syn), (test, test_syn)), each array
+    (time, channels) and unscaled; the caller scales them like any other split.
+    """
+    parts = ([], [], [])
+    flags = ([], [], [])
+    for _, block in df.groupby(trace_column, sort=False):
+        values = block[channels].to_numpy(dtype=np.float64)
+        bounds = _trace_split_bounds(len(values), seq_len, train_split, val_split)
+        for i, (lo, hi) in enumerate(bounds):
+            part = values[lo:hi]
+            if len(part) == 0:
+                continue
+            mask = np.zeros(len(part), dtype=bool)
+            mask[-1] = True
+            parts[i].append(part)
+            flags[i].append(mask)
+
+    out = []
+    for split_parts, split_flags in zip(parts, flags):
+        if not split_parts:
+            raise ValueError(
+                "pooled split is empty; every trace is shorter than the "
+                "requested lookback"
+            )
+        data = np.concatenate(split_parts)
+        syn = np.concatenate(split_flags)
+        # Nothing follows the final trace, so its last row joins nothing.
+        syn[-1] = False
+        out.append((data, syn))
+    return tuple(out)
+
+
 def load_forecasting(
     dataset_name="ETTh1",
     seq_len=512,
@@ -156,7 +226,8 @@ def load_forecasting(
             outages (see _long_gap_cells) -- or None for datasets with no such gaps.
             Windows overlapping flagged steps must not be trained on or scored.
             The univariate window path instead applies this exclusion internally
-            and returns its usual tuples.
+            and returns its usual tuples. The pooled VoIP datasets use the same
+            mechanism to mask windows that would span two traces.
 
     Returns:
         train_data (np.array): Training data of shape (num_channels, train_len).
@@ -168,6 +239,9 @@ def load_forecasting(
     # synthetic_rows flags timesteps whose values were flat-filled across a long
     # sensor outage (only the Italy multivariate files have such gaps).
     synthetic_rows = None
+    # Set by the pooled-trace datasets below, which split each trace on their
+    # own instead of taking one contiguous split of the whole array.
+    presplit = None
     current_dir = os.path.dirname(os.path.abspath(__file__))
     # This file is at forecasting/<setup>/utils/, so the repo root (which holds
     # data/) is three directories up.
@@ -275,6 +349,29 @@ def load_forecasting(
             for j in range(data.shape[1]):
                 data[:, j] = clip_and_interpolate(data[:, j], thresh)
 
+    elif dataset_name.startswith("VOIP_"):
+        # Pooled VoIP call-quality traces, built by data/ML_DATASETS/build_voip.py:
+        # one file per access type holding that type's eight codec traces stacked,
+        # with Timestamp (the trace's own step index) and Trace (the codec)
+        # alongside the six QoS/QoE channels. Both label columns are dropped here
+        # for the same reason Timestamp is dropped from the Italy files -- they
+        # are not measurements -- but Trace is read first, to split each trace
+        # separately (see pooled_trace_splits).
+        df = pd.read_csv(
+            os.path.join(root_dir, "data/multivariate/processed", f"{dataset_name}.csv")
+        )
+        bands = [c for c in df.columns if c not in {"Timestamp", "Trace"}]
+        df[bands] = df[bands].apply(pd.to_numeric, errors="coerce")
+        if df[bands].isna().any().any():
+            raise ValueError(
+                f"{dataset_name}: non-numeric or missing values; rebuild with "
+                f"data/ML_DATASETS/build_voip.py"
+            )
+        presplit = pooled_trace_splits(df, bands, seq_len, train_split, val_split)
+        # Only the channel count and dtype are read off this downstream; the
+        # rows that actually train and score come from presplit.
+        data = df[bands].to_numpy(dtype=np.float64)
+
     else:
         data = pd.read_csv(
             os.path.join(root_dir, "data/univariate", f"{dataset_name}.csv")
@@ -321,39 +418,46 @@ def load_forecasting(
         ), "If date is True and full_channels is False, datetime_numeric must also be True for window preprocessing."
 
     # Define train, validation, and test indices
-    if "etth" in dataset_name.lower():
-        train_idx = [0, 12 * 30 * 24]
-        val_idx = [12 * 30 * 24 - seq_len, 12 * 30 * 24 + 4 * 30 * 24]
-        test_idx = [12 * 30 * 24 + 4 * 30 * 24 - seq_len, 12 * 30 * 24 + 8 * 30 * 24]
-    elif "ettm" in dataset_name.lower():
-        train_idx = [0, 12 * 30 * 24 * 4]
-        val_idx = [12 * 30 * 24 * 4 - seq_len, 12 * 30 * 24 * 4 + 4 * 30 * 24 * 4]
-        test_idx = [
-            12 * 30 * 24 * 4 + 4 * 30 * 24 * 4 - seq_len,
-            12 * 30 * 24 * 4 + 8 * 30 * 24 * 4,
-        ]
+    if presplit is not None:
+        # A pooled multi-trace dataset was already split per trace, so there is
+        # no single contiguous index triple to take. Its flags mark the joins
+        # between traces rather than outage fill, but they mean the same thing
+        # downstream: no window may contain a flagged step.
+        (train_data, train_syn), (val_data, val_syn), (test_data, test_syn) = presplit
     else:
-        test_split = 1 - train_split - val_split
-        num_train = int(len(data) * train_split)
-        num_test = int(len(data) * test_split)
-        num_val = len(data) - num_train - num_test
+        if "etth" in dataset_name.lower():
+            train_idx = [0, 12 * 30 * 24]
+            val_idx = [12 * 30 * 24 - seq_len, 12 * 30 * 24 + 4 * 30 * 24]
+            test_idx = [12 * 30 * 24 + 4 * 30 * 24 - seq_len, 12 * 30 * 24 + 8 * 30 * 24]
+        elif "ettm" in dataset_name.lower():
+            train_idx = [0, 12 * 30 * 24 * 4]
+            val_idx = [12 * 30 * 24 * 4 - seq_len, 12 * 30 * 24 * 4 + 4 * 30 * 24 * 4]
+            test_idx = [
+                12 * 30 * 24 * 4 + 4 * 30 * 24 * 4 - seq_len,
+                12 * 30 * 24 * 4 + 8 * 30 * 24 * 4,
+            ]
+        else:
+            test_split = 1 - train_split - val_split
+            num_train = int(len(data) * train_split)
+            num_test = int(len(data) * test_split)
+            num_val = len(data) - num_train - num_test
 
-        train_idx = [0, num_train]
-        val_idx = [num_train - seq_len, num_train + num_val]
-        test_idx = [len(data) - num_test - seq_len, len(data)]
+            train_idx = [0, num_train]
+            val_idx = [num_train - seq_len, num_train + num_val]
+            test_idx = [len(data) - num_test - seq_len, len(data)]
 
-    # Split data
-    train_data = data[train_idx[0] : train_idx[1]]
-    val_data = data[val_idx[0] : val_idx[1]]
-    test_data = data[test_idx[0] : test_idx[1]]
+        # Split data
+        train_data = data[train_idx[0] : train_idx[1]]
+        val_data = data[val_idx[0] : val_idx[1]]
+        test_data = data[test_idx[0] : test_idx[1]]
 
-    # Slice the synthetic flags with the exact same boundaries (including the
-    # seq_len context extension on val/test) so they stay row-aligned.
-    train_syn = val_syn = test_syn = None
-    if synthetic_rows is not None:
-        train_syn = synthetic_rows[train_idx[0] : train_idx[1]]
-        val_syn = synthetic_rows[val_idx[0] : val_idx[1]]
-        test_syn = synthetic_rows[test_idx[0] : test_idx[1]]
+        # Slice the synthetic flags with the exact same boundaries (including the
+        # seq_len context extension on val/test) so they stay row-aligned.
+        train_syn = val_syn = test_syn = None
+        if synthetic_rows is not None:
+            train_syn = synthetic_rows[train_idx[0] : train_idx[1]]
+            val_syn = synthetic_rows[val_idx[0] : val_idx[1]]
+            test_syn = synthetic_rows[test_idx[0] : test_idx[1]]
 
     # Normalization. Data must be in shape (seq_len, num_channels)
     if scale:
@@ -1162,6 +1266,8 @@ def get_loaders(
         "UH2022",
         "UH2024",
         "EMF_2023_university_5_with_PTV",
+        "VOIP_MOBILE",
+        "VOIP_FIXED",
     }:
         splits = load_forecasting(
             dataset_name=args.data.dataset,

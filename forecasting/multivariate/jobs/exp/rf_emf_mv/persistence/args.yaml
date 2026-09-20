@@ -1,0 +1,86 @@
+# Persistence baseline (models/persistence.py): repeat the last observed value
+# across the horizon.
+#
+# Built for the VoIP grids, where four of the six channels repeat their previous
+# value in 80-99% of steps, so a model can post a low error without learning
+# anything. This column is what makes the others readable. It is not part of the
+# EMF grids.
+#
+# exp.no_train skips the gradient epoch loop and the checkpoint round-trip but
+# NOT the test path, exactly as for ARIMA: the split-conformal recalibration on
+# val and the test evaluation still run, so this cell writes the same sl_test/*
+# keys and the same resume marker (sl_test/interval_width_mean) as the deep
+# models. Do NOT reach for exp.sklearn instead -- that branch returns from test()
+# before any conformal code, so the cell would be logged [ OK ], write no marker,
+# and be re-run on every invocation forever.
+#
+# The forecast is made in the loader's standardized space, like every other
+# model's, so the metrics compare directly. There is nothing to seed: the model
+# is deterministic and parameter-free, so a multi-seed sweep would write
+# byte-identical duplicates, and seed_list is pinned to one entry the way
+# ARIMA's is.
+#
+# sl.epochs / lr / optimizer / early_stopping are inert under no_train but must
+# stay parseable. scheduler "None" keeps supervised_train from building one
+# against a null optimizer.
+#
+# data.dataset / seq_len / pred_len / exp.id are set per run by
+# forecasting/grid.py and forecasting/perchannel.py; the VoIP grids additionally
+# override sl.batch_size and the split fractions (see grids.VOIP_OVERRIDES).
+# data.num_channels is auto-inferred from the CSV (6 for the VoIP files), except
+# in the per-band grid which pins it to 1.
+exp:
+  project_name: "rf-emf-forecasting/RF-EMF-MV"
+  model_id: "Persistence"
+  learning_type: "sl"
+  id: ""
+  seed_list: [69421]
+  seed: 69421
+  mae: True
+  task: "forecasting"
+  neptune: False
+  no_train: True
+  eval_test_per_epoch: False
+
+data:
+  seq_load: True
+  dataset: "VOIP_MOBILE"
+  univariate: False
+  window_stride: 1
+  dtype: "float32"
+  seq_len: 48
+  pred_len: 12
+  train_split: 0.6
+  val_split: 0.2
+  num_channels: 6
+  scale: True
+
+ddp:
+  ddp: False
+  master_port: "11764"
+  find_unused_parameters: True
+
+sl:
+  optimizer: "adam"
+  dataset_class: "forecasting"
+  criterion: "MSE"
+  scheduler: "None"
+  epochs: 0
+  batch_size: 64
+  lr: 1e-4
+  early_stopping: False
+  weight_decay: 0.0
+
+scheduler:
+  pct_start: 0.3
+  lradj: "type3"
+
+early_stopping:
+  patience: 20
+
+conf:
+  conf: True
+  alpha: 0.1
+  corrected: False
+  intervals: True
+  validation_eval: False

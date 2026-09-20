@@ -83,6 +83,8 @@ On disk in `data/multivariate/processed/`: `ED2022.csv`, `ED2024.csv`, `UH2022.c
 Unprocessed twins live in `data/multivariate/unprocessed/`.
 After dropping `Timestamp` / `EMF_*` / `PTV` the loaded band count is 27 or 29 depending on the file.
 
+The same directory also holds `VOIP_MOBILE.csv` and `VOIP_FIXED.csv`, built from `data/ML_DATASETS/` by `build_voip.py`. They take a different path through `load_forecasting`: `pooled_trace_splits` splits each of their eight codec traces on its own and concatenates the parts, flagging one row per join so the existing synthetic-window exclusion drops any window that would span two calls. `Trace` is dropped alongside `Timestamp`, leaving six channels. See the repo README's *VoIP call-quality data*.
+
 ## args.yaml switches vs univariate
 
 The multivariate jobs flip three switches relative to the univariate jobs:
@@ -104,6 +106,7 @@ They also set `exp.task: "forecasting"`, `data.dataset: "ED2022"`, and `data.num
 | `rf_emf_mv/emforecaster` | EMForecaster | `patch_model_id: TSMixer`, `conf.conf: True` |
 | `rf_emf_mv/lstm` | LSTM | `models/recurrent.py::RecurrentModel`, `backbone_id: LSTM`; requires `data.patching: True`, `last_state: False`, `avg_state: True`, `revout: True` |
 | `rf_emf_mv/patchtst` | PatchTST | in the grid until 2026-07-24; job still runnable |
+| `rf_emf_mv/persistence` | Persistence | last-value baseline, `exp.no_train: True` (no epoch loop, no checkpoint); VoIP grids only |
 | `rf_emf_mv/timesnet` | TimesNet | multivariate-only; no univariate TimesNet job exists |
 | `rf_emf_mv/transformer` | RF_EMF_Transformer | channel-independent fold; `d_model` must be 2, `batch_size` reduced to 128 |
 | `rf_emf_mv/tsmixer` | TSMixer | |

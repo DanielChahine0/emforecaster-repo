@@ -188,6 +188,13 @@ class Experiment:
             self.logger["parameters/data/seq_len"] = loaders[-1]
             self.print_master(f"Sequence set to the median: {self.args.data.seq_len}.")
 
+        # get_loaders infers num_channels from the data, but init_logger has
+        # already dumped the config's advisory value by then. Re-log it so the
+        # run records the channel count it actually trained on: harmless while
+        # every dataset happened to carry 27, actively misleading once the VoIP
+        # files (6 channels) run through job configs that still say 27.
+        self.logger["parameters/data/num_channels"] = self.args.data.num_channels
+
     def free_memory(self):
         for k in ["train", "val", "test"]:
             if hasattr(self, f"{k}_loader"):

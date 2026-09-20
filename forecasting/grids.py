@@ -137,6 +137,50 @@ SERIES_MODELS = [
 ]
 SERIES_DATASETS = ["rf_emf_det", "rf_emf_ptv", "rf_emf_ptv2"]
 
+# ---------------------------------------------------------------------------
+# VoIP call-quality grids (data/ML_DATASETS -> data/multivariate/processed/
+# VOIP_{MOBILE,FIXED}.csv, built by data/ML_DATASETS/build_voip.py).
+#
+# Six heterogeneous QoS/QoE channels per dataset (MOS, BW, RTT, JIT, DJB, SNR)
+# against the EMF files' 27-29 near-homogeneous frequency bands, which is what
+# makes them worth running through the same three paradigms: a multivariate
+# model can exploit the QoS -> MOS coupling that a per-channel one cannot see,
+# and a cluster count of 2-3 has an obvious hypothesis to find.
+#
+# The seven EMF models plus a persistence baseline. Persistence is not optional
+# decoration here: four of the six channels repeat their previous value in
+# 80-99% of steps, so without it a low MSE cannot be distinguished from "carried
+# the last reading forward". It is deliberately absent from the EMF grids, whose
+# published tables it would change.
+VOIP_MODELS = MV_MODELS + [
+    ("Persistence", "Persistence", "rf_emf_mv/persistence"),
+]
+VOIP_DATASETS = ["VOIP_MOBILE", "VOIP_FIXED"]
+
+# The traces are 161-820 rows, so the EMF benchmark window (336 + 96) does not
+# fit in any of them. L48/O12 keeps the EMF grid's 4:1 lookback-to-horizon ratio
+# and is the benchmark; L24/O6 is the secondary window. L96/O24 is deliberately
+# absent: only four of the sixteen traces admit a test window at that size.
+VOIP_WINDOWS = [(48, 12), (24, 6)]
+
+# Applied to every cell of the VoIP grids, on top of the job config, by
+# forecasting/grid.py and forecasting/perchannel.py.
+#
+# The split is the config default 0.6/0.2/0.2 rather than the EMF jobs'
+# 0.7/0.1/0.2: a 10% validation split of a 400-row trace leaves too few windows
+# to calibrate a conformal interval on, and validation is what both early
+# stopping and split conformal read.
+#
+# Batch 64 rather than 512 because a pooled VoIP train split is ~1,900 windows:
+# at 512 that is four optimizer steps per epoch and the OneCycle schedule never
+# develops. Applied uniformly to every model and paradigm, so it changes what
+# the numbers mean but not what they can be compared against.
+VOIP_OVERRIDES = {
+    "sl.batch_size": 64,
+    "data.train_split": 0.6,
+    "data.val_split": 0.2,
+}
+
 GRIDS = {
     "multivariate": {
         "models": MV_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS, "alpha": 0.1,
@@ -152,6 +196,29 @@ GRIDS = {
     "univariate_series": {
         "models": SERIES_MODELS, "datasets": SERIES_DATASETS, "windows": WINDOWS,
         "alpha": 0.1,
+    },
+    # The VoIP counterparts of the three grids above, sharing their drivers,
+    # their log trees and their conformal settings; only the datasets, windows
+    # and the VOIP_OVERRIDES differ. Runs land in the same logs/<setup>/ trees
+    # under their own dataset slugs (voip_mobile / voip_fixed), so nothing has
+    # to learn a new layout and the EMF and VoIP cells stay one `dataset`
+    # column apart.
+    "voip": {
+        "models": VOIP_MODELS, "datasets": VOIP_DATASETS, "windows": VOIP_WINDOWS,
+        "alpha": 0.1, "overrides": VOIP_OVERRIDES,
+    },
+    "voip_perchannel": {
+        "models": VOIP_MODELS, "datasets": VOIP_DATASETS, "windows": VOIP_WINDOWS,
+        "alpha": 0.1, "per_channel": True, "overrides": VOIP_OVERRIDES,
+    },
+    # k = 1 (one cluster for every channel) and k = 6 (one per channel) are the
+    # degenerate ends of the soft assignment and sit outside the sweep for the
+    # same reason they do on the EMF cluster grid; --k reaches them for the
+    # controlled baseline and the sanity check.
+    "voip_cluster": {
+        "models": CLUSTER_MODELS, "datasets": VOIP_DATASETS,
+        "windows": VOIP_WINDOWS, "alpha": 0.1, "k_values": [2, 3],
+        "overrides": VOIP_OVERRIDES,
     },
     # CCM channel clustering. Same datasets/windows as "multivariate", plus a
     # k_values sweep dimension. k=1 (every channel in one cluster) and
@@ -383,11 +450,12 @@ def _is_band(column):
 
     Mirrors the column filter in multivariate/utils/dataloading.py: drop the
     timestamp, the EMF_* operator/technology/total aggregates (root-sum-squares of
-    the bands, which would leak the target), and the broadband PTV column. Kept in
-    step by hand rather than imported -- pulling the loader in here would drag
-    torch into grid startup.
+    the bands, which would leak the target), the broadband PTV column, and the
+    pooled VoIP files' Trace label. Kept in step by hand rather than imported --
+    pulling the loader in here would drag torch into grid startup.
     """
-    return not (column == "Timestamp" or column.startswith("EMF_") or column == "PTV")
+    return not (column == "Timestamp" or column.startswith("EMF_")
+                or column == "PTV" or column == "Trace")
 
 
 def dataset_num_channels(dataset, root_dir=None):

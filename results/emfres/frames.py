@@ -46,9 +46,23 @@ SETUPS = {
 # frames, it silently reappears as a setup named after its own directory.
 ARCHIVE_DIRS = {"archive", "archived"}
 
+# Dataset slug prefix -> corpus. The three paradigms run over two unrelated
+# corpora that share every driver, log tree and metric: the Italy EMF
+# measurements and the pooled VoIP call-quality traces. They are never
+# comparable to each other -- different channels, different windows, different
+# split -- so a table or figure renders one family at a time, and the column
+# below is what makes that filter possible without re-deriving it from a
+# dataset list that would go stale the next time a corpus is added.
+VOIP_PREFIX = "voip_"
+
+
+def family_of(dataset: str) -> str:
+    """The corpus a dataset slug belongs to: "voip" or "emf"."""
+    return "voip" if str(dataset).lower().startswith(VOIP_PREFIX) else "emf"
+
 RUN_FIELDS = [
-    "setup", "model", "dataset", "seq_len", "pred_len", "k", "channel", "seed",
-    "conf", "mse", "mae", "running_time", "per_epoch", "num_params",
+    "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "channel",
+    "seed", "conf", "mse", "mae", "running_time", "per_epoch", "num_params",
     "ic", "jc", "interval_width",
     # Provenance (forecasting/provenance.py): the commit that produced the run
     # and how many trainings shared the GPU. Blank on runs logged before
@@ -58,7 +72,7 @@ RUN_FIELDS = [
 ]
 
 CELL_FIELDS = [
-    "setup", "model", "dataset", "seq_len", "pred_len", "k", "conf",
+    "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "conf",
     "mse", "mse_std", "mae", "mae_std", "running_time", "per_epoch",
     "num_params", "ic", "jc", "interval_width",
     "n_runs", "n_seeds", "n_channels",
@@ -91,6 +105,7 @@ def is_archive(logs_dir: Path) -> bool:
 def _row(run: Run, setup: str, repo: Path) -> dict:
     return {
         "setup": setup,
+        "family": family_of(run.dataset),
         "model": run.model,
         "dataset": run.dataset,
         "seq_len": run.seq_len,
@@ -199,7 +214,8 @@ def build_cells(runs: list[dict]) -> list[dict]:
         channels = {r["channel"] for r in rs if r["channel"] != ""}
         get = lambda name: [_f(r[name]) for r in rs]
         out.append({
-            "setup": setup, "model": model, "dataset": dataset,
+            "setup": setup, "family": family_of(dataset),
+            "model": model, "dataset": dataset,
             "seq_len": seq_len, "pred_len": pred_len, "k": k, "conf": conf,
             "mse": _num(_mean(get("mse"))), "mse_std": _num(_stdev(get("mse"))),
             "mae": _num(_mean(get("mae"))), "mae_std": _num(_stdev(get("mae"))),

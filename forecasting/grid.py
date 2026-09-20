@@ -77,6 +77,11 @@ SETUP_PACKAGE = {
     "univariate": "multivariate",
     "univariate_series": "univariate",
     "cluster": "multivariate",
+    # The VoIP grids are the same three paradigms on a different corpus, so they
+    # run the same package and the same job configs.
+    "voip": "multivariate",
+    "voip_perchannel": "multivariate",
+    "voip_cluster": "multivariate",
 }
 
 # Grid name -> the <setup> folder its runs land in under logs/. The names differ
@@ -89,7 +94,37 @@ LOG_SETUP = {
     "univariate": PER_CHANNEL_SETUP,
     "univariate_series": "univariate",
     "cluster": "cluster",
+    # A VoIP cell is the same paradigm as its EMF counterpart, so it logs to the
+    # same tree; its dataset slug (voip_mobile / voip_fixed) is what separates
+    # the two corpora.
+    "voip": "multivariate",
+    "voip_perchannel": PER_CHANNEL_SETUP,
+    "voip_cluster": "cluster",
 }
+
+
+def apply_overrides(args, overrides):
+    """Apply a grid's per-cell config overrides in place.
+
+    Keys are dotted "group.field" against the loaded config. A grid declares
+    these when its corpus needs settings the job configs cannot carry -- the
+    VoIP grids reset the split and the batch size for every model at once --
+    and an unknown key raises rather than being silently ignored, because a
+    typo here would otherwise train the whole sweep at the job config's value.
+    """
+    for dotted, value in (overrides or {}).items():
+        group, _, field = dotted.partition(".")
+        target = getattr(args, group, None)
+        if target is None or not hasattr(target, field):
+            raise ValueError(
+                f"grid override {dotted!r} does not name a config field"
+            )
+        setattr(target, field, value)
+
+
+def override_ablation(overrides):
+    """The same overrides as --ablation keys, for the subprocess drivers."""
+    return {f"global.{dotted}": value for dotted, value in (overrides or {}).items()}
 
 
 def _package(setup):
@@ -126,7 +161,7 @@ def cell_done(setup, model_id, dataset, seq_len, pred_len, seeds=(SEED,),
 
 
 def cell_ablation(model_id, dataset, seq_len, pred_len, alpha, seed, k=None,
-                  run_tag="", workers=None, concurrency=1):
+                  run_tag="", workers=None, concurrency=1, overrides=None):
     """The --ablation payload that makes `main.py <job>` run exactly one cell.
 
     Mirrors the in-process overrides in run_grid field for field, so a jobs>1 run
@@ -162,6 +197,9 @@ def cell_ablation(model_id, dataset, seq_len, pred_len, alpha, seed, k=None,
     if k is not None:
         ablation["global.cluster.enabled"] = True
         ablation["global.cluster.k_clusters"] = k
+    # Before the memory profile below, which is a hardware mitigation and must
+    # win over a grid's declared batch size.
+    ablation.update(override_ablation(overrides))
     if workers is not None:
         ablation["global.data.num_workers"] = workers
     profile = _memory_profile(model_id, dataset, seq_len)
@@ -349,6 +387,9 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
             args.exp.compile = False
             # This path trains one cell at a time.
             args.exp.concurrency = 1
+            # Before the memory profile below, for the same reason as in
+            # cell_ablation: the profile is a hardware mitigation and wins.
+            apply_overrides(args, grid_def.get("overrides"))
             profile = _memory_profile(model_id, dataset, seq_len)
             if profile is not None:
                 args.sl.batch_size, args.sl.accum_steps = profile
@@ -459,7 +500,8 @@ def _run_grid_parallel(setup, grid_def, runs, jobs, logs_dir, seeds, k_values,
     def _one(item):
         cell_tag, model_id, job, dataset, seq_len, pred_len, k, run_tag, seed = item
         ablation = cell_ablation(model_id, dataset, seq_len, pred_len, alpha,
-                                 seed, k=k, run_tag=run_tag, concurrency=jobs)
+                                 seed, k=k, run_tag=run_tag, concurrency=jobs,
+                                 overrides=grid_def.get("overrides"))
         ok, err = run_cell_subprocess(job, ablation, threads=threads)
         return cell_tag, ok, err
 

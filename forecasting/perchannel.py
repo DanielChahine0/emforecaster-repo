@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from rich.console import Console
 from rich.table import Table
 
-from forecasting.grid import MARKER, SEED, _memory_profile
+from forecasting.grid import MARKER, SEED, _memory_profile, override_ablation
 from forecasting.grids import GRIDS, dataset_num_channels
 from forecasting.run_path import build_run_dir, PER_CHANNEL_SETUP
 
@@ -118,7 +118,7 @@ def channel_done(model_id, dataset, seq_len, pred_len, channel, seed=SEED,
 
 
 def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
-                     workers=None, model_id=None, concurrency=1):
+                     workers=None, model_id=None, concurrency=1, overrides=None):
     """Config overrides turning a joint multivariate job into one band's run.
 
     `workers` overrides the dataloader worker count that hardware.normalize_config
@@ -162,6 +162,9 @@ def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
         # (contract C7).
         "global.exp.concurrency": int(concurrency),
     }
+    # Before the memory profile below, which is a hardware mitigation and must
+    # win over a grid's declared batch size.
+    ablation.update(override_ablation(overrides))
     if workers is not None:
         ablation["global.data.num_workers"] = workers
     if model_id is not None:
@@ -172,11 +175,12 @@ def channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed=SEED,
 
 
 def run_channel(job, dataset, seq_len, pred_len, channel, alpha, seed=SEED,
-                workers=None, threads=None, model_id=None, concurrency=1):
+                workers=None, threads=None, model_id=None, concurrency=1,
+                overrides=None):
     """Train one band in its own process. Returns (ok, error_tail)."""
     ablation = channel_ablation(dataset, seq_len, pred_len, channel, alpha, seed,
                                 workers=workers, model_id=model_id,
-                                concurrency=concurrency)
+                                concurrency=concurrency, overrides=overrides)
     cmd = [sys.executable, os.path.join(_REPO_ROOT, "main.py"), job,
            "--ablation", json.dumps(ablation)]
     env = dict(os.environ)
@@ -333,7 +337,8 @@ def run_per_channel_grid(setup="univariate", jobs=8, dry_run=False, logs_dir="lo
         label, model_id, job, dataset, seq_len, pred_len, channel, seed = item
         ok, err = run_channel(job, dataset, seq_len, pred_len, channel, alpha,
                               seed=seed, workers=workers, threads=threads,
-                              model_id=model_id, concurrency=jobs)
+                              model_id=model_id, concurrency=jobs,
+                              overrides=grid_def.get("overrides"))
         return item, ok, err
 
     # Threads, not processes: each one only blocks on subprocess.run, so the GIL

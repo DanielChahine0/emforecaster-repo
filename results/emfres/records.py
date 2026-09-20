@@ -42,17 +42,29 @@ def _f(v: str) -> Optional[float]:
     return float(v) if v not in ("", None) else None
 
 
-def records_from_cells(cells_csv: Path, results: Path, metrics=None):
-    """Rebuild plot_metrics' Record list from frames/cells.csv."""
+def records_from_cells(cells_csv: Path, results: Path, metrics=None,
+                       family: str = "emf"):
+    """Rebuild plot_metrics' Record list from frames/cells.csv.
+
+    ``family`` defaults to the EMF corpus, so every existing figure command
+    renders exactly what it did before the VoIP datasets joined the same log
+    trees; pass "voip" for those, or None for both at once (which no figure
+    currently wants -- the two corpora share no axis).
+    """
     metrics = METRIC_COLUMNS if metrics is None else metrics
     sys.path.insert(0, str(results))
     import extract_results as er
     import plot_metrics as pm
 
+    from .frames import family_of
+
     rows = []
     with open(cells_csv) as f:
         for row in csv.DictReader(f):
             if row["setup"] not in SETUP_SECTIONS:
+                continue
+            if family is not None and (row.get("family")
+                                       or family_of(row["dataset"])) != family:
                 continue
             rows.append(row)
 

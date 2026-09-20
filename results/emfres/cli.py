@@ -122,11 +122,19 @@ def cmd_tables(args) -> int:
         print(f"{runs_csv} not found -- run `make.py extract` first", file=sys.stderr)
         return 1
 
-    sections = (T.render_sections(runs_csv, REPO, RESULTS)
-                + T.render_cross_sections(runs_csv, REPO, RESULTS))
-    sweep = T.render_ccm_sweep(FRAMES / "cells.csv")
+    family = args.family
+    sections = (T.render_sections(runs_csv, REPO, RESULTS, family)
+                + T.render_cross_sections(runs_csv, REPO, RESULTS, family))
+    # The k-sweep section is per dataset; each family has its own default.
+    sweep_dataset = "voip_mobile" if family == "voip" else "ed2022"
+    sweep_window = (48, 12) if family == "voip" else (336, 96)
+    sweep = T.render_ccm_sweep(FRAMES / "cells.csv", dataset=sweep_dataset,
+                               seq_len=sweep_window[0], pred_len=sweep_window[1])
     if sweep:
         sections.append(("ccm-sweep", "Channel Clustering (CCM) vs. plain", sweep))
+    if not sections:
+        print(f"no runs in family {family!r}", file=sys.stderr)
+        return 1
 
     # Gate: every value the frozen report publishes must still come out of the
     # CSVs. This is deliberately a *value* check, not a text comparison.
@@ -141,8 +149,13 @@ def cmd_tables(args) -> int:
     # the archive never had is a cell it cannot contradict.
     from . import reconcile as R
 
-    published = PUBLISHED
-    if published.exists():
+    # The frozen snapshot covers the EMF corpus only, so it cannot speak for a
+    # VoIP rebuild; those tables are ungated until a snapshot is frozen for them.
+    published = PUBLISHED if family == "emf" else None
+    if published is None:
+        print(f"NOTE: no frozen snapshot for family {family!r} -- values are not "
+              f"gated against one", file=sys.stderr)
+    elif published.exists():
         if R.reconcile(published, FRAMES / "cells.csv") != 0 and not args.force:
             print(f"\nA published value no longer reproduces from frames/; refusing "
                   f"to write. Pass --force to write anyway.", file=sys.stderr)
@@ -171,7 +184,9 @@ def cmd_tables(args) -> int:
         print(f"\nchecked {len(sections)} sections -- every published value reproduces")
         return 0
 
-    outdir = RESULTS / "tables"
+    # One directory per corpus: the EMF tables keep their established paths,
+    # anything else lands in a sibling named after its family.
+    outdir = RESULTS / "tables" if family == "emf" else RESULTS / "tables" / family
     outdir.mkdir(parents=True, exist_ok=True)
     manifest = FRAMES / "MANIFEST.json"
     digest = "unknown"
@@ -184,10 +199,13 @@ def cmd_tables(args) -> int:
     (outdir / "all.md").write_text(
         banner + "\n\n" + "\n\n".join(md.strip() for _, _, md in sections) + "\n")
 
-    twins = T.cells_csv_twins(FRAMES / "cells.csv", outdir / "csv")
+    twins = T.cells_csv_twins(FRAMES / "cells.csv", outdir / "csv", family)
 
-    index = [banner, "", "# Results tables", "",
-             f"Rendered from `frames/runs.csv` (digest `{digest}`).",
+    index = [banner, "",
+             "# Results tables" if family == "emf" else f"# Results tables ({family})",
+             "",
+             f"Rendered from `frames/runs.csv` (digest `{digest}`), "
+             f"family `{family}`.",
              "Every number here is reproducible with `python results/make.py extract`.",
              "", "| Section | Markdown |", "| :--- | :--- |"]
     index += [f"| {title} | [`{slug}.md`]({slug}.md) |" for slug, title, _ in sections]
@@ -231,6 +249,11 @@ def main(argv: list[str] | None = None) -> int:
     ex.set_defaults(func=cmd_extract)
 
     tb = sub.add_parser("tables", help="frames/ -> tables/*.md + csv twins")
+    tb.add_argument("--family", default="emf", choices=["emf", "voip"],
+                    help="which corpus to render (default: emf). The two share "
+                         "every driver and log tree but no axis -- different "
+                         "channels, windows and split -- so they are never "
+                         "rendered into one table. 'voip' writes tables/voip/.")
     tb.add_argument("--check", action="store_true",
                     help="rebuild and diff against tables.md, write nothing")
     tb.add_argument("--force", action="store_true",

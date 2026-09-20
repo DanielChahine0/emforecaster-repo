@@ -1,0 +1,238 @@
+arima:
+  d: 0
+  p: 1
+  q: 1
+  trend: c
+cluster:
+  beta: 0.3
+  enabled: false
+  k_clusters: 1
+conf:
+  alpha: 0.1
+  conf: true
+  corrected: false
+  intervals: true
+  validation_eval: false
+data:
+  average_italy: false
+  balance: true
+  clip: false
+  clip_thresh: 0.8
+  cyclical_encoding: false
+  dataset: VOIP_MOBILE
+  dataset_only: false
+  datetime: false
+  datetime_features:
+  - year
+  - month
+  - day
+  - hour
+  - minute
+  - second
+  difference_input: false
+  drop_last: false
+  dtype: float32
+  full_channels: false
+  median_seq_len: false
+  num_channels: 1
+  num_classes: 2
+  num_workers: 2
+  numpy_data: false
+  pad_to_max: false
+  patch_dim: 16
+  patch_stride: 8
+  patching: false
+  pin_memory: true
+  pred_len: 12
+  prefetch_factor: 2
+  rank_seq_load: false
+  resizing_mode: None
+  scale: true
+  seq_len: 48
+  seq_load: true
+  shuffle_test: false
+  single_channel: true
+  target_channel: 4
+  time_indices: false
+  train_split: 0.6
+  tslearn: false
+  univariate: true
+  val_split: 0.2
+  window_stride: 1
+ddp:
+  ddp: false
+  find_unused_parameters: false
+  master_addr: localhost
+  master_port: '12356'
+  shuffle: true
+  slurm: false
+dlinear:
+  final_moving_avg: 25
+  individual: false
+  moving_avg: 25
+early_stopping:
+  delta: 0.0
+  patience: 20
+  verbose: true
+ema:
+  beta_0: 0.996
+  beta_1: 1.0
+  ema_momentum_scheduler: true
+exp:
+  ablation_id: 1
+  acc: false
+  api_token: ''
+  backbone_id: LSTM
+  batchwise_metrics: false
+  best_model_metric: loss
+  calibrate: false
+  calibration_model: isotonic_regression
+  calibration_type: none
+  ch_acc: false
+  compile: false
+  concurrency: 8
+  early_stopping: true
+  eval_test_per_epoch: false
+  gpu_id: 0
+  grid_search: false
+  id: ch4
+  learning_type: sl
+  mae: true
+  model_id: PatchTST
+  mps: false
+  neptune: false
+  no_train: false
+  other_metrics: false
+  patch_model_id: DLinear
+  project_name: rf-emf-forecasting/RF-EMF-MV
+  rank_verbose: false
+  seed: 69424
+  seed_list:
+  - 69424
+  sklearn: false
+  sklearn_n_jobs: -1
+  sklearn_verbose: 1
+  task: forecasting
+  thresh: 0.5
+  time: 2026-09-20_15-02-57
+  tuning_metric: loss
+  u_weight: false
+  va_inductive: true
+  va_splits: 5
+mlp_mixer:
+  cha_mixer_dim: 128
+  dropout: 0.0
+  pos_enc_type: 1d_sincos
+  tok_mixer_dim: 128
+moderntcn:
+  class_dropout: 0.0
+  d_model:
+  - 16
+  dropout: 0.0
+  dw_dims:
+  - 256
+  ffn_ratio: 1
+  large_size:
+  - 9
+  num_enc_layers:
+  - 2
+  small_size:
+  - 5
+open_neuro:
+  all_clusters: false
+  alpha: 1.0
+  beta: 1.0
+  ch_aggr: false
+  ch_loss: false
+  ch_loss_type: BCE
+  ch_reduction: mean
+  ch_var_loss: false
+  chi: 0.0
+  gamma: 0.0
+  kernel_size: 150
+  kernel_stride: 75
+  loocv: false
+  patient_cluster: jh
+  pool_type: avg
+  task: binary
+  test_clusters:
+  - umf
+  train_clusters:
+  - jh
+  - umf
+  - pt
+patchtst:
+  attn_dropout: 0.3
+  d_ff: 128
+  d_model: 16
+  ff_dropout: 0.3
+  norm_mode: batch1d
+  num_enc_layers: 3
+  num_heads: 4
+scheduler:
+  T_max: 100
+  eta_min: 1.0e-06
+  final_lr: 1.0e-06
+  last_epoch: -1
+  lradj: type3
+  pct_start: 0.3
+  ref_lr: 0.001
+  start_lr: 0.0001
+  warmup_steps: 15
+sl:
+  accum_steps: 1
+  attn_dropout: 0.0
+  avg_state: false
+  batch_first: true
+  batch_size: 64
+  bidirectional: false
+  channel_independent: true
+  criterion: MSE
+  d_ff: 32
+  d_model: 16
+  dataset_class: univariate_forecasting
+  datetime_backbone: EMForecaster
+  dropout: 0.3
+  early_stopping: true
+  epochs: 100
+  eps_revin: 1.0e-05
+  ff_dropout: 0.3
+  head_d_model: 128
+  head_type: linear
+  independent_patching: false
+  knn_metric: dtw
+  knn_metric_params: {}
+  knn_weights: uniform
+  last_state: true
+  lr: 0.0001
+  max_dilation: 32
+  norm_mode: batch1d
+  num_enc_layers: 3
+  num_head_layers: 2
+  num_heads: 2
+  num_kernels: 32
+  num_neighbours: 5
+  optimizer: adam
+  patch_act: gelu
+  patch_embed_dim: 128
+  patch_norm: layer
+  pos_enc: learnable
+  pred_dropout: 0.0
+  return_head: false
+  revin: true
+  revin_affine: true
+  revout: true
+  scheduler: onecycle
+  weight_decay: 0.0001
+timesnet:
+  c_out: 1
+  d_ff: 128
+  d_model: 16
+  dropout: 0.3
+  num_enc_layers: 2
+  num_kernels: 6
+  top_k: 3
+tsmixer:
+  d_model: 16
+  dropout: 0.3
+  num_enc_layers: 2

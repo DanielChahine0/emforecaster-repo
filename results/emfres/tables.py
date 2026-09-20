@@ -43,13 +43,25 @@ def _i(v: str) -> Optional[int]:
     return int(v) if v not in ("", None) else None
 
 
-def runs_from_csv(path: Path, repo: Path):
-    """Rebuild extract_results.Run objects from frames/runs.csv, keyed by setup."""
+def runs_from_csv(path: Path, repo: Path, family: Optional[str] = None):
+    """Rebuild extract_results.Run objects from frames/runs.csv, keyed by setup.
+
+    ``family`` keeps only one corpus (see frames.family_of). A table mixing the
+    EMF and VoIP families would put rows with different channels, windows and
+    split fractions in one column and invite exactly the comparison that cannot
+    be made, so every renderer takes one family at a time.
+    """
+    from .frames import family_of
     from .runlogs import Run
 
     by_setup: dict[str, list] = {}
     with open(path) as f:
         for row in csv.DictReader(f):
+            # Re-derived when absent, so a frames file written before the
+            # column existed still filters correctly.
+            if family is not None and (row.get("family")
+                                       or family_of(row["dataset"])) != family:
+                continue
             by_setup.setdefault(row["setup"], []).append(Run(
                 model=row["model"],
                 dataset=row["dataset"],
@@ -72,12 +84,13 @@ def runs_from_csv(path: Path, repo: Path):
     return by_setup
 
 
-def render_sections(runs_csv: Path, repo: Path, results: Path) -> list[tuple[str, str, str]]:
+def render_sections(runs_csv: Path, repo: Path, results: Path,
+                    family: Optional[str] = None) -> list[tuple[str, str, str]]:
     """(setup, title, markdown) for every setup present, in report order."""
     sys.path.insert(0, str(results))
     import extract_results as er
 
-    by_setup = runs_from_csv(runs_csv, repo)
+    by_setup = runs_from_csv(runs_csv, repo, family)
     out = []
     for setup in SETUP_ORDER + sorted(set(by_setup) - set(SETUP_ORDER)):
         runs = by_setup.get(setup)
@@ -88,7 +101,8 @@ def render_sections(runs_csv: Path, repo: Path, results: Path) -> list[tuple[str
     return out
 
 
-def render_cross_sections(runs_csv: Path, repo: Path, results: Path) -> list[tuple[str, str, str]]:
+def render_cross_sections(runs_csv: Path, repo: Path, results: Path,
+                          family: Optional[str] = None) -> list[tuple[str, str, str]]:
     """The three sections that need more than one setup at once.
 
     ``Multivariate vs Univariate``, ``CCM vs Base`` and ``Ultimate Comparison``
@@ -98,7 +112,7 @@ def render_cross_sections(runs_csv: Path, repo: Path, results: Path) -> list[tup
     sys.path.insert(0, str(results))
     import extract_results as er
 
-    by_setup = runs_from_csv(runs_csv, repo)
+    by_setup = runs_from_csv(runs_csv, repo, family)
     cells = {SETUP_TITLES[s]: er.aggregate(r)
              for s, r in by_setup.items() if s in SETUP_TITLES}
 
@@ -127,13 +141,19 @@ def render_cross_sections(runs_csv: Path, repo: Path, results: Path) -> list[tup
     return out
 
 
-def cells_csv_twins(cells_csv: Path, outdir: Path) -> list[Path]:
+def cells_csv_twins(cells_csv: Path, outdir: Path,
+                    family: Optional[str] = None) -> list[Path]:
     """One flat CSV per setup, so a table can be opened without a markdown parser."""
+    from .frames import family_of
+
     rows_by_setup: dict[str, list[dict]] = {}
     with open(cells_csv) as f:
         reader = csv.DictReader(f)
         fields = reader.fieldnames or []
         for row in reader:
+            if family is not None and (row.get("family")
+                                       or family_of(row["dataset"])) != family:
+                continue
             rows_by_setup.setdefault(row["setup"], []).append(row)
 
     outdir.mkdir(parents=True, exist_ok=True)

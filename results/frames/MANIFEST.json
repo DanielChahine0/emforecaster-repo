@@ -1,15 +1,16 @@
 {
   "code_commits": [
     "401ba0a2210a5025439f878484dad153321c8974",
+    "6f6d60d3c2502d84d2ed795e169261b09d0db7d0",
     "cbaab8d01d6e3db3909a5804736762f987a9bee3",
     "e30d4f082c29732fd31a8d2d12d109c12485ec4c"
   ],
   "counts": {
-    "cells": 195,
-    "runs": 875,
+    "cells": 227,
+    "runs": 908,
     "runs_by_setup": {
       "cluster": 105,
-      "multivariate": 21,
+      "multivariate": 54,
       "perchannel": 581,
       "series": 168
     }
@@ -19,13 +20,13 @@
     "43"
   ],
   "logs_commit": "241d228a54ceaec55fbf2db1eade2c7d27d57e49",
-  "n_runs": 875,
+  "n_runs": 908,
   "provenance": {
     "inferred": 707,
-    "stamped": 0,
+    "stamped": 33,
     "unstamped": 168
   },
-  "runs_digest": "0b6b54df173718e2d2c530a192da99899969ff230fee75d6d452c62bafcad29b",
+  "runs_digest": "60d42c96ed201ef45fcafcff1604f862045a6fe90a051307e3d4b6add8c1458e",
   "setups": [
     "cluster",
     "multivariate",
