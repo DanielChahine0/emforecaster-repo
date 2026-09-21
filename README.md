@@ -179,6 +179,18 @@ The exit code is non-zero if any cell failed.
 - `--dry_run` lists the cells and their target log directories without training anything. Useful to preview what a sweep will do.
 - `--jobs <int>` applies to the per-channel (`--setup univariate`) grid only: how many band trainings run concurrently (default 8). Lower it if the GPU runs out of memory.
 
+  **Running the per-channel grid faster with CUDA MPS.** A per-channel band is a tiny single-channel model, so its kernels are small and short. With several bands in flight the GPU time-slices between their processes: `nvidia-smi` reports ~97% utilization while the card draws about 58% of its power limit and most of its memory sits idle. NVIDIA's Multi-Process Service lets those processes' kernels run on the GPU at the same time instead. It changes scheduling, not arithmetic -- bands rerun under it are bit-identical -- and on the RTX 5090 it measured 1.19x faster per band at `--jobs 8`, then a further 1.28x in total throughput at `--jobs 12` (Transformer bands, each still well under the 1.5x slowdown that would cancel the extra concurrency). Start the daemon on a private pipe directory so only processes you give that directory attach, and nobody else's GPU jobs are affected on a shared machine:
+
+  ```bash
+  export CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-$USER/pipe CUDA_MPS_LOG_DIRECTORY=/tmp/mps-$USER/log
+  mkdir -p "$CUDA_MPS_PIPE_DIRECTORY" "$CUDA_MPS_LOG_DIRECTORY"
+  nvidia-cuda-mps-control -d                     # start (serves only this pipe directory)
+  python main.py --grid --setup univariate --window 336x96 --jobs 12
+  echo quit | nvidia-cuda-mps-control            # stop it when the sweep is done
+  ```
+
+  It only pays for many small concurrent processes: a single multivariate or cluster cell gains nothing, and neither does ARIMA, which fits on the CPU. The levers that would be faster still -- a larger batch, mixed precision, `torch.compile`, fewer epochs -- all change the numbers, so they are not used on benchmark runs.
+
 Examples:
 
 ```bash
