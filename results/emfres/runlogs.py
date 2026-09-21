@@ -57,6 +57,11 @@ class Run:
     # "log" when the run stamped git_commit itself, "inferred" when a
     # specs/provenance.yaml rule supplied it, "" when neither.
     commit_source: str = ""
+    # Best (lowest) validation loss over the run's epochs -- the quantity early
+    # stopping selected on. What a model-selection choice made *without* the
+    # test split (e.g. a cluster count) has to be made from. None for the
+    # fit-once models, which have no epoch loop.
+    val_loss: Optional[float] = None
 
 
 @dataclass
@@ -199,10 +204,13 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                 git_commit, commit_source = hit, "inferred"
         concurrency = d.get("parameters/exp/concurrency")
         concurrency = int(concurrency) if concurrency not in (None, "") else None
+        val_curve = d.get("sl_val/loss") or d.get("sl_valid/loss")
+        val_loss = (min(v for v in val_curve if v is not None)
+                    if isinstance(val_curve, list) and val_curve else None)
 
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
                          running_time, per_epoch, num_params, ic, jc, interval_width,
                          channel, k, seed, log_path,
                          git_commit=git_commit, concurrency=concurrency,
-                         commit_source=commit_source))
+                         commit_source=commit_source, val_loss=val_loss))
     return runs

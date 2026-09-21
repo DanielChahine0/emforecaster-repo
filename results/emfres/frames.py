@@ -62,7 +62,8 @@ def family_of(dataset: str) -> str:
 
 RUN_FIELDS = [
     "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "channel",
-    "seed", "conf", "mse", "mae", "running_time", "per_epoch", "num_params",
+    "seed", "conf", "mse", "mae", "val_loss", "running_time", "per_epoch",
+    "num_params",
     "ic", "jc", "interval_width",
     # Provenance (forecasting/provenance.py): the commit that produced the run
     # and how many trainings shared the GPU. Blank on runs logged before
@@ -116,6 +117,7 @@ def _row(run: Run, setup: str, repo: Path) -> dict:
         "conf": int(run.conf),
         "mse": _num(run.mse),
         "mae": _num(run.mae),
+        "val_loss": _num(run.val_loss),
         "running_time": _num(run.running_time),
         "per_epoch": _num(run.per_epoch),
         "num_params": "" if run.num_params is None else run.num_params,
