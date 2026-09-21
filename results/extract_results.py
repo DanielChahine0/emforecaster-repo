@@ -48,9 +48,13 @@ MODEL_DISPLAY = {
 MODEL_ORDER = [
     "EMForecaster", "DLinear", "TSMixer", "PatchTST",
     "Transformer", "RF_EMF_Transformer", "LSTM", "RF_EMF_LSTM", "ARIMA",
+    # The VoIP grids' last-value baseline; no EMF grid carries it.
+    "Persistence",
 ]
 DATASET_DISPLAY = {
     "emf_2023_university_5_with_ptv": "EMF2023 (University-5 w/ PTV)",
+    "voip_mobile": "VoIP Mobile",
+    "voip_fixed": "VoIP Fixed",
 }
 DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv",
                  "voip_mobile", "voip_fixed"]
