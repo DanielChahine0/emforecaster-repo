@@ -89,13 +89,26 @@ appear only inside rendered content.
 ## Provenance
 
 `frames/MANIFEST.json` records the run count, a digest over the input paths and
-their metrics, the last commit that touched `logs/`, and — since 2026-09-19 —
-the set of *code* commits the runs themselves were stamped with
-(`code_commits`, from `parameters/exp/git_commit`) plus how many runs predate
-that stamping (`unstamped_runs`). `runs.csv` carries `git_commit` and
-`concurrency` (the grid's `--jobs` while the run trained) per run, and
-`cells.csv` carries `commits`, the distinct commits behind a cell. It changes
-when the inputs change and not otherwise, so a rebuild leaves `git status` clean.
+their metrics, the last commit that touched `logs/`, and the **training-code
+versions** behind the runs (`code_versions`, each with the commit ids that
+carry it), how many runs have no establishable code (`unknown_code_runs`) and
+how each run's commit was established (`provenance`). It changes when the
+inputs change and not otherwise, so a rebuild leaves `git status` clean.
+
+Provenance is judged on the code a run executed, not on its commit id. A code
+version is a fingerprint of `forecasting/`, `main.py`, `pyproject.toml` and the
+vendored CCM tree at that commit, ignoring tests and markdown
+(`frames.code_fingerprint`). Commits that differ only in `results/`, `logs/`,
+`data/` or docs therefore share a version, which is what lets results work be
+committed while a sweep is running without splitting the sweep.
+
+Per run, `runs.csv` carries `git_commit` (stamped, or dated by a rule),
+`git_dirty`, `commit_source` — `log` (stamped, clean tree), `attested` (stamped
+on a dirty tree and resolved by an evidenced rule), `dirty` (unresolved),
+`inferred` (logged before stamping, dated by a rule) — plus `code_version` and
+`concurrency` (the grid's `--jobs` while it trained). `cells.csv` carries
+`code_versions`, the distinct versions behind a cell (`?` for a run whose code
+is unknown); more than one means the cell is not a single-code seed mean.
 
 `make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
 compares it with the frozen snapshot named by `PUBLISHED` in `emfres/cli.py`,
@@ -138,14 +151,14 @@ earlier upstream-wrapper sweep and the 27-run lookback ladder are in
   checking against a snapshot rather than a second implementation. Re-freeze
   it (copy `tables/all.md` into `archive/` and repoint `PUBLISHED`) whenever a
   new set of numbers is accepted as published.
-- Every run in the live tree predates provenance stamping. `specs/provenance.yaml`
-  assigns 707 of them a commit by setup and `exp/time` window (`commit_source`
-  = `inferred` in `runs.csv`; the audit behind each rule is written next to it),
-  the 168 single-series runs get none, and runs made from 2026-09-19 on stamp
-  the commit themselves (`commit_source` = `log`). `MANIFEST.json` counts the
-  three under `provenance` and lists the resulting `code_commits` — three today
-  (`401ba0a2`, `cbaab8d0`, `e30d4f08`), which is the reason the Phase 2 rerun in
-  `.personal/PLAN.md` exists.
+- `specs/provenance.yaml` holds two kinds of evidenced rule. `inferred` dates
+  runs logged before stamping (2026-09-19) by setup and `exp/time` window;
+  `attested` resolves runs stamped on a dirty tree to the commit whose code they
+  ran. The 168 single-series runs have neither and stay unknown. The per-channel
+  runs kept from August are a different code version from everything run since
+  (the Phase 0/1 changes), so their cells show two versions once newer seeds
+  join them; `.personal/PLAN.md` records the bit-exact reproduction that shows
+  those runs behave identically under the current code.
 - `frames/epochs.csv` (per-epoch losses) is opt-in behind `--epochs` and
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
 - `emfres/fig_curves.py` still walks `logs/` directly rather than reading

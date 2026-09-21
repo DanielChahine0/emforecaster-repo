@@ -54,9 +54,18 @@ class Run:
     # None on every run logged before that.
     git_commit: Optional[str] = None
     concurrency: Optional[int] = None
-    # "log" when the run stamped git_commit itself, "inferred" when a
-    # specs/provenance.yaml rule supplied it, "" when neither.
+    # Where git_commit came from: "log" (stamped, clean tree), "attested" (stamped
+    # on a dirty tree, resolved by a specs/provenance.yaml rule), "dirty"
+    # (stamped on a dirty tree, unresolved), "inferred" (unstamped, dated by a
+    # rule), or "" (none of these).
     commit_source: str = ""
+    # Whether the tree had uncommitted training-path changes when the run
+    # started. None for runs logged before stamping.
+    git_dirty: Optional[bool] = None
+    # The commit whose training code the run actually used, when that is known:
+    # the stamp itself on a clean tree, the attested or inferred commit
+    # otherwise. None when it cannot be established.
+    code_commit: Optional[str] = None
     # Best (lowest) validation loss over the run's epochs -- the quantity early
     # stopping selected on. What a model-selection choice made *without* the
     # test split (e.g. a cluster count) has to be made from. None for the
@@ -96,6 +105,23 @@ def excluded(log_path: Path, exclude: list[str]) -> bool:
     )
 
 
+def _run_time(exp_time) -> Optional[datetime]:
+    try:
+        return datetime.strptime(str(exp_time), "%Y-%m-%d_%H-%M-%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def _in_window(rule: dict, when: datetime) -> bool:
+    """Whether ``when`` falls in the rule's half-open [from, to) window."""
+    try:
+        lo = datetime.fromisoformat(str(rule["from"]))
+        hi = datetime.fromisoformat(str(rule["to"]))
+    except (KeyError, ValueError):
+        return False
+    return lo <= when < hi
+
+
 def infer_commit(rules: list[dict], setup: Optional[str], model: str,
                  exp_time: Optional[str]) -> Optional[str]:
     """The commit a specs/provenance.yaml rule assigns to an unstamped run.
@@ -104,11 +130,8 @@ def infer_commit(rules: list[dict], setup: Optional[str], model: str,
     half-open exp/time window [from, to); the first match wins. None when no
     rule applies or the run has no parseable parameters/exp/time.
     """
-    if not rules or not exp_time:
-        return None
-    try:
-        when = datetime.strptime(str(exp_time), "%Y-%m-%d_%H-%M-%S")
-    except ValueError:
+    when = _run_time(exp_time) if rules else None
+    if when is None:
         return None
     for rule in rules:
         if rule.get("setup") not in (None, setup):
@@ -116,18 +139,37 @@ def infer_commit(rules: list[dict], setup: Optional[str], model: str,
         models = rule.get("models")
         if models and model not in models:
             continue
-        try:
-            lo = datetime.fromisoformat(str(rule["from"]))
-            hi = datetime.fromisoformat(str(rule["to"]))
-        except (KeyError, ValueError):
-            continue
-        if lo <= when < hi:
+        if _in_window(rule, when):
             return str(rule["commit"])
     return None
 
 
+def attest_commit(rules: list[dict], stamped: str,
+                  exp_time: Optional[str]) -> Optional[str]:
+    """The commit whose code a dirty-tree run used, if a rule vouches for it.
+
+    A run stamped on a dirty tree records the commit it sat on, not the code it
+    ran, so its code is unknown unless something else establishes it. An
+    ``attested`` rule in specs/provenance.yaml does that for a window of runs:
+    it names the stamped commit (a prefix is enough), the [from, to) window,
+    and the commit whose training code those runs are shown to have used,
+    with the evidence written next to it.
+    """
+    when = _run_time(exp_time) if rules else None
+    if when is None or not stamped:
+        return None
+    for rule in rules:
+        prefix = str(rule.get("stamped") or "")
+        if not prefix or not stamped.startswith(prefix):
+            continue
+        if _in_window(rule, when):
+            return str(rule["code"])
+    return None
+
+
 def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = None,
-              inferred: Optional[list[dict]] = None) -> list[Run]:
+              inferred: Optional[list[dict]] = None,
+              attested: Optional[list[dict]] = None) -> list[Run]:
     runs = []
     for log_path in sorted(logs_root.rglob("log.json")):
         if excluded(log_path, exclude):
@@ -196,12 +238,21 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
 
         seed = log_path.parent.name if log_path.parent.name.isdigit() else None
 
+        exp_time = d.get("parameters/exp/time")
         git_commit = d.get("parameters/exp/git_commit") or None
-        commit_source = "log" if git_commit else ""
-        if git_commit is None:
-            hit = infer_commit(inferred or [], setup, model, d.get("parameters/exp/time"))
+        git_dirty = d.get("parameters/exp/git_dirty")
+        git_dirty = bool(git_dirty) if git_dirty is not None else None
+        code_commit, commit_source = None, ""
+        if git_commit and not git_dirty:
+            code_commit, commit_source = git_commit, "log"
+        elif git_commit:
+            code_commit = attest_commit(attested or [], git_commit, exp_time)
+            commit_source = "attested" if code_commit else "dirty"
+        else:
+            hit = infer_commit(inferred or [], setup, model, exp_time)
             if hit:
-                git_commit, commit_source = hit, "inferred"
+                git_commit = code_commit = hit
+                commit_source = "inferred"
         concurrency = d.get("parameters/exp/concurrency")
         concurrency = int(concurrency) if concurrency not in (None, "") else None
         val_curve = d.get("sl_val/loss") or d.get("sl_valid/loss")
@@ -212,5 +263,6 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                          running_time, per_epoch, num_params, ic, jc, interval_width,
                          channel, k, seed, log_path,
                          git_commit=git_commit, concurrency=concurrency,
-                         commit_source=commit_source, val_loss=val_loss))
+                         commit_source=commit_source, val_loss=val_loss,
+                         git_dirty=git_dirty, code_commit=code_commit))
     return runs

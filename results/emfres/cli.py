@@ -32,17 +32,26 @@ def spec_excludes() -> list[str]:
         return []
 
 
-def spec_inferred() -> list[dict]:
-    """Commit-inference rules for unstamped runs, from specs/provenance.yaml."""
+def _provenance_rules(section: str) -> list[dict]:
     path = SPECS / "provenance.yaml"
     if not path.exists():
         return []
     try:
         import yaml
-        return list((yaml.safe_load(path.read_text()) or {}).get("inferred", []))
+        return list((yaml.safe_load(path.read_text()) or {}).get(section, []) or [])
     except Exception as exc:
         print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
         return []
+
+
+def spec_inferred() -> list[dict]:
+    """Commit-inference rules for unstamped runs, from specs/provenance.yaml."""
+    return _provenance_rules("inferred")
+
+
+def spec_attested() -> list[dict]:
+    """Code attestations for runs stamped on a dirty tree, from specs/provenance.yaml."""
+    return _provenance_rules("attested")
 
 
 def cmd_extract(args) -> int:
@@ -58,7 +67,8 @@ def cmd_extract(args) -> int:
             print(f"specs/runs.yaml excludes: {', '.join(spec)}", file=sys.stderr)
         exclude += spec
 
-    runs = frames.build_runs(logs, REPO, exclude, inferred=spec_inferred())
+    runs = frames.build_runs(logs, REPO, exclude, inferred=spec_inferred(),
+                             attested=spec_attested())
     if not runs:
         print(f"no usable log.json under {logs}", file=sys.stderr)
         return 1
@@ -67,16 +77,30 @@ def cmd_extract(args) -> int:
     # Contract C1 (.personal/PLAN.md): a comparison is only as good as the
     # code behind it. Say how many runs predate provenance stamping and
     # whether the stamped ones span more than one commit.
-    commits = sorted({r["git_commit"] for r in runs if r["git_commit"]})
-    inferred = sum(1 for r in runs if r["commit_source"] == "inferred")
-    unstamped = sum(1 for r in runs if not r["git_commit"])
-    if inferred or unstamped:
-        print(f"NOTE: {inferred} of {len(runs)} runs take their commit from "
-              f"specs/provenance.yaml and {unstamped} have none (all logged before "
-              f"provenance stamping, 2026-09-19)", file=sys.stderr)
-    if len(commits) > 1:
-        print(f"WARNING: the published runs span {len(commits)} code commits: "
-              + ", ".join(c[:8] for c in commits), file=sys.stderr)
+    # Judged on the training code, not the commit id: commits that differ only
+    # in results/, logs/ or docs share a code version (frames.code_fingerprint),
+    # so committing results work while a sweep runs does not split it.
+    versions: dict = {}
+    for r in runs:
+        if r["code_version"]:
+            versions.setdefault(r["code_version"], set()).add(r["git_commit"][:8])
+    unknown = [r for r in runs if not r["code_version"]]
+    by_source: dict = {}
+    for r in runs:
+        src = r["commit_source"] or "unstamped"
+        by_source[src] = by_source.get(src, 0) + 1
+    print("provenance: " + ", ".join(f"{n} {s}" for s, n in sorted(by_source.items())),
+          file=sys.stderr)
+    if len(versions) > 1:
+        print(f"WARNING: the published runs span {len(versions)} training-code versions:",
+              file=sys.stderr)
+        for fp, cs in sorted(versions.items()):
+            n = sum(1 for r in runs if r["code_version"] == fp)
+            print(f"    {fp}  {n:>5} runs  commits {', '.join(sorted(cs))}", file=sys.stderr)
+    if unknown:
+        print(f"NOTE: {len(unknown)} runs have no establishable code version "
+              f"(unstamped with no rule, or stamped dirty with no attestation)",
+              file=sys.stderr)
 
     counts = {"runs": len(runs), "cells": len(cells)}
     per_setup = {}

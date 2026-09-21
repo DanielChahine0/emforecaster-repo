@@ -60,15 +60,60 @@ def family_of(dataset: str) -> str:
     """The corpus a dataset slug belongs to: "voip" or "emf"."""
     return "voip" if str(dataset).lower().startswith(VOIP_PREFIX) else "emf"
 
+
+# The paths whose contents decide what a training run computes -- the same set
+# forecasting/provenance.py checks for a dirty tree. Kept in step by hand: the
+# results package does not import the training package.
+CODE_PATHS = ("forecasting", "main.py", "pyproject.toml", "TimeSeriesCCM-main")
+
+# Files under those paths that no training run ever reads.
+def _inert(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return name.endswith(".md") or (name.startswith("test_") and name.endswith(".py"))
+
+
+_FINGERPRINTS: dict = {}
+
+
+def code_fingerprint(repo: Path, commit: Optional[str]) -> str:
+    """A 12-hex id for the training code at ``commit``, or "" if unknown.
+
+    Two commits that differ only in results/, logs/, data/ or documentation
+    train identically, so provenance is judged on this rather than on the
+    commit id: a run stamped before a results-only commit and one stamped after
+    it are the same code version. Tests and markdown under the code paths are
+    left out for the same reason -- no training run imports them.
+    """
+    if not commit:
+        return ""
+    key = (str(repo), commit)
+    if key not in _FINGERPRINTS:
+        try:
+            listing = subprocess.run(
+                ["git", "-C", str(repo), "ls-tree", "-r", commit, "--", *CODE_PATHS],
+                capture_output=True, text=True, check=True).stdout
+        except Exception:
+            _FINGERPRINTS[key] = ""
+        else:
+            lines = sorted(
+                f"{path} {meta.split()[2]}"
+                for meta, _, path in (l.partition("\t") for l in listing.splitlines())
+                if path and not _inert(path))
+            _FINGERPRINTS[key] = (hashlib.sha256("\n".join(lines).encode()).hexdigest()[:12]
+                                  if lines else "")
+    return _FINGERPRINTS[key]
+
 RUN_FIELDS = [
     "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "channel",
     "seed", "conf", "mse", "mae", "val_loss", "running_time", "per_epoch",
     "num_params",
     "ic", "jc", "interval_width",
-    # Provenance (forecasting/provenance.py): the commit that produced the run
-    # and how many trainings shared the GPU. Blank on runs logged before
-    # 2026-09-19.
-    "git_commit", "commit_source", "concurrency",
+    # Provenance (forecasting/provenance.py): the commit the run was stamped
+    # with or dated to, whether the tree was dirty, how that commit was
+    # established (see runlogs.Run.commit_source), the fingerprint of the
+    # training code actually run (blank when it cannot be established), and
+    # how many trainings shared the GPU.
+    "git_commit", "git_dirty", "commit_source", "code_version", "concurrency",
     "source", "path",
 ]
 
@@ -77,9 +122,10 @@ CELL_FIELDS = [
     "mse", "mse_std", "mae", "mae_std", "running_time", "per_epoch",
     "num_params", "ic", "jc", "interval_width",
     "n_runs", "n_seeds", "n_channels",
-    # Distinct commits behind the cell's runs, ';'-joined; more than one means
+    # Distinct training-code versions behind the cell's runs, ';'-joined, with
+    # "?" for any run whose code cannot be established; more than one means
     # the cell mixes code versions and is not a clean seed mean.
-    "commits",
+    "code_versions",
 ]
 
 EPOCH_FIELDS = ["setup", "model", "dataset", "seq_len", "pred_len", "k",
@@ -125,7 +171,9 @@ def _row(run: Run, setup: str, repo: Path) -> dict:
         "jc": _num(run.jc),
         "interval_width": _num(run.interval_width),
         "git_commit": run.git_commit or "",
+        "git_dirty": "" if run.git_dirty is None else int(run.git_dirty),
         "commit_source": run.commit_source,
+        "code_version": code_fingerprint(repo, run.code_commit),
         "concurrency": "" if run.concurrency is None else run.concurrency,
         "source": "log",
         "path": run.path.relative_to(repo).as_posix(),
@@ -138,18 +186,21 @@ def _num(v: Optional[float]) -> str:
 
 
 def build_runs(logs_dir: Path, repo: Path, exclude: list[str],
-               inferred: Optional[list[dict]] = None) -> list[dict]:
+               inferred: Optional[list[dict]] = None,
+               attested: Optional[list[dict]] = None) -> list[dict]:
     """One row per log.json across every setup under ``logs_dir``.
 
-    ``inferred`` is the rule list from specs/provenance.yaml, used to assign a
-    commit to runs logged before provenance stamping (see runlogs.infer_commit).
+    ``inferred`` and ``attested`` are the rule lists from specs/provenance.yaml:
+    the first dates runs logged before provenance stamping, the second resolves
+    runs stamped on a dirty tree (see runlogs.infer_commit / attest_commit).
     """
     rows = []
     for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
         if is_archive(sub):
             continue
         setup = setup_of(sub)
-        for run in load_runs(sub, exclude, setup=setup, inferred=inferred):
+        for run in load_runs(sub, exclude, setup=setup, inferred=inferred,
+                             attested=attested):
             rows.append(_row(run, setup, repo))
     return rows
 
@@ -229,7 +280,7 @@ def build_cells(runs: list[dict]) -> list[dict]:
             "n_runs": len(rs),
             "n_seeds": len(seeds) or "",
             "n_channels": len(channels) or "",
-            "commits": ";".join(sorted({r["git_commit"] for r in rs if r["git_commit"]})),
+            "code_versions": ";".join(sorted({r["code_version"] or "?" for r in rs})),
         })
     return out
 
@@ -269,16 +320,24 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
     digest = hashlib.sha256()
     for r in sorted(runs, key=lambda r: r["path"]):
         digest.update(f"{r['path']}|{r['mse']}|{r['mae']}|{r['running_time']}\n".encode())
-    commits = sorted({r["git_commit"] for r in runs if r.get("git_commit")})
-    sources = {"stamped": 0, "inferred": 0, "unstamped": 0}
+    sources = {"stamped": 0, "attested": 0, "inferred": 0, "dirty": 0, "unstamped": 0}
+    versions: dict = {}
     for r in runs:
-        sources[{"log": "stamped", "inferred": "inferred"}.get(r.get("commit_source"), "unstamped")] += 1
+        src = r.get("commit_source") or "unstamped"
+        sources["stamped" if src == "log" else src] += 1
+        if r.get("code_version"):
+            v = versions.setdefault(r["code_version"], {"commits": set(), "runs": 0})
+            v["commits"].add(r["git_commit"])
+            v["runs"] += 1
     payload = {
         "logs_commit": _logs_commit(repo),
-        # The code commits behind the runs: stamped by the run itself (since
-        # 2026-09-19) or inferred from specs/provenance.yaml for older runs.
-        # One entry is the goal: contract C1 in .personal/PLAN.md.
-        "code_commits": commits,
+        # The training-code versions behind the runs, each with the commit ids
+        # that carry it. Several commits can share one version (they differ only
+        # outside the code paths); one version is the goal -- contract C1 in
+        # .personal/PLAN.md.
+        "code_versions": {fp: {"commits": sorted(v["commits"]), "runs": v["runs"]}
+                          for fp, v in sorted(versions.items())},
+        "unknown_code_runs": sum(1 for r in runs if not r.get("code_version")),
         "provenance": sources,
         "n_runs": len(runs),
         "runs_digest": digest.hexdigest(),
