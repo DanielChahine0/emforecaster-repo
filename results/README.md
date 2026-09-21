@@ -12,6 +12,7 @@ regenerated on demand and git-ignored. `results/` tracks about 1 MB.
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
 python results/make.py reconcile    # check the frozen report against frames/
+python -m pytest results/tests      # provenance, paradigm comparison, baselines
 
 python results/plot_metrics.py          # the benchmark families
 python results/plot_complexity.py
