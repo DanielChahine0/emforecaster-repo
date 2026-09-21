@@ -134,6 +134,16 @@ def cmd_tables(args) -> int:
                                seq_len=sweep_window[0], pred_len=sweep_window[1])
     if sweep:
         sections.append(("ccm-sweep", "Channel Clustering (CCM) vs. plain", sweep))
+    # The seed-aware answer to "which paradigm is best": matched seeds, a tie
+    # band at seed noise, k chosen on validation (see emfres/paradigms.py).
+    # extract_results is importable here: render_sections put results/ on the path.
+    import extract_results as er
+    from . import paradigms as PG
+    paradigm_md = PG.render(runs_csv, family, setting,
+                            dataset_label=er.dataset_label, model_label=er.model_label,
+                            dataset_rank=er.dataset_rank, model_rank=er.model_rank)
+    if paradigm_md:
+        sections.append(("paradigms", "Paradigm Comparison", paradigm_md))
     if not sections:
         print(f"no runs in family {family!r}", file=sys.stderr)
         return 1
