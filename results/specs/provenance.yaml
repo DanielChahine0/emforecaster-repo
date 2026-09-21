@@ -58,3 +58,26 @@ inferred:
       landed in one commit.
 # The single-series tree (logs/univariate, setup "series") is outside the
 # paradigm comparison and is deliberately left without a rule.
+
+# Runs STAMPED on a dirty tree record the commit they sat on, not the code they
+# ran, so the extractor treats their code as unknown unless a rule below vouches
+# for it. Each rule names the stamped commit (a prefix is enough), a half-open
+# [from, to) window on parameters/exp/time, and the commit whose training code
+# those runs used, with the evidence beside it. A matching run reads
+# commit_source = "attested" in runs.csv; git_commit keeps the stamp.
+attested:
+  - stamped: 6f6d60d3c2502d84d2ed795e169261b09d0db7d0
+    from: "2026-09-20 10:34"
+    to: "2026-09-20 15:10"
+    code: bc3bc57caab503c05fb7fe86064ee4464d5e9a03
+    basis: >
+      The 1,114 VoIP runs of 2026-09-20 stamped 6f6d60d3 with a dirty tree
+      (10:34:23 - 15:09:37). The dirt was the Phase 1 pipeline, committed as
+      bc3bc57c at 15:09:37 while the sweep was still running. Modification
+      times under the training paths show both exp.py edits landing at 10:33:19,
+      a minute before the first of these runs, and nothing else changing inside
+      the window except forecasting/multivariate/README.md (10:42) and
+      forecasting/test_voip.py (10:46), neither of which training reads. So
+      every run in the window used the training code bc3bc57c records. The 246
+      runs after the commit are stamped bc3bc57c on a clean tree and need no
+      rule.
