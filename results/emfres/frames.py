@@ -105,8 +105,12 @@ def code_fingerprint(repo: Path, commit: Optional[str]) -> str:
 
 RUN_FIELDS = [
     "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "channel",
-    "seed", "conf", "mse", "mae", "val_loss", "running_time", "per_epoch",
-    "num_params",
+    "seed", "conf", "mse", "mae", "val_loss",
+    # Against the trivial forecast (emfres/baselines.py): the test MSE of
+    # repeating each window's lookback mean on the same windows, and the run's
+    # skill over it (1 - mse / lookback_mse).
+    "lookback_mse", "skill",
+    "running_time", "per_epoch", "num_params",
     "ic", "jc", "interval_width",
     # Provenance (forecasting/provenance.py): the commit the run was stamped
     # with or dated to, whether the tree was dirty, how that commit was
@@ -149,7 +153,28 @@ def is_archive(logs_dir: Path) -> bool:
     return logs_dir.name.startswith("_") or logs_dir.name.lower() in ARCHIVE_DIRS
 
 
+def _baseline(run: Run) -> tuple:
+    """(lookback_mse, skill) cells for one run, blank when unavailable."""
+    from .baselines import lookback_mean_mse, skill
+
+    if run.mse is None or run.train_split is None or run.val_split is None:
+        return "", ""
+    per_channel = lookback_mean_mse(run.dataset, run.seq_len, run.pred_len,
+                                    run.train_split, run.val_split)
+    if per_channel is None:
+        return "", ""
+    if run.channel is not None:
+        if run.channel >= len(per_channel):
+            return "", ""
+        base = float(per_channel[run.channel])
+    else:
+        # A joint run's MSE averages every channel over the same windows.
+        base = float(per_channel.mean())
+    return _num(base), _num(skill(run.mse, base))
+
+
 def _row(run: Run, setup: str, repo: Path) -> dict:
+    lookback, skill_value = _baseline(run)
     return {
         "setup": setup,
         "family": family_of(run.dataset),
@@ -164,6 +189,8 @@ def _row(run: Run, setup: str, repo: Path) -> dict:
         "mse": _num(run.mse),
         "mae": _num(run.mae),
         "val_loss": _num(run.val_loss),
+        "lookback_mse": lookback,
+        "skill": skill_value,
         "running_time": _num(run.running_time),
         "per_epoch": _num(run.per_epoch),
         "num_params": "" if run.num_params is None else run.num_params,

@@ -66,6 +66,10 @@ class Run:
     # the stamp itself on a clean tree, the attested or inferred commit
     # otherwise. None when it cannot be established.
     code_commit: Optional[str] = None
+    # The split the run was scored on; the lookback-mean baseline has to use
+    # the same one (VoIP runs use 0.6/0.2, the EMF jobs 0.7/0.1).
+    train_split: Optional[float] = None
+    val_split: Optional[float] = None
     # Best (lowest) validation loss over the run's epochs -- the quantity early
     # stopping selected on. What a model-selection choice made *without* the
     # test split (e.g. a cluster count) has to be made from. None for the
@@ -264,5 +268,7 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                          channel, k, seed, log_path,
                          git_commit=git_commit, concurrency=concurrency,
                          commit_source=commit_source, val_loss=val_loss,
-                         git_dirty=git_dirty, code_commit=code_commit))
+                         git_dirty=git_dirty, code_commit=code_commit,
+                         train_split=d.get("parameters/data/train_split"),
+                         val_split=d.get("parameters/data/val_split")))
     return runs

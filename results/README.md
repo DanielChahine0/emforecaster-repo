@@ -106,7 +106,11 @@ Per run, `runs.csv` carries `git_commit` (stamped, or dated by a rule),
 `git_dirty`, `commit_source` — `log` (stamped, clean tree), `attested` (stamped
 on a dirty tree and resolved by an evidenced rule), `dirty` (unresolved),
 `inferred` (logged before stamping, dated by a rule) — plus `code_version` and
-`concurrency` (the grid's `--jobs` while it trained). `cells.csv` carries
+`concurrency` (the grid's `--jobs` while it trained), plus `lookback_mse` and
+`skill`: the error of forecasting each window's lookback mean on the same
+windows, and the run's skill over it (1 - mse / lookback_mse; zero means no
+better than the trivial forecast, see `emfres/baselines.py` for why that is a
+measure and not a collapse flag). `cells.csv` carries
 `code_versions`, the distinct versions behind a cell (`?` for a run whose code
 is unknown); more than one means the cell is not a single-code seed mean.
 
