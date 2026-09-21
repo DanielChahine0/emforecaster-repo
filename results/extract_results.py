@@ -52,14 +52,17 @@ MODEL_ORDER = [
 DATASET_DISPLAY = {
     "emf_2023_university_5_with_ptv": "EMF2023 (University-5 w/ PTV)",
 }
-DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv"]
+DATASET_ORDER = ["det", "ptv", "ptv2", "ed2022", "uh2022", "emf_2023_university_5_with_ptv",
+                 "voip_mobile", "voip_fixed"]
 
 # MISSING now comes from emfres.vocab, so the tables and the duration
 # formatters cannot disagree about what an absent value looks like.
 
-# The single (L, O) window the '# Ultimate Comparison' section is built for. The
-# cluster grid only sweeps this one, so it is the only window where per-channel,
-# multivariate and clustered runs can all be put in the same row.
+# The single (L, O) window the '# Ultimate Comparison' and '# CCM vs Base'
+# sections are built for: the one window where per-channel, multivariate and
+# clustered runs can all be put in the same row. It is per corpus -- the EMF
+# benchmark is L336/O96 and the VoIP one L48/O12 -- so emfres.tables rebinds it
+# around a render rather than every caller agreeing on a constant.
 ULTIMATE_SETTING = (336, 96)
 
 from emfres.runlogs import (  # noqa: E402

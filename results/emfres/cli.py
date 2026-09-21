@@ -123,11 +123,13 @@ def cmd_tables(args) -> int:
         return 1
 
     family = args.family
+    # The benchmark window every cross-setup section is built for, per corpus.
+    setting = (48, 12) if family == "voip" else (336, 96)
     sections = (T.render_sections(runs_csv, REPO, RESULTS, family)
-                + T.render_cross_sections(runs_csv, REPO, RESULTS, family))
+                + T.render_cross_sections(runs_csv, REPO, RESULTS, family, setting))
     # The k-sweep section is per dataset; each family has its own default.
     sweep_dataset = "voip_mobile" if family == "voip" else "ed2022"
-    sweep_window = (48, 12) if family == "voip" else (336, 96)
+    sweep_window = setting
     sweep = T.render_ccm_sweep(FRAMES / "cells.csv", dataset=sweep_dataset,
                                seq_len=sweep_window[0], pred_len=sweep_window[1])
     if sweep:

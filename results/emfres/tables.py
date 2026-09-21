@@ -102,7 +102,8 @@ def render_sections(runs_csv: Path, repo: Path, results: Path,
 
 
 def render_cross_sections(runs_csv: Path, repo: Path, results: Path,
-                          family: Optional[str] = None) -> list[tuple[str, str, str]]:
+                          family: Optional[str] = None,
+                          setting: Optional[tuple] = None) -> list[tuple[str, str, str]]:
     """The three sections that need more than one setup at once.
 
     ``Multivariate vs Univariate``, ``CCM vs Base`` and ``Ultimate Comparison``
@@ -112,6 +113,18 @@ def render_cross_sections(runs_csv: Path, repo: Path, results: Path,
     sys.path.insert(0, str(results))
     import extract_results as er
 
+    # The two cross-setup sections are built for one (L, O). Rebound per corpus
+    # and restored, so rendering one family never changes what another renders.
+    previous_setting = er.ULTIMATE_SETTING
+    if setting is not None:
+        er.ULTIMATE_SETTING = setting
+    try:
+        return _cross_sections(er, runs_csv, repo, family)
+    finally:
+        er.ULTIMATE_SETTING = previous_setting
+
+
+def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
     by_setup = runs_from_csv(runs_csv, repo, family)
     cells = {SETUP_TITLES[s]: er.aggregate(r)
              for s, r in by_setup.items() if s in SETUP_TITLES}
