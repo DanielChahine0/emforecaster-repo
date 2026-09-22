@@ -60,22 +60,23 @@ MAX_BUBBLE_AREA = 2600.0   # pt^2, assigned to the largest parameter count
 MIN_BUBBLE_AREA = 55.0     # pt^2 floor for visibility
 SIZE_KEY = [(20_000, "20k"), (400_000, "400k"), (2_400_000, "2.4M")]
 
-# Spot checks against the tables: if any of these stops matching, either the
-# parser or the tables changed, and the run aborts loudly instead of drawing
-# a wrong figure.
+# Spot checks against the frozen tables (archive/2026-09-22_tables.md, the
+# three-seed Phase 2 means): if any of these stops matching, either the parser
+# or the tables changed, and the run aborts loudly instead of drawing a wrong
+# figure.
 CHECK_PARAMS = {
     "EMForecaster": 2_416_959, "DLinear": 64_704, "TSMixer": 56_065,
     "PatchTST": 72_182, "Transformer": 372_738, "LSTM": 20_726,
 }
 CHECK_TIME_S = {
-    ("ED2022", "EMForecaster"): 35 * 60 + 18,
-    ("ED2022", "DLinear"): 66,
-    ("EMF2023", "Transformer"): 3600 + 44 * 60 + 16,
-    ("EMF2023", "DLinear"): 48,
+    ("ED2022", "EMForecaster"): 13 * 60 + 21,
+    ("ED2022", "DLinear"): 60,
+    ("EMF2023", "Transformer"): 40 * 60 + 55,
+    ("EMF2023", "DLinear"): 41,
 }
 CHECK_MAE = {
-    ("ED2022", "EMForecaster"): 0.3346,
-    ("ED2022", "ARIMA"): 0.6075,
+    ("ED2022", "EMForecaster"): 0.3358,
+    ("ED2022", "ARIMA"): 0.6076,
 }
 
 

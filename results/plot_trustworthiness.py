@@ -65,25 +65,26 @@ TRUST_METRICS = [
     ("Interval width", re.compile(r"^3\.3\b.*Mean interval width"), "Mean interval width", False),
 ]
 
-# Spot checks against the Multivariate tables, keyed (metric, dataset, model).
+# Spot checks against the frozen Multivariate tables (archive/2026-09-22_tables.md),
+# keyed (metric, dataset, model).
 # If the parser drifts into another section's 3.1/3.2/3.3 these stop the run.
 EXPECTED = {
-    ("Coverage", "ED2022", "EMForecaster"): 84.75,
-    ("Coverage", "ED2022", "DLinear"): 84.89,
-    ("Coverage", "ED2022", "TSMixer"): 85.39,
-    ("Coverage", "ED2022", "PatchTST"): 85.06,
-    ("Coverage", "ED2022", "Transformer"): 85.45,
-    ("Coverage", "ED2022", "LSTM"): 85.31,
-    ("Coverage", "ED2022", "ARIMA"): 86.43,
-    ("Coverage", "EMF2023", "EMForecaster"): 90.31,
+    ("Coverage", "ED2022", "EMForecaster"): 84.74,
+    ("Coverage", "ED2022", "DLinear"): 84.88,
+    ("Coverage", "ED2022", "TSMixer"): 85.31,
+    ("Coverage", "ED2022", "PatchTST"): 85.01,
+    ("Coverage", "ED2022", "Transformer"): 85.62,
+    ("Coverage", "ED2022", "LSTM"): 85.17,
+    ("Coverage", "ED2022", "ARIMA"): 86.42,
+    ("Coverage", "EMF2023", "EMForecaster"): 90.46,
     ("Coverage", "EMF2023", "DLinear"): 91.06,
-    ("Joint coverage", "ED2022", "EMForecaster"): 11.47,
+    ("Joint coverage", "ED2022", "EMForecaster"): 11.54,
     ("Joint coverage", "ED2022", "ARIMA"): 21.65,
-    ("Joint coverage", "EMF2023", "EMForecaster"): 10.67,
-    ("Joint coverage", "EMF2023", "DLinear"): 13.81,
-    ("Interval width", "ED2022", "EMForecaster"): 1.273,
+    ("Joint coverage", "EMF2023", "EMForecaster"): 11.21,
+    ("Joint coverage", "EMF2023", "DLinear"): 13.85,
+    ("Interval width", "ED2022", "EMForecaster"): 1.276,
     ("Interval width", "ED2022", "ARIMA"): 2.460,
-    ("Interval width", "EMF2023", "EMForecaster"): 1.862,
+    ("Interval width", "EMF2023", "EMForecaster"): 1.869,
     ("Interval width", "EMF2023", "DLinear"): 2.095,
 }
 
