@@ -23,8 +23,8 @@ python results/emfres/fig_curves.py --logs-dir logs/univariate --combined
 python multivariate/src/emf_multivariate.py all   # emf-levels + heatmaps
 ```
 
-`extract` reads every `log.json` under `logs/` (1,712 today, of which 1,658 are
-published — see *Which runs count*) and writes one row per run. Nothing
+`extract` reads every `log.json` under `logs/` outside `logs/_archive/` (3,469
+today: 2,109 EMF, 1,360 VoIP — see *Which runs count*) and writes one row per run. Nothing
 downstream reads a log file, and nothing downstream parses markdown.
 
 ## Layout
@@ -141,11 +141,14 @@ those runs live under `logs/_archive/cluster/` and are skipped as an archive
 anyway; the rule stays so they cannot come back silently. `--no-spec` loads
 everything.
 
-Cluster publishes **105** runs: the native-CCM k-sweep at L336/O96 rerun on
-2026-08-25 (`forecasting/multivariate/models/ccm.py` threading upstream's
-clustering layers through the repo's own DLinear / PatchTST / TSMixer). The
-earlier upstream-wrapper sweep and the 27-run lookback ladder are in
-`logs/_archive/`; the ladder survives as `figures/l-ladder/*.png`.
+Cluster publishes **135** EMF runs: the native-CCM k-sweep at L336/O96
+(`forecasting/multivariate/models/ccm.py` threading upstream's clustering
+layers through the repo's own DLinear / PatchTST / TSMixer), five k × three
+datasets × three seeds, rerun under the comparability contract on 2026-09-21.
+The single-seed 2026-08-25 sweep it replaced (105 runs) is in
+`logs/_archive/2026-09-21_pre-contract/`; the earlier upstream-wrapper sweep and
+the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
+`figures/l-ladder/*.png`.
 
 ## Known gaps
 
