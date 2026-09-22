@@ -255,6 +255,33 @@ def bubble_area(count: float, scale: float) -> float:
     return max(MIN_BUBBLE_AREA, count * scale)
 
 
+# Axes-fraction x of the three size-key circles, tried in order. The top right
+# was always empty while the slowest model was also a well-trained one; with
+# its collapsed seeds averaged in, the Transformer sits there instead.
+SIZE_KEY_SLOTS = [(0.58, 0.72, 0.885), (0.09, 0.23, 0.395)]
+
+
+def size_key_x(fig, ax, labels, points, divisor, scale, base, width_pt, height_pt):
+    """The first key slot that no bubble or point label overlaps."""
+    to_axes = ax.transAxes.inverted()
+    renderer = fig.canvas.get_renderer()
+    taken = [to_axes.transform(t.get_window_extent(renderer)) for t in labels]
+    for _, _, t, y, p in points:
+        cx, cy = to_axes.transform(ax.transData.transform((t / divisor, y)))
+        r = math.sqrt(bubble_area(p, scale) / math.pi)
+        taken.append(np.array([[cx - r / width_pt, cy - r / height_pt],
+                               [cx + r / width_pt, cy + r / height_pt]]))
+    radii = [math.sqrt(bubble_area(c, scale) / math.pi) for c, _ in SIZE_KEY]
+    for slot in SIZE_KEY_SLOTS:
+        x0 = slot[0] - radii[0] / width_pt
+        x1 = slot[-1] + radii[-1] / width_pt
+        y0, y1 = base - 0.12, base + 2 * radii[-1] / height_pt
+        if not any(b[0][0] < x1 and b[1][0] > x0 and b[0][1] < y1 and b[1][1] > y0
+                   for b in taken):
+            return slot
+    return SIZE_KEY_SLOTS[0]
+
+
 def bubble_figure(models, params, tvals, mvals, datasets, style, formats, outdir) -> list[Path]:
     # One point per model: both means run over the datasets, like the
     # trade-off view in plot_metrics.
@@ -330,12 +357,13 @@ def bubble_figure(models, params, tvals, mvals, datasets, style, formats, outdir
 
     pm.spread_labels(ax, labels, style.value_label * 1.45)
 
-    # --- bubble-size key: bottom-aligned circles in the empty top-right ------ #
+    # --- bubble-size key: bottom-aligned circles in an empty top corner ------ #
     pos = ax.get_position()
     width_pt = pos.width * fig.get_size_inches()[0] * 72.0
     height_pt = pos.height * fig.get_size_inches()[1] * 72.0
     base = 0.72
-    for (count, label), xk in zip(SIZE_KEY, (0.58, 0.72, 0.885)):
+    key_x = size_key_x(fig, ax, labels, points, divisor, scale, base, width_pt, height_pt)
+    for (count, label), xk in zip(SIZE_KEY, key_x):
         area = bubble_area(count, scale)
         radius_pt = math.sqrt(area / math.pi)
         ax.scatter(
