@@ -67,7 +67,7 @@ Read **across** a row to rank the models under one pipeline (**bold** = best, <u
 
 ### 1.3 · Total training time (`parameters/running_time`)
 
-Cost of the whole strategy, so the per-channel row is the mean single-channel run times the channel count (ED2022 C=27, UH2022 C=27, EMF2023 (University-5 w/ PTV) C=29); every other row is one model's single training run. ARIMA is not gradient-trained and logs no time.
+Cost of the whole strategy, so the per-channel row is the mean single-channel run times the channel count (ED2022 C=27, UH2022 C=27, EMF2023 (University-5 w/ PTV) C=29); every other row is one model's training run, averaged over seeds. ARIMA is not gradient-trained and logs no time.
 
 | Dataset | Pipeline | EMForecaster (2025) | DLinear (2023) | TSMixer (2023) | PatchTST (2023) | Transformer (2017) | LSTM (1997) | ARIMA (1970) |
 |:---|:---|---:|---:|---:|---:|---:|---:|---:|

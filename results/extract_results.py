@@ -643,7 +643,7 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
                       note=f"Cost of the whole strategy, so the per-channel row is the mean "
                            f"single-channel run times the channel count"
                            + (f" ({chans})" if chans else "") + "; every other row is one "
-                           f"model's single training run. ARIMA is not gradient-trained and "
+                           f"model's training run, averaged over seeds. ARIMA is not gradient-trained and "
                            f"logs no time.")
 
     return doc.render()
