@@ -16,7 +16,7 @@ SPECS = RESULTS / "specs"
 # The frozen report every published value is gated against (make.py tables /
 # reconcile). Re-frozen when a set of numbers is accepted as published; the
 # previous snapshots stay in archive/ as provenance.
-PUBLISHED = RESULTS / "archive" / "2026-09-19_tables.md"
+PUBLISHED = RESULTS / "archive" / "2026-09-22_tables.md"
 
 
 def spec_excludes() -> list[str]:

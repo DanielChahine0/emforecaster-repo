@@ -117,12 +117,12 @@ is unknown); more than one means the cell is not a single-code seed mean.
 
 `make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
 compares it with the frozen snapshot named by `PUBLISHED` in `emfres/cli.py`,
-currently `archive/2026-09-19_tables.md` — 390 of 390 match. `make.py tables`
+currently `archive/2026-09-22_tables.md` — 342 of 342 match. `make.py tables`
 runs that same check before writing and refuses if any published value fails to
 reproduce, so the CSV path and the frozen report cannot silently diverge.
-The previous snapshot, `archive/2026-08-11_tables.md`, is kept as provenance:
-its cluster section describes the upstream-wrapper runs that were retired to
-`logs/_archive/cluster/` on 2026-08-25, which is why it was superseded.
+Earlier snapshots are kept as provenance: `2026-09-19_tables.md` holds the
+single-seed EMF benchmark that the three-seed Phase 2 rerun replaced, and
+`2026-08-11_tables.md` the upstream-wrapper cluster runs retired on 2026-08-25.
 
 The gate is deliberately **value-level, not text-level**. It used to diff the
 rendered markdown against the archive and refuse on any difference, which fails
@@ -150,7 +150,7 @@ earlier upstream-wrapper sweep and the 27-run lookback ladder are in
 ## Known gaps
 
 - The frozen snapshot (`PUBLISHED` in `emfres/cli.py`, currently
-  `archive/2026-09-19_tables.md`) is what `make.py tables --check` and
+  `archive/2026-09-22_tables.md`) is what `make.py tables --check` and
   `make.py reconcile` compare against. It covers only the cells published when
   it was frozen; anything added since is unguarded, which is the cost of
   checking against a snapshot rather than a second implementation. Re-freeze
