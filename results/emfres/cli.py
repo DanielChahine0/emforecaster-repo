@@ -192,7 +192,8 @@ def cmd_tables(args) -> int:
         print(f"NOTE: no frozen snapshot for family {family!r} -- values are not "
               f"gated against one", file=sys.stderr)
     elif published.exists():
-        if R.reconcile(published, FRAMES / "cells.csv") != 0 and not args.force:
+        values_match = R.reconcile(published, FRAMES / "cells.csv") == 0
+        if not values_match and not args.force:
             print(f"\nA published value no longer reproduces from frames/; refusing "
                   f"to write. Pass --force to write anyway.", file=sys.stderr)
             return 1
@@ -213,9 +214,12 @@ def cmd_tables(args) -> int:
             add = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
             rem = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
             if add or rem:
-                print(f"NOTE: '{title}' has grown since {published.name} "
-                      f"(+{add}/-{rem} lines; every published value still matches)",
-                      file=sys.stderr)
+                # Under --force the values may be exactly what changed, so the
+                # reassurance is only printed when the gate actually passed.
+                verdict = ("every published value still matches" if values_match
+                           else "published values changed -- written under --force")
+                print(f"NOTE: '{title}' changed since {published.name} "
+                      f"(+{add}/-{rem} lines; {verdict})", file=sys.stderr)
     if args.check:
         print(f"\nchecked {len(sections)} sections -- every published value reproduces")
         return 0
