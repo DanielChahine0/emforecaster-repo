@@ -29,3 +29,18 @@ def test_git_dirty_ignores_logs_and_results():
     # new run under logs/ never marks a training run as dirty.
     assert set(provenance.CODE_PATHS) == {"forecasting", "main.py", "pyproject.toml",
                                           "TimeSeriesCCM-main"}
+
+
+def test_git_never_takes_the_index_lock(monkeypatch):
+    # A per-run `git status` killed by its timeout must not be able to orphan
+    # .git/index.lock, so every call runs with optional locks off.
+    seen = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(kwargs.get("env", {}).get("GIT_OPTIONAL_LOCKS"))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run)
+    provenance.git_commit()
+    provenance.git_dirty()
+    assert seen and all(v == "0" for v in seen)

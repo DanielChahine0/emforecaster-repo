@@ -26,9 +26,15 @@ CODE_PATHS = ("forecasting", "main.py", "pyproject.toml", "TimeSeriesCCM-main")
 
 
 def _git(*argv):
+    # GIT_OPTIONAL_LOCKS=0 keeps `git status` read-only. Without it status
+    # opportunistically rewrites the index under .git/index.lock, and when the
+    # timeout below kills it mid-rewrite -- which happened on 2026-09-21, with a
+    # dozen trainings starting at once under heavy disk load -- the lock is left
+    # behind and every later commit in the repo fails until it is removed by hand.
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
     try:
         out = subprocess.run(["git", "-C", _REPO_ROOT, *argv], capture_output=True,
-                             text=True, check=True, timeout=15)
+                             text=True, check=True, timeout=15, env=env)
         return out.stdout.strip()
     except Exception:
         return None
