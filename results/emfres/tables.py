@@ -206,8 +206,17 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
     cl = cells.get(er.CLUSTER_TITLE)
     if mv and cl:
         cluster_runs = by_setup.get("cluster", [])
-        md = er.render_ccm_vs_base(er.CCM_TITLE, er.canonical_cells(cl),
-                                   er.canonical_cells(mv), cluster_runs, targets=targets)
+        # The fixed protocol leads, the logged batch one is its sensitivity,
+        # and + CCM's k is the paradigm comparison's own validation choice
+        # under each, so no two tables name different k's for one cell.
+        primary, batch = er.protocol_cells(cluster_runs, cl)
+        choices = (validation_choices(runs_csv, family, er) if family is not None
+                   else {})
+        md = er.render_ccm_vs_base(
+            er.CCM_TITLE, er.canonical_cells(primary), er.canonical_cells(mv), cluster_runs,
+            targets=targets, choices=choices.get("fixed" if batch else "batch"),
+            batch=er.canonical_cells(batch) if batch else None,
+            batch_choices=choices.get("batch") if batch else None)
         if md:
             out.append(("ccm-vs-base", er.CCM_TITLE, md))
 
@@ -219,6 +228,28 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
                                 targets=targets)
         if md:
             out.append(("pipelines", er.ULTIMATE_TITLE, md))
+    return out
+
+
+def validation_choices(runs_csv: Path, family: str, er) -> dict:
+    """{protocol: {(model label, dataset): paradigms.Choice}} at the cross tables' window.
+
+    The paradigm comparison's own choice of k per cell (paradigms.build, which
+    render_ccm_sweep and render_paradigms use too), keyed by the display name
+    the cross tables use; a label two model ids share keeps the first in
+    model order, as canonical_cells does.
+    """
+    from . import paradigms as PG
+
+    values = PG.seed_values(runs_csv, family, *er.ULTIMATE_SETTING)
+    out = {}
+    for protocol in PG.PROTOCOLS:
+        picked: dict = {}
+        board = PG.build(values, protocol)
+        for (dataset, model), choice in sorted(board.choices.items(),
+                                               key=lambda kv: er.model_rank(kv[0][1])):
+            picked.setdefault((er.model_label(model), dataset), choice)
+        out[protocol] = picked
     return out
 
 

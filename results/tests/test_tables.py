@@ -230,18 +230,70 @@ def test_a_per_channel_seed_missing_a_band_is_marked_partial():
     assert er.shortfall(cells[key], key, er.seed_targets(cells)) == " (n=2 + partial)"
 
 
-def test_ccm_vs_base_leaves_a_partial_sweep_out_of_the_marks_and_imp():
-    er, mv, cl = _trees()
-    md = er.render_ccm_vs_base(er.CCM_TITLE, er.canonical_cells(er.aggregate(cl)),
-                               er.canonical_cells(er.aggregate(mv)), [])
-    row = next(line for line in md.splitlines() if line.startswith("| ED2022 | MSE"))
-    cells = [c.strip() for c in row.strip("|").split("|")]
+def _ccm_trees():
+    """Plain DLinear and TSMixer at three seeds; a finished DLinear sweep whose
+    fixed protocol validates best at k=2 and tests best at k=3, and whose
+    batch protocol validates best at k=3; a TSMixer sweep with one seed of
+    k=1 so far, with the best numbers."""
+    from dataclasses import replace
+    import extract_results as er
+    mv = [_er_run(m, s, v + 0.001 * s) for s in SEEDS
+          for m, v in (("DLinear", 0.50), ("TSMixer", 0.60))]
+    cl = []
+    for s in SEEDS:
+        for k, fixed, fval, batch, bval in ((1, 0.50, 0.5, 0.50, 0.5), (2, 0.49, 0.3, 0.495, 0.4),
+                                            (3, 0.45, 0.4, 0.48, 0.2)):
+            run = _fixed(_er_run("DLinear", s, batch + 0.001 * s, k=k), fixed + 0.001 * s)
+            cl.append(replace(run, val_loss=bval, val_loss_fixed=fval))
+    cl.append(replace(_fixed(_er_run("TSMixer", 1, 0.30, k=1), 0.30), val_loss=0.1,
+                      val_loss_fixed=0.1))
+    return er, mv, cl
+
+
+def _ccm_md(er, mv, cl, **kw):
+    primary, batch = er.protocol_cells(cl, er.aggregate(cl))
+    return er.render_ccm_vs_base(er.CCM_TITLE, er.canonical_cells(primary),
+                                 er.canonical_cells(er.aggregate(mv)), cl,
+                                 batch=er.canonical_cells(batch), **kw)
+
+
+def test_ccm_vs_base_takes_the_k_validation_chose_never_the_test_one():
+    er, mv, cl = _ccm_trees()
+    md = _ccm_md(er, mv, cl)
+    t = _section_tables(md)
+    fixed = next(v for h, v in t.items() if h.startswith("Long-horizon"))
+    batch = next(v for h, v in t.items() if h.startswith("Batch protocol (sensitivity)"))
     # Dataset, Metric, DLinear, + CCM, TSMixer, + CCM, IMP
-    assert cells[3] == "<u>**0.4920 (k=2)**</u>"             # best complete value
-    assert cells[5] == "0.3000 (k=1; partial: n=1, k 1 of 1,2)"
-    assert "**" not in cells[4] and "<u>" not in cells[5]
-    assert cells[6] == "+1.99 (1 of 2)"                   # DLinear's pair alone
-    assert "1 (partial)" in md                              # the config table's best k
+    mse = fixed[1]
+    assert mse[3] == "<u>**0.4920 (k=2)**</u>"              # validation's k, not k=3's 0.4520
+    assert mse[5] == "0.3000 (k=1; partial: ranked 1 of 1,2,3, 1/3 seeds)"
+    assert "**" not in mse[4] and "<u>" not in mse[5]
+    assert mse[6] == "+1.99 (1 of 2)"                        # DLinear's pair alone
+    assert batch[1][3] == "<u>**0.4820 (k=3)**</u>"          # the batch protocol's own k
+    config = t["Experiment configuration"]
+    rows = {r[0].split(" (")[0].split(",")[0]: r[1:] for r in config}
+    assert rows["k chosen on validation"] == ["2", "1 (partial)"]
+    assert rows["k chosen on validation under the batch protocol"] == ["3", "1 (partial)"]
+    assert rows["Oracle k"] == ["3", "1 (partial)"]          # reported, not used
+    assert "- Protocol: the fixed train-mean membership (`sl_test_fixed/*`)" in md
+    # Passing the same choices changes nothing: make.py tables passes the
+    # paradigm comparison's own.
+    choices = er.validation_choices(cl, "fixed", (336, 96), 3)
+    assert _ccm_md(er, mv, cl, choices=choices) == md
+
+
+def test_the_cross_tables_take_the_paradigm_comparisons_k(tmp_path):
+    import extract_results as er
+    from emfres import paradigms as PG
+
+    runs_csv = _sweep(tmp_path, extra=[_run("cluster", 1, 0.10, k=5, val=0.01)])
+    board = tables.validation_choices(runs_csv, "emf", er)
+    cluster = tables.runs_from_csv(runs_csv, tmp_path, "emf")["cluster"]
+    for protocol in PG.PROTOCOLS:
+        helper = er.validation_choices(cluster, protocol, (336, 96), 3)
+        assert {c: (ch.k, ch.ranked, ch.partial) for c, ch in board[protocol].items()} == \
+            {c: (ch.k, ch.ranked, ch.partial) for c, ch in helper.items()}
+        assert board[protocol][("DLinear (2023)", "ed2022")].k == 2    # validates best
 
 
 def test_the_ultimate_table_does_not_rank_a_cell_still_training():

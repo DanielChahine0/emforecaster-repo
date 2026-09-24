@@ -399,7 +399,7 @@ FIXED_PROTOCOL_TEXT = (
     "forecast depends on its own window only. The logged batch protocol (`sl_test/*`) "
     "is the last group, a sensitivity; at k = 1 the two are the same forecast. The k "
     "chosen on validation (`sl_val_fixed/loss`) is in `Channel Clustering (CCM) vs. "
-    "plain` and `Paradigm Comparison`")
+    "plain`, `CCM vs Base (No Clustering)` and `Paradigm Comparison`")
 BATCH_GROUP = "Batch protocol (sensitivity)"
 BATCH_PROTOCOL_TEXT = (
     "The same runs under the logged batch protocol (`sl_test/*`), kept as a sensitivity: "
@@ -628,6 +628,20 @@ def render_setup(title: str, runs: list[Run], cells: dict[tuple, Cell],
               f"the seeds they have; the batch-protocol group keeps them.", file=sys.stderr)
     return render_report(title, fixed, aggregate(fixed), extra=extra, targets=targets,
                          batch=cells)
+
+
+def protocol_cells(runs: list[Run], cells: dict[tuple, Cell]) -> tuple:
+    """(primary cells, batch cells or None) of a cluster tree, for the cross tables.
+
+    ``cells`` is aggregate(runs). The primary cells are fixed_view's, and the
+    logged ones are kept as the batch-protocol sensitivity; when no run has
+    fixed metrics (frames written before those columns existed) the logged
+    cells are all there is, and no sensitivity is returned.
+    """
+    fixed = fixed_view(runs)
+    if any(r.k is not None for r in fixed):
+        return aggregate(fixed), cells
+    return cells, None
 
 
 def canonical_cells(cells: dict[tuple, Cell]) -> dict[tuple, Cell]:
@@ -949,50 +963,97 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
 CCM_REPRESENTATIVE = {"emf": ("ed2022", 5), "voip": ("voip_mobile", 3)}
 
 
-def ccm_choice(cluster_cells: dict[tuple, Cell], model: str, ds: str, sl: int, pl: int,
-               conf: bool, grid: list[int], targets: Optional[dict]) -> tuple:
-    """(k, lacks) of a + CCM cell: the k with the best test MSE over the
-    model's sweep -- the post-hoc (oracle) choice the section's caveat names
-    -- and "" when that sweep is complete, else what it lacks: its fewest
-    complete seeds, when a k is short of the family's (shortfall), and the k
-    values it has so far, when some are not run yet. (None, "") with no k.
+def validation_choices(runs: list[Run], protocol: str, window: tuple,
+                       n_family: Optional[int] = None) -> dict:
+    """{(model label, dataset): paradigms.Choice}: each sweep's k chosen on validation.
+
+    paradigms.choose_k, the choice the paradigm comparison and the CCM sweep
+    make, from Run objects: per (dataset, model) at ``window``, the k with the
+    lowest seed-mean validation loss -- ``val_loss_fixed`` under the fixed
+    protocol, the logged ``val_loss`` under the batch one -- over the k values
+    that have every seed of the sweep. The test split never enters.
+    ``n_family`` is the seed count a finished sweep has (default: every seed
+    a cluster run at the window has). For a tree loaded without frames (the
+    logs walk); make.py tables passes the paradigm comparison's own choices.
     """
-    keys = [(model, ds, sl, pl, conf, k) for k in grid
-            if (model, ds, sl, pl, conf, k) in cluster_cells]
-    scored = [(cluster_cells[key].mse, key[5]) for key in keys
-              if cluster_cells[key].mse is not None]
-    if not scored:
-        return None, ""
-    lacks = []
-    short = [cluster_cells[key] for key in keys
-             if shortfall(cluster_cells[key], key, targets)]
-    if short:
-        lacks.append(f"n={min(c.n_complete_seeds or 0 for c in short)}")
-    if len(keys) < len(grid):
-        lacks.append(f"k {','.join(str(key[5]) for key in keys)} of "
-                     f"{','.join(str(k) for k in grid)}")
-    return min(scored)[1], ", ".join(lacks)
+    from emfres import paradigms as PG
+
+    sweeps: dict = defaultdict(lambda: defaultdict(dict))
+    seeds: set = set()
+    for r in sorted(runs, key=lambda r: model_rank(r.model)):
+        if (r.k is None or (r.seq_len, r.pred_len) != tuple(window) or not r.conf
+                or r.seed is None):
+            continue
+        if protocol == "fixed":
+            if r.mse_fixed is None or r.mae_fixed is None:
+                continue
+            val = r.val_loss_fixed
+        else:
+            if r.mse is None or r.mae is None:
+                continue
+            val = r.val_loss
+        sweeps[(model_label(r.model), r.dataset)][r.k].setdefault(
+            r.seed, {"val": val, "source": r.fixed_source})
+        seeds.add(r.seed)
+    grid = tuple(sorted({k for ks in sweeps.values() for k in ks}))
+    n = n_family if n_family is not None else len(seeds)
+    return {cell: PG.choose_k(ks, protocol, grid, n) for cell, ks in sweeps.items()}
+
+
+def choice_lacks(choice, cell: Optional[Cell], key: tuple, targets: Optional[dict]) -> str:
+    """What a + CCM cell lacks to count as complete, or "" when it lacks nothing.
+
+    A choice ranked over fewer k values or seeds than the family's (still
+    training) says so as the CCM sweep table does; a chosen cell short of its
+    dataset's seeds says its n.
+    """
+    if choice.partial:
+        return (f"ranked {','.join(map(str, choice.ranked))} of "
+                f"{','.join(map(str, choice.grid))}, "
+                f"{len(choice.seeds)}/{choice.n_family} seeds")
+    return shortfall(cell, key, targets).strip(" ()")
+
+
+# The protocols the CCM vs Base section prints, and the log keys it names.
+CCM_PROTOCOLS = {
+    "fixed": ("the fixed train-mean membership", "sl_test_fixed", "sl_val_fixed/loss"),
+    "batch": ("the logged batch protocol", "sl_test", "sl_val/loss"),
+}
 
 
 def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
                        mv_cells: dict[tuple, Cell], cluster_runs: list[Run],
-                       targets: Optional[dict] = None) -> str:
+                       targets: Optional[dict] = None, *,
+                       choices: Optional[dict] = None,
+                       batch: Optional[dict[tuple, Cell]] = None,
+                       batch_choices: Optional[dict] = None) -> str:
     """The CCM paper's Table 4 shape: base | + CCM per backbone, IMP(%) last.
 
-    Both inputs are canonical_cells-keyed. "Base" is the plain multivariate
-    cell from the '# Multivariate' tree - the same job config, byte-identical
-    training hyperparameters, only the network swapped for upstream's CCM
-    wrapper. The + CCM column takes, per (dataset, model), the k with the best
-    test MSE and reuses that k for the MAE row; the note flags this as a
-    post-hoc (oracle) choice, unlike the paper's validation-tuned k. A second
-    table mirrors the paper's Table 10 configuration summary, read from the
-    cluster runs' own logs.
+    Every cells input is canonical_cells-keyed. "Base" is the plain
+    multivariate cell from the '# Multivariate' tree - the same job config,
+    byte-identical training hyperparameters, only the network swapped for
+    upstream's CCM wrapper. The + CCM column takes, per (dataset, model), the
+    k chosen on validation (``choices``, {(model label, dataset):
+    paradigms.Choice}; default validation_choices over ``cluster_runs``) and
+    reuses it for the MAE row, as the paper tunes k on validation data. The
+    test split never picks it: the configuration table reports the k it would
+    pick as an oracle, labelled, and nothing else uses it.
+
+    ``cluster_cells`` is the primary protocol's: extract_results.fixed_view's
+    cells when ``batch``, the same runs' logged batch-protocol cells, is
+    given -- then a second table repeats the comparison under the batch
+    protocol, k chosen on its own validation loss (``batch_choices``), as a
+    labelled sensitivity. Without ``batch`` the cells are the batch
+    protocol's, and the section says so. A second (then third) table mirrors
+    the paper's Table 10 configuration summary, read from the cluster runs'
+    own logs.
 
     Partial data (a sweep still training) is shown, never scored as complete:
     a base cell short of seeds prints its n (shortfall), a + CCM cell whose
-    sweep lacks a k or a seed prints what it lacks (ccm_choice), and neither
-    is marked or averaged into IMP. ``targets`` is seed_targets over every
-    tree (default: these two).
+    k was ranked over fewer k values or seeds than the family's, or whose
+    chosen cell is short, prints what it lacks (choice_lacks), and neither is
+    marked or averaged into IMP. ``targets`` is seed_targets over every tree
+    (default: these).
     """
     sl, pl = ULTIMATE_SETTING
     conf = True
@@ -1004,9 +1065,16 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     if not models or not datasets:
         return ""
     if targets is None:
-        targets = seed_targets(cluster_cells, mv_cells)
-    # The family's k values at this window: a model's sweep is complete when it
-    # has every one of them, at every seed.
+        targets = seed_targets(cluster_cells, mv_cells, *([batch] if batch else []))
+    # A finished sweep's seed count: the most any tree has on these datasets
+    # (not the single-series tree's, a separate family with its own seeds).
+    n_family = max((targets.get((ds, sl, pl, conf), 0) for ds in datasets), default=0) or None
+    protocol = "fixed" if batch is not None else "batch"
+    if choices is None:
+        choices = validation_choices(cluster_runs, protocol, (sl, pl), n_family)
+    if batch is not None and batch_choices is None:
+        batch_choices = validation_choices(cluster_runs, "batch", (sl, pl), n_family)
+    # The family's k values at this window, for the configuration table.
     grid = sorted({k[5] for k in cluster_cells if at(k) and k[5] is not None})
 
     family = family_of(datasets[0])
@@ -1016,6 +1084,7 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     windows = sorted({(r.seq_len, r.pred_len) for r in cluster_runs
                       if family_of(r.dataset) == family}, reverse=True)
     others = [setting_label(*w) for w in windows if w != (sl, pl)]
+    name, test_key, val_key = CCM_PROTOCOLS[protocol]
 
     doc = Doc(title)
     doc.preamble([
@@ -1029,14 +1098,22 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
                           + (f"; the k sweep also ran at {', '.join(others)}, in "
                              f"`Channel Clustering (CCM) vs. plain`" if others
                              else " -- the window the k sweep covers")),
-        ("Protocol", "the logged batch protocol (cluster membership averaged over each "
-                     "evaluation batch); the primary fixed-membership numbers, with k "
-                     "chosen on validation, are in `Paradigm Comparison`"),
-        ("Caveat", "the + CCM cell's k is chosen post hoc by test MSE per (dataset, "
-                   "model) and reused for MAE - an oracle bound, where the paper "
-                   "tunes k on validation data. The base column is the plain "
-                   "multivariate cell; `Cluster (k=1)` in the Ultimate Comparison is "
-                   "the same network with clustering off and is the stricter baseline."),
+        ("Protocol", f"{name} (`{test_key}/*`)"
+                     + (", the primary cluster protocol: every channel keeps the cluster "
+                        "weights computed once from the training split. The logged batch "
+                        "protocol (`sl_test/*`), which averages the membership over each "
+                        "evaluation batch, is table 1.2, a sensitivity"
+                        if batch is not None else
+                        ": the cluster membership is averaged over each evaluation batch")),
+        ("k", f"+ CCM is the cell at the k chosen per (dataset, model) on validation: the "
+              f"lowest seed-mean `{val_key}` over the k values with every seed of the "
+              f"sweep, reused for MAE, as the CCM paper tunes k on validation data "
+              f"(paradigms.choose_k, the choice `Channel Clustering (CCM) vs. plain` and "
+              f"`Paradigm Comparison` make). The test split never picks it; the "
+              f"configuration table reports the k it would pick as an oracle, for "
+              f"reference only. The base column is the plain multivariate cell; "
+              f"`Cluster (k=1)` in the Ultimate Comparison is the same network with "
+              f"clustering off and is the stricter baseline."),
         ("Conformal prediction", "on for every run"),
     ])
 
@@ -1046,57 +1123,76 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     for m in models:
         headers += [m, "+ CCM"]
     headers.append("IMP (%)")
-    rows = []
-    partial = False
-    for ds in datasets:
-        choice = {m: ccm_choice(cluster_cells, m, ds, sl, pl, conf, grid, targets)
-                  for m in models}
-        for attr, name in (("mse", "MSE"), ("mae", "MAE")):
-            strs: list[str] = []
-            vals: list[Optional[float]] = []
-            imps = []
-            pairs = 0
-            for m in models:
-                base_key = (m, ds, sl, pl, conf, None)
-                base_cell = mv_cells.get(base_key)
-                base = getattr(base_cell, attr, None)
-                short = shortfall(base_cell, base_key, targets) if base is not None else ""
-                k, lacks = choice[m]
-                ccm_cell = cluster_cells.get((m, ds, sl, pl, conf, k)) if k else None
-                ccm = getattr(ccm_cell, attr, None)
-                bs, cs = fmt_num(base, 4) + short, fmt_num(ccm, 4)
-                if ccm is not None:
-                    cs = f"{cs} (k={k}" + (f"; partial: {lacks}" if lacks else "") + ")"
-                partial |= bool(short or (ccm is not None and lacks))
-                if base is not None and ccm is not None:
-                    pairs += 1
-                    if not (short or lacks):
-                        if ccm < base:
-                            cs = f"**{cs}**"
-                        elif base < ccm:
-                            bs = f"**{bs}**"
-                        imps.append((base - ccm) / base * 100.0)
-                strs += [bs, cs]
-                vals += [None if short else base, None if lacks else ccm]
-            ranked = sorted((v, i) for i, v in enumerate(vals) if v is not None)
-            if ranked:
-                i = ranked[0][1]
-                strs[i] = f"<u>{strs[i]}</u>"
-            imp = f"{statistics.mean(imps):+.2f}" if imps else MISSING
-            if imps and len(imps) < pairs:
-                imp += f" ({len(imps)} of {pairs})"
-            rows.append([dataset_label(ds), name] + strs + [imp])
-    doc.table("Long-horizon forecasting, base vs + CCM",
-              md_table(headers, "ll" + "r" * (2 * len(models) + 1), rows),
-              note="IMP (%) = mean over the backbones of (base − CCM) / base × 100 "
-                   "for that row's metric; positive = CCM ahead."
-                   + (f" A base cell short of its dataset's seeds shows `(n=…)`; a + CCM "
-                      f"cell whose sweep is not complete -- a k of {', '.join(map(str, grid))} "
-                      f"not run yet, or run at fewer seeds -- shows what it lacks "
-                      f"(`partial: n=…` = its fewest seeds at any k, `k … of …` = the k "
-                      f"values run so far). Such cells are still training: they are not "
-                      f"marked, and IMP averages only the complete pairs, counting them "
-                      f"when that is not every backbone." if partial else ""))
+
+    def table(cells: dict, picked: dict) -> tuple[list[str], bool]:
+        rows = []
+        partial = False
+        for ds in datasets:
+            for attr, metric in (("mse", "MSE"), ("mae", "MAE")):
+                strs: list[str] = []
+                vals: list[Optional[float]] = []
+                imps = []
+                pairs = 0
+                for m in models:
+                    base_key = (m, ds, sl, pl, conf, None)
+                    base_cell = mv_cells.get(base_key)
+                    base = getattr(base_cell, attr, None)
+                    short = shortfall(base_cell, base_key, targets) if base is not None else ""
+                    choice = picked.get((m, ds))
+                    k = choice.k if choice is not None else None
+                    key = (m, ds, sl, pl, conf, k)
+                    ccm_cell = cells.get(key) if k is not None else None
+                    ccm = getattr(ccm_cell, attr, None)
+                    lacks = choice_lacks(choice, ccm_cell, key, targets) if ccm is not None else ""
+                    bs, cs = fmt_num(base, 4) + short, fmt_num(ccm, 4)
+                    if ccm is not None:
+                        cs = f"{cs} (k={k}" + (f"; partial: {lacks}" if lacks else "") + ")"
+                    elif choice is not None and choice.k is None:
+                        cs = f"{MISSING} ({choice.tag()})"
+                    partial |= bool(short or (ccm is not None and lacks))
+                    if base is not None and ccm is not None:
+                        pairs += 1
+                        if not (short or lacks):
+                            if ccm < base:
+                                cs = f"**{cs}**"
+                            elif base < ccm:
+                                bs = f"**{bs}**"
+                            imps.append((base - ccm) / base * 100.0)
+                    strs += [bs, cs]
+                    vals += [None if short else base, None if lacks else ccm]
+                ranked = sorted((v, i) for i, v in enumerate(vals) if v is not None)
+                if ranked:
+                    i = ranked[0][1]
+                    strs[i] = f"<u>{strs[i]}</u>"
+                imp = f"{statistics.mean(imps):+.2f}" if imps else MISSING
+                if imps and len(imps) < pairs:
+                    imp += f" ({len(imps)} of {pairs})"
+                rows.append([dataset_label(ds), metric] + strs + [imp])
+        return md_table(headers, "ll" + "r" * (2 * len(models) + 1), rows), partial
+
+    def note(partial: bool) -> str:
+        return ("IMP (%) = mean over the backbones of (base − CCM) / base × 100 "
+                "for that row's metric; positive = CCM ahead."
+                + (" A base cell short of its dataset's seeds shows `(n=…)`; a + CCM "
+                   "cell whose k was ranked over fewer k values or seeds than the family "
+                   "has -- a sweep still training -- shows what it lacks (`partial: "
+                   "ranked … of …, n/N seeds`, as `Channel Clustering (CCM) vs. plain` "
+                   "does), or its `n=…` when its chosen cell is short. Such cells are "
+                   "not marked, and IMP averages only the complete pairs, counting them "
+                   "when that is not every backbone." if partial else ""))
+
+    lines, partial = table(cluster_cells, choices)
+    doc.table(f"Long-horizon forecasting, base vs + CCM (`{test_key}/*`, k chosen on "
+              f"`{val_key}`)", lines, note=note(partial))
+    if batch is not None:
+        lines, partial = table(batch, batch_choices)
+        doc.table("Batch protocol (sensitivity): base vs + CCM (`sl_test/*`, k chosen on "
+                  "`sl_val/loss`)", lines,
+                  note="The same comparison under the logged batch protocol, with its "
+                       "own k chosen on the logged validation loss: upstream's assigner "
+                       "averages the membership over each evaluation batch, so a k > 1 "
+                       "forecast depends on the other windows of its batch. "
+                       + note(partial))
 
     # --- the paper's Table 10 analogue, from the cluster runs' own logs ------- #
     def ccm_log(m: str) -> dict:
@@ -1111,21 +1207,44 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     fmt_int = lambda v: f"{v:,}" if v is not None else MISSING
     param = lambda m, key: logs[m].get(key)
 
-    def best_k_line(m: str) -> str:
+    def k_line(m: str, picked: dict) -> str:
         parts = []
         for ds in datasets:
-            k, lacks = ccm_choice(cluster_cells, m, ds, sl, pl, conf, grid, targets)
-            parts.append(MISSING if k is None else f"{k} (partial)" if lacks else str(k))
+            choice = picked.get((m, ds))
+            k = choice.k if choice is not None else None
+            parts.append(MISSING if k is None else f"{k} (partial)" if choice.partial
+                         else str(k))
         return " / ".join(parts)
 
+    def oracle_line(m: str) -> str:
+        # The k with the lowest test MSE among the k values validation ranked:
+        # what choosing on the test split would pick. Reported, never used.
+        parts = []
+        for ds in datasets:
+            choice = choices.get((m, ds))
+            scored = [(cluster_cells[key].mse, key[5]) for k in (choice.ranked if choice else ())
+                      if (key := (m, ds, sl, pl, conf, k)) in cluster_cells
+                      and cluster_cells[key].mse is not None]
+            parts.append(MISSING if not scored or choice.k is None else
+                         f"{min(scored)[1]}" + (" (partial)" if choice.partial else ""))
+        return " / ".join(parts)
+
+    labels = " / ".join(dataset_label(d) for d in datasets)
     cfg_rows = [
         ["Channel clusters k swept"] + [
             ", ".join(str(v) for v in vs) if (vs := sorted(
                 {key[5] for key in cluster_cells
                  if key[0] == m and at(key) and key[5] is not None})) else MISSING
             for m in models],
-        [f"Best k by test MSE ({' / '.join(dataset_label(d) for d in datasets)})"]
-        + [best_k_line(m) for m in models],
+        [f"k chosen on validation, `{val_key}` ({labels})"]
+        + [k_line(m, choices) for m in models],
+    ]
+    if batch is not None:
+        cfg_rows.append([f"k chosen on validation under the batch protocol, `sl_val/loss` "
+                         f"({labels})"] + [k_line(m, batch_choices) for m in models])
+    cfg_rows += [
+        [f"Oracle k, lowest `{test_key}/loss` (reported, never used; {labels})"]
+        + [oracle_line(m) for m in models],
         ["β (similarity-loss weight)"] + [
             fmt_num(param(m, "parameters/cluster/beta"), 1) for m in models],
         ["Sinkhorn temperature ε"] + ["0.05" for _ in models],
@@ -1359,9 +1478,11 @@ def main() -> None:
     cl_cells = by_title.get(CLUSTER_TITLE)
     if mv_cells and cl_cells:
         cluster_runs = next((r for t, r, _ in loaded if t == CLUSTER_TITLE), [])
-        ccm_section = render_ccm_vs_base(CCM_TITLE, canonical_cells(cl_cells),
+        primary, batch = protocol_cells(cluster_runs, cl_cells)
+        ccm_section = render_ccm_vs_base(CCM_TITLE, canonical_cells(primary),
                                          canonical_cells(mv_cells), cluster_runs,
-                                         targets=targets)
+                                         targets=targets,
+                                         batch=canonical_cells(batch) if batch else None)
         if ccm_section:
             updates.append((CCM_TITLE, ccm_section))
 
