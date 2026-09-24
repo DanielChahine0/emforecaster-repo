@@ -45,6 +45,9 @@ allow:
   table says how many seeds train, adds a descriptive row for the seeds the
   multivariate run trains at, and flags a cell where no seed of any paradigm
   trains -- the scoreboard is then also shown without it.
+* **Sensitivity rows** for what a pooled MSE hides (audit PE-1, PE-2): the
+  ratio-of-sums skill, the near-unforecastable bands dropped, and the failed
+  per-channel bands dropped from both sides.
 
 Training cost is deliberately absent. Timings are only comparable between runs
 that trained under the same contention (``concurrency`` in runs.csv), and the
@@ -104,8 +107,26 @@ DETERMINISTIC = ("ARIMA", "Persistence")
 TRAINS_MODELS = ("RF_EMF_Transformer", "Transformer")
 TRAINS_FRACTION = 0.5
 
+# The bands no model forecasts better than their own lookback mean and that
+# carry a third of their cell's MSE (audit PE-1; frames/bands.csv, 2026-09-24):
+# UH2022 ch21 (3568.0 MHz, 33% of the multivariate MSE at skill -0.01) and
+# EMF2023 ch24 (3547.5 MHz, 36% at skill 0.00). Keyed by dataset, channel
+# indices in the loader's order.
+NEAR_UNFORECASTABLE = {"uh2022": (21,), "emf_2023_university_5_with_ptv": (24,)}
+
+# A per-channel band run whose best validation epoch is at most this failed to
+# train: its validation loss rose from the start and patience ran out inside
+# the OneCycle warm-up (audit PE-2: nine PatchTST bands on ED2022 and UH2022;
+# no multivariate or cluster PatchTST run does this).
+FAILED_BEST_EPOCH = 2
+
+
 def _f(v) -> Optional[float]:
     return float(v) if v not in ("", None) else None
+
+
+def _i(v) -> Optional[int]:
+    return int(float(v)) if v not in ("", None) else None
 
 
 def _mean_all(vals: list) -> Optional[float]:
@@ -122,7 +143,8 @@ def seed_values(runs_csv: Path, family: str, seq_len: int, pred_len: int) -> dic
 
     metrics holds the logged ``mse``, ``mae`` and ``val`` (best validation
     loss), ``lookback`` (the lookback-mean MSE on the same windows and bands),
-    and for a cluster run the fixed-protocol
+    for a per-channel seed the ``failed`` channels (best epoch <=
+    FAILED_BEST_EPOCH), and for a cluster run the fixed-protocol
     ``mse_fixed``, ``mae_fixed``, ``val_fixed`` and their ``source``.
     """
     raw: dict = defaultdict(lambda: defaultdict(list))
@@ -159,7 +181,11 @@ def seed_values(runs_csv: Path, family: str, seq_len: int, pred_len: int) -> dic
             s = {"mse": statistics.fmean(vals["mse"]),
                  "mae": statistics.fmean(vals["mae"]),
                  "val": statistics.fmean(val) if val else None,
-                 "lookback": _mean_all([_f(r.get("lookback_mse")) for r in rs])}
+                 "lookback": _mean_all([_f(r.get("lookback_mse")) for r in rs]),
+                 "failed": tuple(sorted(
+                     int(r["channel"]) for r in rs
+                     if r.get("channel", "") != "" and _i(r.get("best_epoch")) is not None
+                     and _i(r.get("best_epoch")) <= FAILED_BEST_EPOCH))}
             if isinstance(key[0], tuple):
                 r = rs[0]
                 s.update(mse_fixed=_f(r.get("mse_fixed")), mae_fixed=_f(r.get("mae_fixed")),
@@ -318,8 +344,13 @@ def pipelines(values: dict, protocol: str = "fixed") -> tuple:
     return board.cells, {c: ch.k for c, ch in board.choices.items() if ch.k is not None}
 
 
-def compare(a: dict, b: dict, metric: str) -> Optional[dict]:
-    """Challenger b against baseline a on the seeds both have."""
+def compare(a: dict, b: dict, metric: str, gap: str = "rel") -> Optional[dict]:
+    """Challenger b against baseline a on the seeds both have.
+
+    ``gap`` is what the across-cell test ranks: "rel", the challenger's gap
+    relative to the baseline, or "abs", the plain difference (for a metric
+    already on a common scale, like the skill ratio).
+    """
     seeds = sorted(set(a) & set(b))
     if not seeds:
         return None
@@ -331,8 +362,9 @@ def compare(a: dict, b: dict, metric: str) -> Optional[dict]:
     band = max(TIE_FLOOR, math.sqrt((sa * sa + sb * sb) / 2))
     delta = mb - ma
     outcome = "tie" if abs(delta) <= band else ("challenger" if delta < 0 else "baseline")
+    rel = delta / ma if ma else float("nan")
     return {"n": len(seeds), "a": ma, "b": mb, "sa": sa, "sb": sb, "delta": delta,
-            "rel": delta / ma if ma else float("nan"), "band": band,
+            "rel": rel, "gap": rel if gap == "rel" else delta, "band": band,
             "outcome": outcome, "duplicate": abs(delta) < TIE_FLOOR}
 
 
@@ -389,11 +421,118 @@ def does_not_train(board: Board, cell: tuple) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Band-level variants (frames/bands.csv)
+# --------------------------------------------------------------------------- #
+
+def band_values(bands_csv: Path, family: str, seq_len: int, pred_len: int) -> dict:
+    """{(pipeline, dataset, model): {seed: {channel: (mse, mse_fixed)}}} and band names.
+
+    pipeline as in seed_values. Returns (values, {(dataset, channel): band}).
+    """
+    out: dict = defaultdict(lambda: defaultdict(dict))
+    names: dict = {}
+    with open(bands_csv) as f:
+        for r in csv.DictReader(f):
+            if (r.get("family") or family_of(r["dataset"])) != family:
+                continue
+            if int(r["seq_len"]) != seq_len or int(r["pred_len"]) != pred_len:
+                continue
+            if not r["seed"] or r["conf"] != "1":
+                continue
+            setup = r["setup"]
+            pipeline = ("cluster", int(r["k"])) if setup == "cluster" else setup
+            if setup not in (MV, PC, "cluster"):
+                continue
+            ch = int(r["channel"])
+            out[(pipeline, r["dataset"], r["model"])][r["seed"]][ch] = (
+                _f(r["mse"]), _f(r.get("mse_fixed")))
+            names[(r["dataset"], ch)] = r.get("band", "")
+    return out, names
+
+
+def _source_key(board: Board, cell: tuple, pipe: str):
+    if pipe in (MV, PC):
+        return pipe
+    if pipe == K1:
+        return ("cluster", 1)
+    choice = board.choices.get(cell)
+    return ("cluster", choice.k) if choice and choice.k is not None else None
+
+
+def dropped(board: Board, cell: tuple, pipe: str, bands: dict,
+            drop: tuple) -> Optional[dict]:
+    """A pipeline's seeds with ``mse`` re-averaged over the bands not in ``drop``.
+
+    From bands.csv, the per-band vectors (the fixed ones for a cluster pipeline
+    under the fixed protocol), so a cell's "all bands" and "without" values
+    come from the same numbers. A seed without a full band vector is left out.
+    """
+    seeds = board.cells.get(cell, {}).get(pipe)
+    key = _source_key(board, cell, pipe)
+    if seeds is None or key is None:
+        return None
+    per_seed = bands.get((key, cell[0], cell[1]), {})
+    fixed = pipe in (K1, BEST) and board.protocol == "fixed"
+    out = {}
+    for seed, s in seeds.items():
+        per = per_seed.get(seed)
+        if not per:
+            continue
+        vals = [v[1] if fixed else v[0] for ch, v in per.items() if ch not in drop]
+        if vals and all(v is not None for v in vals):
+            out[seed] = {**s, "mse": statistics.fmean(vals)}
+    return out
+
+
+def failed_bands(board: Board, cell: tuple) -> tuple:
+    """The per-channel bands of a cell that failed at any seed (not TRAINS_MODELS)."""
+    if cell[1] in TRAINS_MODELS:
+        return ()
+    seeds = board.cells.get(cell, {}).get(PC, {})
+    return tuple(sorted({ch for s in seeds.values() for ch in s.get("failed", ())}))
+
+
+def variant(board: Board, fn: Callable) -> Board:
+    """A copy of ``board`` whose pipelines are fn(cell, pipe, seeds) (None drops)."""
+    cells = {}
+    for cell, p in board.cells.items():
+        new = {}
+        for pipe, seeds in p.items():
+            v = fn(cell, pipe, seeds)
+            if v:
+                new[pipe] = v
+        cells[cell] = new
+    return Board(cells, board.choices, board.seeds, board.grid, board.protocol,
+                 board.clusterable)
+
+
+def skill_variant(board: Board) -> Board:
+    """``mse`` replaced by MSE / lookback-mean MSE, i.e. 1 - skill (ratio of sums)."""
+    return variant(board, lambda cell, pipe, seeds: {
+        seed: {**s, "mse": s["mse"] / s["lookback"]}
+        for seed, s in seeds.items() if s.get("lookback")})
+
+
+def drop_variant(board: Board, bands: dict, drops: Callable,
+                 recompute: bool = False) -> Board:
+    """Every cell's ``mse`` without the bands drops(cell) names.
+
+    A cell with nothing to drop keeps its run-level numbers, unless
+    ``recompute``: then it too is re-averaged from its band vectors, so it
+    can stand beside a dropped variant built from the same numbers.
+    """
+    def fn(cell, pipe, seeds):
+        d = drops(cell)
+        return dropped(board, cell, pipe, bands, d) if d or recompute else seeds
+    return variant(board, fn)
+
+
+# --------------------------------------------------------------------------- #
 # Counting
 # --------------------------------------------------------------------------- #
 
 def tally(board: Board, base: str, chal: str, metric: str, order: list, *,
-          skip: frozenset = frozenset()) -> dict:
+          skip: frozenset = frozenset(), gap: str = "rel") -> dict:
     """One scoreboard row: outcomes over the cells both sides complete.
 
     A deterministic model's cell counts as identical, one whose sides are
@@ -411,11 +550,11 @@ def tally(board: Board, base: str, chal: str, metric: str, order: list, *,
         if not (board.complete(c, base) and board.complete(c, chal)):
             pending += 1
             continue
-        r = compare(p[base], p[chal], metric)
+        r = compare(p[base], p[chal], metric, gap)
         if r:
             res.append(r)
     count = {o: sum(r["outcome"] == o for r in res) for o in ("challenger", "tie", "baseline")}
-    gaps = [r["rel"] for r in res if not r["duplicate"]]
+    gaps = [r["gap"] for r in res if not r["duplicate"]]
     return {"count": count, "cells": len(res), "pending": pending, "identical": identical,
             "n_test": len(gaps), "median": statistics.median(gaps) if gaps else float("nan"),
             "p": wilcoxon_p(gaps)}
@@ -429,13 +568,27 @@ def _p(p: Optional[float]) -> str:
     return "-" if p is None else f"{p:.3g}"
 
 
+def _band_label(names: dict, dataset: str, ch: int) -> str:
+    band = names.get((dataset, ch), "")
+    try:
+        float(band)
+        return f"ch{ch} ({band} MHz)"
+    except ValueError:
+        return f"ch{ch} ({band})" if band else f"ch{ch}"
+
+
 def render(runs_csv: Path, family: str, setting: tuple,
            dataset_label: Callable[[str], str] = str,
            model_label: Callable[[str], str] = str,
            dataset_rank: Callable = lambda d: d,
            model_rank: Callable = lambda m: m,
+           bands_csv: Optional[Path] = None,
            title: str = "Paradigm Comparison") -> str:
-    """The section's markdown, or "" when no two paradigms share a cell."""
+    """The section's markdown, or "" when no two paradigms share a cell.
+
+    ``bands_csv`` (default: bands.csv beside runs_csv) feeds the band-level
+    sensitivity rows; without it they are left out and the note says so.
+    """
     seq_len, pred_len = setting
     values = seed_values(runs_csv, family, seq_len, pred_len)
     board = build(values, "fixed")
@@ -446,6 +599,11 @@ def render(runs_csv: Path, family: str, setting: tuple,
     order = sorted(cells, key=lambda c: (dataset_rank(c[0]), model_rank(c[1])))
     n_family = len(board.seeds)
     flagged = frozenset(c for c in order if does_not_train(board, c))
+
+    if bands_csv is None:
+        bands_csv = Path(runs_csv).parent / "bands.csv"
+    bands, names = (band_values(bands_csv, family, seq_len, pred_len)
+                    if Path(bands_csv).exists() else ({}, {}))
 
     out = [f"# {title}", "",
            f"- Configuration: L{seq_len}/O{pred_len}, family `{family}`; "
@@ -513,12 +671,17 @@ def render(runs_csv: Path, family: str, setting: tuple,
     # ----------------------------------------------------------- sensitivity
     rows = []
 
-    def add(base, chal, label, b, metric, *, skip=frozenset()):
-        t = tally(b, base, chal, metric, order, skip=skip)
+    def add(base, chal, label, b, metric, *, skip=frozenset(), gap="rel"):
+        t = tally(b, base, chal, metric, order, skip=skip, gap=gap)
         if not t["cells"] and not t["pending"]:
             return
         c = t["count"]
-        med = "-" if math.isnan(t["median"]) else f"{t['median'] * 100:+.2f}%"
+        if math.isnan(t["median"]):
+            med = "-"
+        elif gap == "rel":
+            med = f"{t['median'] * 100:+.2f}%"
+        else:
+            med = f"{t['median'] * 100:+.2f} pts"
         rows.append(f"| {LABEL[chal]} vs {LABEL[base]} | {label} | "
                     f"{dict(METRICS)[metric]} | {c['challenger']} | {c['tie']} | "
                     f"{c['baseline']} | {t['cells']} | {t['pending']} | {t['n_test']} "
@@ -529,6 +692,28 @@ def render(runs_csv: Path, family: str, setting: tuple,
             for metric, _name in METRICS:
                 add(base, chal, "batch protocol (k chosen on the logged `sl_val/loss`)",
                     batch, metric)
+    skill = skill_variant(board)
+    for base, chal, _ in COMPARISONS:
+        add(base, chal, "ratio-of-sums skill (gap in points of MSE / lookback-mean MSE)",
+            skill, "mse", gap="abs")
+    near = {ds: chans for ds, chans in NEAR_UNFORECASTABLE.items()
+            if any(c[0] == ds for c in order)}
+    if bands and near:
+        drop_near = drop_variant(board, bands, lambda c: near.get(c[0], ()))
+        label = "without " + ", ".join(
+            f"{dataset_label(ds)} {'/'.join(_band_label(names, ds, ch) for ch in chans)}"
+            for ds, chans in near.items())
+        for base, chal, _ in COMPARISONS:
+            add(base, chal, label, drop_near, "mse")
+    failed = {c: failed_bands(board, c) for c in order}
+    failed = {c: f for c, f in failed.items() if f}
+    if bands and failed:
+        drop_failed = drop_variant(board, bands, lambda c: failed.get(c, ()))
+        label = ("without the failed per-channel bands, dropped on both sides ("
+                 + "; ".join(f"{dataset_label(c[0])} {model_label(c[1])} "
+                             + ", ".join(f"ch{ch}" for ch in f)
+                             for c, f in failed.items()) + ")")
+        add(MV, PC, label, drop_failed, "mse")
     if flagged:
         label = "without the cells that do not train (" + ", ".join(
             f"{dataset_label(c[0])} {model_label(c[1])}" for c in order if c in flagged) + ")"
@@ -537,7 +722,10 @@ def render(runs_csv: Path, family: str, setting: tuple,
                 add(base, chal, label, board, metric, skip=flagged)
     if rows:
         out += ["", "## 2 · Sensitivity", "",
-                "The scoreboard's comparisons under other choices, counted the same way.",
+                "The scoreboard's comparisons under other choices, counted the same way. "
+                "The band variants are MSE only: a joint run logs no per-band MAE, and "
+                "they are recomputed from `bands.csv`'s per-band vectors on both sides."
+                + ("" if bands else " `bands.csv` was not found, so they are left out."),
                 "",
                 "| Comparison | Variant | Metric | Challenger better | Tie | "
                 "Baseline better | Cells | Pending | n (test) | Median gap | Wilcoxon p |",
@@ -594,11 +782,53 @@ def render(runs_csv: Path, family: str, setting: tuple,
                     row.append(_delta(b, c, K1, BEST, metric))
             out.append("| " + " | ".join(row) + " |")
 
+    # --------------------------------------------------- band sensitivity per cell
+    affected = [c for c in order if c[1] not in DETERMINISTIC
+                and (near.get(c[0]) or failed.get(c))]
+    if bands and affected:
+        out += ["", f"## {section} · Band sensitivity per cell (MSE)", "",
+                "The cells a band variant changes, with the dropped bands' share of the "
+                "multivariate cell's MSE. Both columns of a pair are recomputed from "
+                "`bands.csv`. Marks as above.", "",
+                "| Dataset | Model | Dropped | Share of MV MSE | Per-channel vs MV: all "
+                "| without | Best k vs k=1: all | without |",
+                "|:---|:---|:---|---:|---:|---:|---:|---:|"]
+        everything = drop_variant(board, bands, lambda c: (), recompute=True)
+        for c in affected:
+            for kind, drop in (("near-unforecastable", near.get(c[0], ())),
+                               ("failed per-channel", failed.get(c, ()))):
+                if not drop:
+                    continue
+                cut = drop_variant(board, bands, lambda cc, d=drop: d if cc == c else (),
+                                   recompute=True)
+                share = _share(bands, c, drop)
+                cluster = kind == "near-unforecastable"
+                out.append(
+                    f"| {dataset_label(c[0])} | {model_label(c[1])} | "
+                    f"{', '.join(_band_label(names, c[0], ch) for ch in drop)} ({kind}) | "
+                    f"{'-' if share is None else f'{share * 100:.1f}%'} | "
+                    f"{_delta(everything, c, MV, PC, 'mse')} | {_delta(cut, c, MV, PC, 'mse')} | "
+                    f"{_delta(everything, c, K1, BEST, 'mse') if cluster else '-'} | "
+                    f"{_delta(cut, c, K1, BEST, 'mse') if cluster else '-'} |")
+
     out += ["", f"*n = seeds for multivariate / per-channel / cluster k=1 / cluster best "
                 f"k, of the family's {n_family}. Trains = the seeds that train, same order "
                 "(Transformer only). A bold Δ means the challenger (per-channel, or the "
                 "best k) is better beyond seed noise.*"]
     return "\n".join(out) + "\n"
+
+
+def _share(bands: dict, cell: tuple, drop: tuple) -> Optional[float]:
+    """The dropped bands' share of the multivariate cell's summed band MSE."""
+    per_seed = bands.get((MV, cell[0], cell[1]), {})
+    total = kept = 0.0
+    for per in per_seed.values():
+        for ch, (mse, _) in per.items():
+            if mse is None:
+                return None
+            total += mse
+            kept += mse if ch in drop else 0.0
+    return kept / total if total else None
 
 
 def _delta(board: Board, cell: tuple, base: str, chal: str, metric: str,

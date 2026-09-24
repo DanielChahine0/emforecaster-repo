@@ -1,8 +1,8 @@
 """The paradigm comparison: seed-aware, matched, validation-chosen k.
 
-Each test builds a small synthetic runs.csv whose right answer is known, so a
-regression in how seeds are averaged, matched, tied, selected or counted shows
-up here rather than as a quietly wrong headline.
+Each test builds a small synthetic runs.csv (and bands.csv) whose right answer
+is known, so a regression in how seeds are averaged, matched, tied, selected
+or counted shows up here rather than as a quietly wrong headline.
 """
 
 from pathlib import Path
@@ -241,6 +241,77 @@ def test_a_cell_where_no_seed_trains_is_flagged_and_left_out_once(tmp_path):
     assert "RF_EMF_Transformer (does not train)" in md
     assert "without the cells that do not train (ed2022 RF_EMF_Transformer)" in md
     assert "only (descriptive)" not in md               # no seed to describe
+
+
+# --------------------------------------------------------------- band variants
+
+def _band(setup, seed, channel, mse, *, model="DLinear", dataset="uh2022", k="",
+          mse_fixed=None):
+    row = {f: "" for f in frames.BAND_FIELDS}
+    row.update(setup=setup, family="emf", model=model, dataset=dataset, seq_len=336,
+               pred_len=96, k=k, seed=str(seed), conf=1, channel=channel, band=str(channel),
+               mse=repr(mse), mse_fixed="" if mse_fixed is None else repr(mse_fixed))
+    return row
+
+
+def _banded(tmp_path, *, failed=()):
+    """UH2022 DLinear over 22 bands: per-channel loses only on ch21, the band
+    NEAR_UNFORECASTABLE drops, and on the bands ``failed`` names."""
+    runs, bands = [], []
+    n = 22
+    for i, s in enumerate(SEEDS):
+        mv = [1.0 + 0.001 * i] * n
+        pc = [0.99 + 0.001 * i] * n
+        pc[21] = 3.0
+        for ch in failed:
+            pc[ch] = 5.0
+        runs.append(_run("multivariate", s, 0.5, dataset="uh2022", mse=sum(mv) / n))
+        bands += [_band("multivariate", s, ch, v) for ch, v in enumerate(mv)]
+        for ch, v in enumerate(pc):
+            runs.append(_run("perchannel", s, 0.5, dataset="uh2022", channel=ch, mse=v,
+                             best_epoch=1 if ch in failed else 30))
+            bands.append(_band("perchannel", s, ch, v))
+    runs_csv = _csv(tmp_path, runs)
+    frames.write_csv(tmp_path / "bands.csv", bands, frames.BAND_FIELDS)
+    return runs_csv
+
+
+def test_dropping_a_band_recomputes_both_sides_from_the_band_vectors(tmp_path):
+    runs_csv = _banded(tmp_path)
+    values = paradigms.seed_values(runs_csv, "emf", 336, 96)
+    board = paradigms.build(values)
+    bands, names = paradigms.band_values(tmp_path / "bands.csv", "emf", 336, 96)
+    cell = ("uh2022", "DLinear")
+    whole = paradigms.compare(board.cells[cell][MV], board.cells[cell][PC], "mse")
+    assert whole["outcome"] == "baseline"            # ch21 sinks per-channel
+    cut = paradigms.drop_variant(board, bands, lambda c: (21,))
+    r = paradigms.compare(cut.cells[cell][MV], cut.cells[cell][PC], "mse")
+    assert r["outcome"] == "challenger"
+    assert cut.cells[cell][MV]["69421"]["mse"] == pytest.approx(1.0)
+    md = paradigms.render(runs_csv, "emf", (336, 96))
+    assert "without UH2022 ch21" not in md           # labels are the renderer's
+    assert "without uh2022 ch21" in md and "Band sensitivity per cell" in md
+
+
+def test_failed_per_channel_bands_are_found_and_dropped_on_both_sides(tmp_path):
+    runs_csv = _banded(tmp_path, failed=(3, 5))
+    board = paradigms.build(paradigms.seed_values(runs_csv, "emf", 336, 96))
+    assert paradigms.failed_bands(board, ("uh2022", "DLinear")) == (3, 5)
+    md = paradigms.render(runs_csv, "emf", (336, 96))
+    row = next(line for line in md.splitlines() if "without the failed per-channel" in line)
+    assert "uh2022 DLinear ch3, ch5" in row
+
+
+def test_the_skill_variant_ranks_absolute_gaps_in_the_error_ratio(tmp_path):
+    rows = []
+    for s in SEEDS:
+        rows.append(_run("multivariate", s, 0.4, mse=0.5, lookback=2.0))
+        rows.append(_run("perchannel", s, 0.4, channel=0, mse=0.6, lookback=2.0))
+    board = paradigms.skill_variant(paradigms.build(_values(tmp_path, rows)))
+    r = paradigms.compare(board.cells[("ed2022", "DLinear")][MV],
+                          board.cells[("ed2022", "DLinear")][PC], "mse", gap="abs")
+    assert r["gap"] == pytest.approx(0.05)            # 0.6/2 - 0.5/2
+    assert r["rel"] == pytest.approx(0.2)             # the MSE's own relative gap
 
 
 # --------------------------------------------------------------- rendering
