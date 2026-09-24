@@ -109,10 +109,12 @@ CLUSTERED = {
 # of sums over the bands) is at least TRAINS_FRACTION of the reference: the
 # best multivariate seed-mean skill any other gradient-trained model reaches
 # on the same dataset and window. Relative, because the datasets differ in how
-# forecastable they are (the best skill is 0.16 on EMF2023, 0.53 on ED2022).
-# On the 2026-09-24 logs the Transformer's trained seeds reach 0.65 to 0.96 of
-# the reference and every other seed 0.26 at most (a collapsed multivariate
-# seed sits at 0.000). Only the Transformer is judged: skill is not a collapse
+# forecastable they are (the best skill is 0.16 on EMF2023, 0.52 on ED2022).
+# On the 2026-09-24 logs the Transformer's trained seeds reach 0.65 to 0.97 of
+# the reference (the top is cluster k=1 on ED2022) and every other seed 0.31 at
+# most (per-channel VoIP Mobile L48/O12 seed 69424; no other above 0.17, and a
+# collapsed multivariate seed within 0.002 of zero), under either cluster
+# protocol. Only the Transformer is judged: skill is not a collapse
 # detector for models without RevIN (VoIP DLinear is below the lookback mean
 # while learning, baselines.py), so the rule is not applied to them.
 TRAINS_MODELS = ("RF_EMF_Transformer", "Transformer")
