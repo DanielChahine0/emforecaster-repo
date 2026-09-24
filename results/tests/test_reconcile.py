@@ -46,12 +46,12 @@ def _gate(tmp_path, published_md, current_md, rules=None, *, snapshot=None):
     frames.write_csv(cells, [], frames.CELL_FIELDS)
     spec = tmp_path / "gate.yaml"
     import yaml
-    spec.write_text(yaml.safe_dump({"snapshot": snapshot or published.name,
-                                    "expected": rules or []}))
+    spec.write_text(yaml.safe_dump({"emf": {"snapshot": snapshot or published.name,
+                                            "expected": rules or []}}))
     sections = [(f"s{i}", heading, block)
                 for i, (heading, block) in enumerate(R.split_blocks(current_md))]
-    return R.gate(published, cells, sections, runs_spec=tmp_path / "none.yaml",
-                  gate_spec=spec, out=io.StringIO())
+    return R.gate(published, cells, sections, family="emf",
+                  runs_spec=tmp_path / "none.yaml", gate_spec=spec, out=io.StringIO())
 
 
 # --------------------------------------------------------------------- compare
@@ -232,7 +232,7 @@ def _gate_held(tmp_path, before, after, recount, spec):
     frames.write_csv(cells, [], frames.CELL_FIELDS)
     import yaml
     path = tmp_path / "gate.yaml"
-    path.write_text(yaml.safe_dump(dict(spec, snapshot=published.name)))
+    path.write_text(yaml.safe_dump({"emf": dict(spec, snapshot=published.name)}))
     asked = []
 
     def render_models(models):
@@ -240,7 +240,7 @@ def _gate_held(tmp_path, before, after, recount, spec):
         return recount
 
     sections = [(f"s{i}", h, b) for i, (h, b) in enumerate(R.split_blocks(after))]
-    g = R.gate(published, cells, sections, runs_spec=tmp_path / "none.yaml",
+    g = R.gate(published, cells, sections, family="emf", runs_spec=tmp_path / "none.yaml",
                gate_spec=path, render_models=None if recount is None else render_models,
                out=io.StringIO())
     return g, asked
@@ -396,6 +396,48 @@ def test_rules_written_for_another_snapshot_do_not_apply(tmp_path):
     assert any("none applies" in n for n in g.notes)
 
 
+def test_a_familys_rules_never_apply_to_another_family(tmp_path):
+    before = _scoreboard([(PC, "MAE", 1, 10, 10, 21, "0.0268")])
+    after = _scoreboard([(PC, "MAE", 1, 7, 10, 18, "0.0268")])
+    published = tmp_path / "2026-01-01_tables.md"
+    published.write_text(before)
+    cells = tmp_path / "cells.csv"
+    frames.write_csv(cells, [], frames.CELL_FIELDS)
+    import yaml
+    spec = tmp_path / "gate.yaml"
+    rule = {"kind": "scoreboard", "reason": "anything"}
+    # Written for this very snapshot name, but in the other family's block.
+    spec.write_text(yaml.safe_dump({"voip": {"snapshot": published.name,
+                                             "expected": [rule]}}))
+    sections = [(f"s{i}", h, b) for i, (h, b) in enumerate(R.split_blocks(after))]
+
+    def run(family):
+        return R.gate(published, cells, sections, family=family,
+                      runs_spec=tmp_path / "none.yaml", gate_spec=spec, out=io.StringIO())
+
+    g = run("emf")
+    assert not g.ok and g.n_expected == 0 and g.notes == []
+    g = run("voip")
+    assert g.ok and g.n_expected == 2 and g.family == "voip"
+
+
+def test_a_list_outside_every_family_block_is_not_read(tmp_path):
+    # The single-snapshot layout gate.yaml had before it kept a block per
+    # family: its lists are left out, loudly, and the gate is the stricter.
+    import yaml
+    spec = tmp_path / "gate.yaml"
+    spec.write_text(yaml.safe_dump({"snapshot": "2026-01-01_tables.md",
+                                    "expected": [{"kind": "scoreboard", "reason": "x"}],
+                                    "held_elsewhere": []}))
+    rules, notes = R.load_expected(spec, "2026-01-01_tables.md", "emf")
+    assert rules == [] and len(notes) == 1 and "outside a family block" in notes[0]
+    held, notes = R.load_held_elsewhere(spec, "2026-01-01_tables.md", "emf")
+    assert held == [] and len(notes) == 1 and "`held_elsewhere`" in notes[0]
+    # A family with no block expects nothing, and says nothing.
+    spec.write_text(yaml.safe_dump({"emf": {"snapshot": "a.md", "expected": []}}))
+    assert R.load_expected(spec, "b.md", "voip") == ([], [])
+
+
 def test_a_malformed_rule_is_dropped_and_the_gate_stays_strict(tmp_path):
     before = _scoreboard([(PC, "MAE", 1, 10, 10, 21, "0.0268")])
     after = _scoreboard([(PC, "MAE", 1, 7, 10, 18, "0.0268")])
@@ -446,7 +488,7 @@ def test_a_dash_that_now_has_a_value_is_new_not_a_change(tmp_path):
              pred_len=96, k="", conf=1, mse="0.53531", mae="0.3"),
         dict(base, setup="multivariate", model="TSMixer", dataset="ed2022", seq_len=336,
              pred_len=96, k="", conf=1, mse="0.54", mae="0.3")], frames.CELL_FIELDS)
-    g = R.gate(published, cells, [], runs_spec=tmp_path / "none.yaml",
+    g = R.gate(published, cells, [], family="emf", runs_spec=tmp_path / "none.yaml",
                gate_spec=tmp_path / "none.yaml", out=io.StringIO())
     held = g.held["cells"]
     assert g.ok and held.published == 1 and len(held.new) == 1
@@ -482,7 +524,7 @@ def test_a_voip_cell_is_held_against_its_cells_row(tmp_path):
                                        ("RF_EMF_Transformer", "voip_fixed", 24, 6, "0.3451"),
                                        ("Persistence", "voip_fixed", 24, 6, "0.21524"))],
         frames.CELL_FIELDS)
-    g = R.gate(published, cells, [], runs_spec=tmp_path / "none.yaml",
+    g = R.gate(published, cells, [], family="voip", runs_spec=tmp_path / "none.yaml",
                gate_spec=tmp_path / "none.yaml", out=io.StringIO())
     assert g.ok and g.held["cells"].published == 4 and not g.held["cells"].changes
 
@@ -505,9 +547,10 @@ def _cluster_gate(tmp_path, *, batch_key="sl_test/loss", mse="0.5350", mse_fixed
                      frames.CELL_FIELDS)
     import yaml
     spec = tmp_path / "gate.yaml"
-    spec.write_text(yaml.safe_dump({"snapshot": published.name, "expected": list(rules)}))
-    return R.gate(published, cells, [], runs_spec=tmp_path / "none.yaml", gate_spec=spec,
-                  out=io.StringIO())
+    spec.write_text(yaml.safe_dump({"emf": {"snapshot": published.name,
+                                            "expected": list(rules)}}))
+    return R.gate(published, cells, [], family="emf", runs_spec=tmp_path / "none.yaml",
+                  gate_spec=spec, out=io.StringIO())
 
 
 def test_a_cluster_cell_is_held_against_its_fixed_mean_and_the_batch_one(tmp_path):
@@ -536,9 +579,11 @@ def test_a_cluster_cell_is_held_against_its_fixed_mean_and_the_batch_one(tmp_pat
 def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
     from emfres import cli
 
-    rules, notes = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
+    rules, notes = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name,
+                                   "emf")
     assert rules and notes == []
-    held, notes = R.load_held_elsewhere(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
+    held, notes = R.load_held_elsewhere(RESULTS / "specs" / "gate.yaml",
+                                        cli.PUBLISHED.name, "emf")
     assert notes == [] and [h.models for h in held] == [("DLinear", "PatchTST", "TSMixer")]
     sweep = dict(dataset="ED2022", window="L336/O96", metric="MAE", model="DLinear")
     cells = dict(setup="cluster", model="DLinear", dataset="ED2022", window="L336/O96",
@@ -571,10 +616,28 @@ def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
         assert not any(R.matches(rule, change) for rule in rules), change.label()
 
 
+def test_the_spec_has_a_block_per_family_for_its_frozen_snapshot():
+    # Each family's block names the snapshot the family is gated against, so
+    # its lists apply; an unfrozen family's block has nothing to apply.
+    import yaml
+    from emfres import cli
+
+    doc = yaml.safe_load((RESULTS / "specs" / "gate.yaml").read_text())
+    assert set(doc) <= set(cli.WINDOWS)
+    for family, block in doc.items():
+        assert set(block) <= set(R.BLOCK_FIELDS), family
+        snapshot = cli.SNAPSHOTS.get(family)
+        if snapshot is None:
+            assert not block.get("snapshot") and not block.get("expected")
+            assert not block.get("held_elsewhere")
+        else:
+            assert snapshot.exists() and block["snapshot"] == snapshot.name
+
+
 def test_each_declared_change_is_pinned_to_a_value_the_snapshot_published(tmp_path):
     from emfres import cli
 
-    rules, _ = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
+    rules, _ = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name, "emf")
     assert all("now" in rule for rule in rules)
 
     # Every value the snapshot publishes, by kind (the cells against no frames

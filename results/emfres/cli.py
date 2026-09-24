@@ -304,7 +304,7 @@ def run_gate(family: str, sections, snapshot: Path | None = None, verbose: bool 
     def render_models(models) -> str:
         return "\n\n".join(md.strip() for _, _, md in render_paradigms(family, models))
 
-    return R.gate(snapshot, FRAMES / "cells.csv", sections,
+    return R.gate(snapshot, FRAMES / "cells.csv", sections, family=family,
                   runs_spec=SPECS / "runs.yaml", gate_spec=SPECS / "gate.yaml",
                   render_models=render_models, verbose=verbose)
 

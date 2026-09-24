@@ -18,19 +18,19 @@ Three kinds of published value are held (KINDS):
 
 A published value that no longer reproduces is a *change*. Some changes are
 the point of a deliberate step -- a retrained band, a new primary protocol --
-and specs/gate.yaml declares them, each with its reason, for the snapshot it
-was written against: those print as expected. Any other change is unexpected
-and fails the gate, and so is a value that vanished or turned into '-',
-whatever a rule says: a rule declares a value that moved, never one that went
-missing. A snapshot row whose quantity today's report prints under another
-name -- the cluster comparisons, whose scoreboard rows are now the fixed
-protocol over more models -- is held against the row that carries it
-(HeldElsewhere), and its own row still has to print a value wherever the
-snapshot did: what it prints is new, that it prints nothing is a failure. A
-value today's report has and the snapshot does not is *new*: counted, never
-fatal, since a cell the snapshot never had is a cell it cannot contradict.
-Once the expected changes are reviewed, re-freezing the snapshot is what
-retires them.
+and specs/gate.yaml declares them, each with its reason, in the block of the
+family (emf, voip) whose snapshot it was written against: those print as
+expected. Any other change is unexpected and fails the gate, and so is a value
+that vanished or turned into '-', whatever a rule says: a rule declares a
+value that moved, never one that went missing. A snapshot row whose quantity
+today's report prints under another name -- the cluster comparisons, whose
+scoreboard rows are now the fixed protocol over more models -- is held against
+the row that carries it (HeldElsewhere), and its own row still has to print a
+value wherever the snapshot did: what it prints is new, that it prints nothing
+is a failure. A value today's report has and the snapshot does not is *new*:
+counted, never fatal, since a cell the snapshot never had is a cell it cannot
+contradict. Once the expected changes are reviewed, re-freezing the snapshot
+is what retires them.
 
     python results/make.py reconcile
 """
@@ -80,6 +80,7 @@ def dataset_slug(label: str) -> str:
     """The cells.csv slug of a dataset as the tables print it."""
     short = re.sub(r"\s*\(.*\)\s*$", "", label).strip() or label
     return DATASET_SLUG.get(label, DATASET_SLUG.get(short, short.lower()))
+
 
 # The heading of the paradigm comparison; its other windows render as
 # "Paradigm Comparison · L24/O6".
@@ -643,9 +644,21 @@ def hold_rendered(kind: str, published_text: str, current_text: str, parse,
 # Expected changes, from specs/gate.yaml
 # --------------------------------------------------------------------------- #
 
-def _spec_entries(spec: Path | None, snapshot: str, name: str,
+# The keys of one family's block of specs/gate.yaml.
+BLOCK_FIELDS = ("snapshot", "held_elsewhere", "expected")
+
+
+def _spec_entries(spec: Path | None, snapshot: str, family: str, name: str,
                   what: str) -> tuple[list, list[str]]:
-    """The list ``name`` of specs/gate.yaml, if the file was written for ``snapshot``."""
+    """The list ``name`` of ``family``'s block of specs/gate.yaml, if that
+    block was written for ``snapshot``.
+
+    specs/gate.yaml holds one block per family (emf, voip), each naming the
+    snapshot its lists were written for. A family with no block expects
+    nothing. A list outside every block is not read, with a warning: which
+    snapshot it was written for is anyone's guess, and dropping it can only
+    make the gate stricter.
+    """
     if spec is None or not spec.exists():
         return [], []
     try:
@@ -653,24 +666,39 @@ def _spec_entries(spec: Path | None, snapshot: str, name: str,
         doc = yaml.safe_load(spec.read_text()) or {}
     except Exception as exc:
         return [], [f"WARNING: could not read {spec}: {exc}; none of its {what} applies"]
-    written_for = str(doc.get("snapshot") or "")
-    entries = list(doc.get(name) or [])
+    if not isinstance(doc, dict):
+        return [], [f"WARNING: {spec.name} is not a mapping of family blocks; none of "
+                    f"its {what} applies"]
+    notes = []
+    if name in doc:
+        notes.append(f"WARNING: {spec.name} has `{name}` outside a family block; it is "
+                     f"not read (put it under the family's key, e.g. `{family}:`)")
+    block = doc.get(family)
+    if block is None:
+        return [], notes
+    if not isinstance(block, dict):
+        return [], notes + [f"WARNING: {spec.name}'s `{family}` block is not a mapping; "
+                            f"none of its {what} applies"]
+    written_for = str(block.get("snapshot") or "")
+    entries = list(block.get(name) or [])
     if entries and written_for != snapshot:
-        return [], [f"NOTE: {spec.name}'s {len(entries)} {what} were written "
-                    f"against {written_for or 'no snapshot'}, not {snapshot}; "
-                    f"none applies"]
-    return entries, []
+        return [], notes + [f"NOTE: {spec.name}'s {len(entries)} {family} {what} were "
+                            f"written against {written_for or 'no snapshot'}, not "
+                            f"{snapshot}; none applies"]
+    return entries, notes
 
 
-def load_expected(spec: Path | None, snapshot: str) -> tuple[list[dict], list[str]]:
-    """The rules of specs/gate.yaml that apply to ``snapshot``, and notes.
+def load_expected(spec: Path | None, snapshot: str,
+                  family: str) -> tuple[list[dict], list[str]]:
+    """The rules of ``family``'s block of specs/gate.yaml that apply to
+    ``snapshot``, and notes.
 
     A rule written for another snapshot, a rule with no reason, a rule naming
     a field its kind does not have and a rule whose ``now`` is malformed
     (_pins) are all left out, with a note: each can only make the gate
     stricter by being dropped, never looser.
     """
-    rules, notes = _spec_entries(spec, snapshot, "expected", "expected changes")
+    rules, notes = _spec_entries(spec, snapshot, family, "expected", "expected changes")
     kept = []
     for i, rule in enumerate(rules, 1):
         if not isinstance(rule, dict) or rule.get("kind") not in KINDS:
@@ -781,15 +809,16 @@ class HeldElsewhere:
 HELD_FIELDS = ("comparison", "variant", "models", "reason")
 
 
-def load_held_elsewhere(spec: Path | None,
-                        snapshot: str) -> tuple[list[HeldElsewhere], list[str]]:
-    """The held_elsewhere entries of specs/gate.yaml that apply to ``snapshot``.
+def load_held_elsewhere(spec: Path | None, snapshot: str,
+                        family: str) -> tuple[list[HeldElsewhere], list[str]]:
+    """The held_elsewhere entries of ``family``'s block of specs/gate.yaml
+    that apply to ``snapshot``.
 
     An entry without all of HELD_FIELDS, or with any other, is left out with a
     warning: its rows are then held under their own name, where they have to
     reproduce like any other value.
     """
-    entries, notes = _spec_entries(spec, snapshot, "held_elsewhere",
+    entries, notes = _spec_entries(spec, snapshot, family, "held_elsewhere",
                                    "held_elsewhere entries")
 
     def listed(v) -> tuple:
@@ -820,6 +849,7 @@ def _headline(reason: str) -> str:
 
 @dataclass
 class Gate:
+    family: str
     snapshot: str
     held: dict                       # kind -> Held
     expected: list                   # (rule, [Change])
@@ -869,15 +899,17 @@ def _section(change: Change) -> str:
 
 
 def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]], *,
-         runs_spec: Path | None = None, gate_spec: Path | None = None,
+         family: str, runs_spec: Path | None = None, gate_spec: Path | None = None,
          render_models=None, verbose: bool = False, out=sys.stdout) -> Gate:
     """Hold every value ``published`` prints against today's frames and render.
 
-    ``sections`` is today's report, as make.py tables renders it:
-    (slug, title, markdown). ``render_models(models)`` is today's paradigm
-    comparison re-counted over only those model ids (cli.render_paradigms),
-    what specs/gate.yaml's held_elsewhere rows are held against. Prints the
-    account and returns it; the gate passes when no change is unexpected.
+    ``published`` is ``family``'s snapshot, and only that family's block of
+    specs/gate.yaml applies to it. ``sections`` is today's report, as make.py
+    tables renders it: (slug, title, markdown). ``render_models(models)`` is
+    today's paradigm comparison re-counted over only those model ids
+    (cli.render_paradigms), what the block's held_elsewhere rows are held
+    against. Prints the account and returns it; the gate passes when no change
+    is unexpected.
     """
     from .tables import SWEEP_TITLE
 
@@ -887,7 +919,7 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
 
     text = published.read_text()
     current = "\n\n".join(md.strip() for _, _, md in sections)
-    stand_ins, notes = load_held_elsewhere(gate_spec, published.name)
+    stand_ins, notes = load_held_elsewhere(gate_spec, published.name, family)
     if stand_ins and render_models is None:
         notes.append("WARNING: nothing to re-count the held_elsewhere rows with: each "
                      "of their values reads as no longer published")
@@ -915,7 +947,7 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
             f"{n} of them held against {s.via()}; their own row only has to print "
             f"them (specs/gate.yaml held_elsewhere {s.n}: {_headline(s.reason)})"
             + ("" if n else " -- matched nothing"))
-    rules, more = load_expected(gate_spec, published.name)
+    rules, more = load_expected(gate_spec, published.name, family)
     notes += more
     expected = [(rule, []) for rule in rules]
     unexpected = []
@@ -924,13 +956,13 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
             hit = None if change.vanished else next(
                 (cs for rule, cs in expected if matches(rule, change)), None)
             (unexpected if hit is None else hit).append(change)
-    result = Gate(published.name, held, expected, unexpected, notes)
+    result = Gate(family, published.name, held, expected, unexpected, notes)
     report(result, verbose=verbose, out=out)
     return result
 
 
 def report(g: Gate, *, verbose: bool = False, out=sys.stdout) -> None:
-    print(f"value gate: {g.snapshot} against today's frames", file=out)
+    print(f"value gate ({g.family}): {g.snapshot} against today's frames", file=out)
     for kind, h in g.held.items():
         changed = h.changed
         print(f"  {kind:<10} {h.published:>4} published, {h.published - changed} "
@@ -944,7 +976,7 @@ def report(g: Gate, *, verbose: bool = False, out=sys.stdout) -> None:
 
     cap = None if verbose else 8
     if g.expected:
-        print(f"expected changes (specs/gate.yaml, snapshot {g.snapshot}): "
+        print(f"expected changes (specs/gate.yaml {g.family}, snapshot {g.snapshot}): "
               f"{g.n_expected}", file=out)
         for rule, cs in g.expected:
             print(f"  rule {rule['_n']}: {len(cs)} -- {_headline(rule['reason'])}"
