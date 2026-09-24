@@ -360,7 +360,7 @@ def fig_scoreboard(corpora: list, style, root: Path, formats) -> list:
                     ax.text(left + v / 2, y, str(v), ha="center", va="center",
                             fontsize=style.context * (0.85 if sub else 1.0), color=ink,
                             fontweight="bold" if key in ("challenger", "baseline") else None,
-                            zorder=4, bbox=dict(boxstyle="square,pad=0.25", fc=SURFACE,
+                            zorder=4, bbox=dict(boxstyle="square,pad=0.4", fc=SURFACE,
                                                 ec="none") if key == "pending" else None)
                     left += v
                 p = "–" if t["p"] is None else f"p = {t['p']:.2g}"
