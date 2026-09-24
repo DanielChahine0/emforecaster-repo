@@ -36,6 +36,10 @@ put Cluster_wise_linear):
                 untouched. Upstream has no such model; this follows its
                 PatchTST precedent of clustering the one read-out shared
                 across channels.
+  RF_EMF_Transformer
+                the Linear read-out (fc2) from each channel's encoded,
+                convolved sequence to the horizon; the encoder and the convs
+                are untouched. The same precedent.
 
 Repo-side adaptations, each marked ADAPTED below or at its site:
 
@@ -93,7 +97,9 @@ import torch.nn as nn
 # channel on its own -- a per-channel temporal linear, or a read-out shared
 # across channels -- for CCM to route. get_model rejects a cluster cell for any
 # other model_id before building anything.
-CCM_MODELS = frozenset({"DLinear", "PatchTST", "TSMixer", "EMForecaster"})
+CCM_MODELS = frozenset(
+    {"DLinear", "PatchTST", "TSMixer", "EMForecaster", "RF_EMF_Transformer"}
+)
 
 
 def no_adaptation_error(model_id):
@@ -153,10 +159,12 @@ class CCMForecaster(nn.Module):
         # Upstream's assigner, verbatim. Its width is taken uniformly from the
         # job config's sl block (upstream's own wrappers are inconsistent here:
         # d_ff for DLinearC/TSMixerC, d_model for PatchTSTC); it only sizes the
-        # assignment embedding, never the backbone. Built on CPU -- the device
-        # arg only places the init-time cluster_emb tensor, which is captured
-        # into our buffer on the next line, and Experiment.init_model() moves
-        # the whole module afterwards.
+        # assignment embedding, never the backbone. The Transformer's d_model
+        # is 2, the one value its backbone runs at, so its assigner embeds each
+        # channel in two dimensions; the rule stays uniform rather than tuned
+        # per model. Built on CPU -- the device arg only places the init-time
+        # cluster_emb tensor, which is captured into our buffer on the next
+        # line, and Experiment.init_model() moves the whole module afterwards.
         self.assigner = Cluster_assigner(
             args.data.num_channels,
             args.cluster.k_clusters,

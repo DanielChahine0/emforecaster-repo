@@ -45,11 +45,12 @@ from forecasting import hardware
 
 def get_model(args, generator=torch.Generator()):
     # The cluster grid runs the SAME constructors below with n_clusters set --
-    # the model's per-channel temporal linears (EMForecaster: the read-out its
-    # channels share) become upstream's own Cluster_wise_linear, imported
-    # verbatim from the vendored TimeSeriesCCM-main/ tree -- and wraps the
-    # result in CCMForecaster (forecasting/multivariate/models/ccm.py), which
-    # drives upstream's Cluster_assigner and owns the similarity loss.
+    # the model's per-channel temporal linears (EMForecaster and the
+    # Transformer: the read-out their channels share) become upstream's own
+    # Cluster_wise_linear, imported verbatim from the vendored
+    # TimeSeriesCCM-main/ tree -- and wraps the result in CCMForecaster
+    # (forecasting/multivariate/models/ccm.py), which drives upstream's
+    # Cluster_assigner and owns the similarity loss.
     # Everything else about the run -- data, optimizer, conformal
     # recalibration, logging -- is unchanged, so a cluster cell differs from
     # its multivariate counterpart only in the clustering module.
@@ -254,6 +255,8 @@ def get_model(args, generator=torch.Generator()):
             revin=args.sl.revin,
             revin_affine=args.sl.revin_affine,
             eps_revin=args.sl.eps_revin,
+            num_channels=args.data.num_channels,
+            n_clusters=n_clusters,
         )
     elif args.exp.model_id == "ARIMA":
         model = ARIMAForecaster(

@@ -31,10 +31,10 @@ the CLUSTERING layers cross the bridge:
 
 They are threaded through THIS repo's own models (see models/dlinear.py,
 models/tsmixer.py, layers/patchtst/backbone.py, models/emforecaster.py,
-orchestrated by models/ccm.py), so the clustering mechanism is the paper's
-code while the forecasting network, its hyperparameters and its init are
-exactly the multivariate cell's. The upstream model wrappers are deliberately
-not imported anywhere any more.
+models/rf_emf_baselines.py, orchestrated by models/ccm.py), so the clustering
+mechanism is the paper's code while the forecasting network, its
+hyperparameters and its init are exactly the multivariate cell's. The upstream
+model wrappers are deliberately not imported anywhere any more.
 
 Putting the CCM root on sys.path exposes `models`, `utils`, `exp` and `data` as
 importable top-level names. That is safe here only because nothing in this repo

@@ -91,9 +91,9 @@ UNIVARIATE_MODELS = MV_MODELS
 # so every cluster cell has same-window multivariate and per-channel baselines
 # beside it.
 #
-# EMForecaster can be built as a cluster cell as well -- CCM on the read-out its
-# channels share (models/ccm.py) -- but is not in this sweep yet. The
-# Transformer, LSTM and ARIMA are out; get_model raises on them instead of
+# EMForecaster and the Transformer can be built as cluster cells as well -- CCM
+# on the read-out their channels share (models/ccm.py) -- but are not in this
+# sweep yet. LSTM and ARIMA are out; get_model raises on them instead of
 # silently building something else.
 #
 # History, for reading old results: until 2026-08-25 this grid ran the paper's

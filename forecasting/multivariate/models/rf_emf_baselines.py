@@ -98,8 +98,27 @@ class Transformer(nn.Module):
         revin=False,
         revin_affine=True,
         eps_revin=1e-5,
+        num_channels=None,
+        n_clusters=None,
     ):
+        """
+        Args:
+            num_channels (int): CCM cluster grid only: the channel count the
+                membership has rows for. The plain model folds any channel
+                count into the batch and does not need it.
+            n_clusters (int): CCM cluster grid only (models/ccm.py). Replaces
+                the fc2 read-out every channel shares with k cluster-wise
+                copies mixed by the soft membership that forward() then
+                requires; the rest of the network stays shared. None = off.
+        """
         super(Transformer, self).__init__()
+        self.num_channels = num_channels
+        self.n_clusters = n_clusters
+        if n_clusters is not None and num_channels is None:
+            raise ValueError(
+                "n_clusters routes the fc2 read-out by each channel's membership "
+                "row, so a cluster cell needs num_channels."
+            )
         self.enc = nn.ModuleList(
             [
                 EncoderBlock(seq_len, pred_len, d_model, num_heads)
@@ -111,7 +130,20 @@ class Transformer(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=2)
         self.conv2 = nn.Conv1d(in_channels=seq_len, out_channels=seq_len, kernel_size=1)
 
-        self.fc2 = nn.Linear(seq_len, pred_len)
+        if n_clusters is not None:
+            # Upstream's own cluster-wise layer, run verbatim from the vendored
+            # tree (lazy import so only cluster cells touch it; its trailing
+            # device arg is unused). Built in fc2's slot, the last module that
+            # draws from the global RNG: copy 0 draws exactly the multivariate
+            # fc2 and copies 1..k-1 follow in order, so every other module,
+            # and each copy, is the same init at any k.
+            from forecasting.multivariate.utils.ccm_upstream import Cluster_wise_linear
+
+            self.fc2 = Cluster_wise_linear(
+                n_clusters, num_channels, seq_len, pred_len, None
+            )
+        else:
+            self.fc2 = nn.Linear(seq_len, pred_len)
 
         # RevIN parity with every other model in the benchmark: without
         # per-window renormalization this tanh-bounded backbone cannot track the
@@ -123,7 +155,13 @@ class Transformer(nn.Module):
         # keeping the layer valid for any channel count.
         self.revin = RevIN(1, eps=eps_revin, affine=revin_affine) if revin else None
 
-    def forward(self, x):
+    def forward(self, x, cluster_prob=None):
+        if self.n_clusters is not None and cluster_prob is None:
+            raise ValueError(
+                "This Transformer was built with n_clusters; forward() needs the "
+                "ClusterAssigner's membership (see models/ccm.py)."
+            )
+
         # Channel-independent multivariate I/O: fold the channel dim into the
         # batch so the univariate backbone below runs once per channel, then
         # unfold back to (B, C, pred_len). Mirrors the strategy EMForecaster and
@@ -147,7 +185,14 @@ class Transformer(nn.Module):
         x = self.conv2(x)
         x = self.act(x)  # (B*C, seq_len, 1) for d_model == 2
 
-        x = self.fc2(x.squeeze(-1))  # (B*C, seq_len) -> (B*C, pred_len)
+        if self.n_clusters is not None:
+            # CCM routes each channel by its own membership row, so the read-out
+            # needs the channel axis back first; folded again after it, the
+            # layout the RevIN denorm below took its statistics in.
+            x = self.fc2(x.squeeze(-1).reshape(B, C, L), cluster_prob)  # (B, C, pred_len)
+            x = x.reshape(B * C, -1)
+        else:
+            x = self.fc2(x.squeeze(-1))  # (B*C, seq_len) -> (B*C, pred_len)
         if self.revin is not None:
             x = self.revin(x, "denorm").reshape(B * C, -1)
         return x.reshape(B, C, -1)  # (B*C, pred_len) -> (B, C, pred_len)

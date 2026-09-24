@@ -56,7 +56,10 @@ def _memory_profile(model_id, dataset, seq_len):
     taken per 128-window micro-batch. The val and test loaders take the same
     batch_size, so its batch-protocol eval (the sensitivity row) pools the
     membership over 128 windows where DLinear, PatchTST and TSMixer pool 512;
-    the primary fixed-membership eval does not depend on the batch.
+    the primary fixed-membership eval does not depend on the batch. A cluster
+    Transformer pools 128 as well, from its job config's batch rather than a
+    profile; on VoIP every model pools 64 (VOIP_OVERRIDES), and no profile
+    applies.
 
     No cluster-grid entry, deliberately. CCM adds k parallel per-cluster layers,
     so cost does grow with k, but from a small base: measured backward peak at 27

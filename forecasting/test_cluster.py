@@ -33,6 +33,7 @@ from forecasting.multivariate.exp.exp import Experiment
 from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
 from forecasting.multivariate.models.dlinear import DLinear
 from forecasting.multivariate.models.emforecaster import EMForecaster
+from forecasting.multivariate.models.rf_emf_baselines import Transformer
 from forecasting.multivariate.utils import models
 from forecasting.multivariate.utils.ccm_upstream import (Cluster_assigner,
                                                          Cluster_wise_linear,
@@ -72,6 +73,10 @@ def make_args(model_id, k=K, beta=0.3):
         args.exp.patch_model_id = "TSMixer"
         args.exp.backbone_id = "Linear"
         args.sl.patch_embed_dim = 16
+    if model_id == "RF_EMF_Transformer":
+        # The one width its backbone runs at (rf_emf_mv/transformer): conv1
+        # folds d_model 2 -> 1 ahead of the fc2 read-out CCM clusters.
+        args.sl.d_model = 2
     return args
 
 
@@ -503,6 +508,139 @@ def test_cluster_emforecaster_cells_keep_the_multivariate_micro_batches():
 
 
 # ---------------------------------------------------------------------------
+# Transformer: CCM on the fc2 read-out its channels share
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("shape", sorted(JOB_SHAPES))
+def test_ccm_k1_transformer_is_the_multivariate_build(shape):
+    """k=1 is the multivariate cell bit for bit, with no weights copied over:
+    its one fc2 copy is drawn where the multivariate fc2 is, and the all-ones
+    membership passes the forecast through unchanged."""
+    mv = build(make_job_args("RF_EMF_Transformer", shape=shape))
+    ccm = build(make_job_args("RF_EMF_Transformer", k=1, shape=shape))
+    assert isinstance(ccm.backbone, Transformer)
+
+    want = mv.state_dict()
+    got = {name.replace("fc2.linears.0.", "fc2."): tensor
+           for name, tensor in ccm.backbone.state_dict().items()}
+    assert list(got) == list(want)
+    for name, tensor in want.items():
+        assert torch.equal(got[name], tensor), name
+
+    _, num_channels, seq_len, _, _ = JOB_SHAPES[shape]
+    x = torch.randn(3, num_channels, seq_len)
+    mv.eval()
+    ccm.eval()
+    with torch.no_grad():
+        assert torch.equal(ccm(x), mv(x))
+
+
+def test_transformer_backbone_init_is_the_multivariate_build_at_every_k(
+        monkeypatch):
+    """Clustering fc2 moves nothing else. fc2 is the last module the build
+    draws for, so at every k the rest of the network is the multivariate init
+    and copy 0 is the multivariate fc2; the other copies are the draws that
+    follow it, distinct, and copy j is the same whatever k is. Those draws
+    leave the global RNG where the multivariate build does only at k=1: past
+    it the assigner and training draw a shifted stream, as for DLinear,
+    PatchTST and TSMixer."""
+    # The backbone exactly as get_model builds it, before the wrapper's
+    # assigner draws from the RNG.
+    monkeypatch.setattr(models, "CCMForecaster", lambda args, backbone: backbone)
+    mv = build(make_job_args("RF_EMF_Transformer"))
+    mv_rng = torch.get_rng_state()
+    want = mv.state_dict()
+    del mv
+
+    reference = None
+    for k in (9, 5, 3, 2, 1):
+        backbone = build(make_job_args("RF_EMF_Transformer", k=k))
+        assert torch.equal(torch.get_rng_state(), mv_rng) == (k == 1), k
+
+        state = backbone.state_dict()
+        copies = {f"fc2.linears.{i}.{p}" for i in range(k)
+                  for p in ("weight", "bias")}
+        assert set(state) == set(want) - {"fc2.weight", "fc2.bias"} | copies
+        for name, tensor in want.items():
+            if not name.startswith("fc2."):
+                assert torch.equal(state[name], tensor), (k, name)
+
+        linears = backbone.fc2.linears
+        assert torch.equal(linears[0].weight, want["fc2.weight"])
+        assert torch.equal(linears[0].bias, want["fc2.bias"])
+        for i in range(k):
+            for p in ("weight", "bias"):
+                assert not any(torch.equal(getattr(linears[i], p),
+                                           getattr(linears[j], p))
+                               for j in range(i)), (k, i, p)
+        if reference is None:
+            reference = [(linear.weight, linear.bias) for linear in linears]
+        for i in range(k):
+            assert torch.equal(linears[i].weight, reference[i][0]), (k, i)
+            assert torch.equal(linears[i].bias, reference[i][1]), (k, i)
+
+
+def test_transformer_routes_each_channel_by_its_own_membership_row():
+    """Channel c's read-out is its own mixture, sum_j p[c, j] * copy_j(h[b, c]),
+    where h[b, c] is channel c's encoding of window b alone: the fold into the
+    batch and back keeps every channel on its own row. So moving one channel's
+    membership row, or its input, moves that channel's forecast and no
+    other's."""
+    model = get_model(make_args("RF_EMF_Transformer"))
+    model.eval()
+    linears = model.backbone.fc2.linears
+    seen = {}
+    model.backbone.fc2.register_forward_hook(
+        lambda module, inputs, out: seen.update(h=inputs[0], out=out))
+
+    x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
+    prob = torch.softmax(3 * torch.randn(NUM_CHANNELS, K), dim=-1)
+    moved = prob.clone()
+    moved[2] = torch.eye(K)[prob[2].argmin()]
+    x_moved = x.clone()
+    x_moved[:, 4] = torch.randn(2, SEQ_LEN)
+    with torch.no_grad():
+        out = model.backbone(x, cluster_prob=prob)
+        assert seen["h"].shape == (2, NUM_CHANNELS, SEQ_LEN)
+        want = sum(prob[:, j, None] * linears[j](seen["h"]) for j in range(K))
+        torch.testing.assert_close(seen["out"], want)
+        out_moved = model.backbone(x, cluster_prob=moved)
+        out_x_moved = model.backbone(x_moved, cluster_prob=prob)
+
+    def changed(other):
+        return [c for c in range(NUM_CHANNELS)
+                if not torch.equal(other[:, c], out[:, c])]
+
+    assert changed(out_moved) == [2]
+    assert changed(out_x_moved) == [4]
+
+
+# Each cluster beyond the first adds one more copy of fc2, Linear(seq_len ->
+# pred_len): 336 -> 96, 32,352 parameters, on EMF; 48 -> 12, 588, on VoIP. Any
+# k adds the assigner's Linear(seq_len -> sl.d_model=2): 674 on EMF, 98 on VoIP.
+@pytest.mark.parametrize("shape, k, expected", [
+    ("emf", None, 372_738), ("emf", 1, 373_412), ("emf", 2, 405_764),
+    ("emf", 3, 438_116), ("emf", 5, 502_820), ("emf", 9, 632_228),
+    ("voip", None, 7_782), ("voip", 1, 7_880), ("voip", 2, 8_468),
+    ("voip", 3, 9_056), ("voip", 6, 10_820),
+])
+def test_transformer_parameter_counts_at_production_size(shape, k, expected):
+    model = build(make_job_args("RF_EMF_Transformer", k=k, shape=shape))
+    assert sum(p.numel() for p in model.parameters()) == expected
+
+
+def test_cluster_transformer_needs_its_channel_count():
+    # The plain Transformer folds any channel count into the batch and never
+    # needs it; the cluster-wise read-out is sized for the membership's rows.
+    with pytest.raises(ValueError, match="needs num_channels"):
+        Transformer(seq_len=SEQ_LEN, pred_len=PRED_LEN, d_model=2, n_clusters=K)
+    plain = Transformer(seq_len=SEQ_LEN, pred_len=PRED_LEN, d_model=2)
+    assert plain(torch.randn(2, NUM_CHANNELS, SEQ_LEN)).shape == (
+        2, NUM_CHANNELS, PRED_LEN)
+
+
+# ---------------------------------------------------------------------------
 # Fixed-membership evaluation (the primary protocol; upstream's batch one stays
 # logged beside it)
 # ---------------------------------------------------------------------------
@@ -739,9 +877,11 @@ def _metric_keys(log):
     return [key for key in log if not key.startswith("parameters/")]
 
 
-@pytest.mark.parametrize("name", ["k1", "k3"])
-def test_cluster_run_logs_both_protocols_before_the_marker(voip_runs, name):
-    log, checkpoint, _ = voip_runs[name]
+def _assert_both_protocols_before_the_marker(log, checkpoint, k):
+    """A VoIP cluster run: every batch-protocol test metric has its _fixed
+    twin, all logged before the resume marker, and the checkpoint carries the
+    six channels' k-way membership. The eval path is the same for every model,
+    so each model's end-to-end run is held to this."""
     keys = _metric_keys(log)
     test_keys = [key for key in keys if key.startswith("sl_test/")]
     assert "sl_test/ic" in test_keys and grid.MARKER in test_keys
@@ -757,8 +897,14 @@ def test_cluster_run_logs_both_protocols_before_the_marker(voip_runs, name):
     assert keys[marker + 1:] == ["sl_test/interval_width_std"]
     assert all(keys.index(key) < marker for key in fixed)
 
-    assert checkpoint["fixed_prob"].shape == (6, E2E_CASES[name])
+    assert checkpoint["fixed_prob"].shape == (6, k)
     torch.testing.assert_close(checkpoint["fixed_prob"].sum(dim=1), torch.ones(6))
+
+
+@pytest.mark.parametrize("name", ["k1", "k3"])
+def test_cluster_run_logs_both_protocols_before_the_marker(voip_runs, name):
+    log, checkpoint, _ = voip_runs[name]
+    _assert_both_protocols_before_the_marker(log, checkpoint, E2E_CASES[name])
 
 
 def test_k1_run_fixed_metrics_equal_the_batch_metrics(voip_runs):
@@ -821,7 +967,19 @@ def test_cluster_emforecaster_trains_on_accumulated_micro_batches(tmp_path):
     for key in ("sl_train/loss", "sl_train/similarity_loss", "sl_val/loss",
                 "sl_test/mse", "sl_test_fixed/mse", grid.MARKER):
         assert torch.isfinite(torch.tensor(log[key])).all(), key
-    assert checkpoint["fixed_prob"].shape == (6, 2)
+    _assert_both_protocols_before_the_marker(log, checkpoint, 2)
+
+
+def test_cluster_transformer_trains_end_to_end(tmp_path):
+    """A cluster Transformer cell trains and scores through Experiment.run,
+    both protocols included, at the VoIP grid's own settings (one epoch)."""
+    log, checkpoint, exp = _run_voip_cell(
+        2, tmp_path, job="rf_emf_mv/transformer", settings={"sl.epochs": 1})
+    assert isinstance(exp.model.backbone, Transformer)
+    for key in ("sl_train/loss", "sl_train/similarity_loss", "sl_val/loss",
+                "sl_test/mse", "sl_test_fixed/mse", grid.MARKER):
+        assert torch.isfinite(torch.tensor(log[key])).all(), key
+    _assert_both_protocols_before_the_marker(log, checkpoint, 2)
 
 
 def test_non_cluster_run_is_untouched_by_the_fixed_protocol(voip_runs):
