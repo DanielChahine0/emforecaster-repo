@@ -305,6 +305,52 @@ def test_ccm_k1_dlinear_matches_the_multivariate_implementation():
         torch.testing.assert_close(ccm(x), plain(x))
 
 
+# What a k=1 build calls the layers CCM clusters: each multivariate linear's
+# weight and bias sit in Cluster_wise_linear's one copy, linears.0. TSMixer's
+# temporal Sequential(Linear, GELU, Linear, Dropout) becomes temporal_in and
+# temporal_out around the same GELU and Dropout, so .0 and .2 are the two
+# linears.
+K1_NAMES = {
+    "DLinear": [("Linear_Seasonal.linears.0.", "Linear_Seasonal."),
+                ("Linear_Trend.linears.0.", "Linear_Trend.")],
+    "PatchTST": [("backbone.head.linears.0.", "backbone.head.")],
+    "TSMixer": [(".temporal_in.linears.0.", ".temporal.0."),
+                (".temporal_out.linears.0.", ".temporal.2."),
+                ("head.linears.0.", "head.")],
+}
+
+
+@pytest.mark.parametrize("shape", sorted(JOB_SHAPES))
+@pytest.mark.parametrize("model_id", sorted(K1_NAMES))
+def test_ccm_k1_is_the_multivariate_build(model_id, shape):
+    """k=1 is the multivariate cell bit for bit at the grids' own shapes, with
+    no weights copied over (the DLinear test above copies them): the one copy
+    of each clustered linear is drawn where the multivariate linear is, and the
+    all-ones membership passes the forecast through unchanged. The same holds
+    for EMForecaster, the Transformer and LSTM below."""
+    mv = build(make_job_args(model_id, shape=shape))
+    ccm = build(make_job_args(model_id, k=1, shape=shape))
+    assert type(ccm.backbone) is type(mv)
+
+    def mv_name(name):
+        for cluster_wise, plain in K1_NAMES[model_id]:
+            name = name.replace(cluster_wise, plain)
+        return name
+
+    want = mv.state_dict()
+    got = {mv_name(name): tensor for name, tensor in ccm.backbone.state_dict().items()}
+    assert list(got) == list(want)
+    for name, tensor in want.items():
+        assert torch.equal(got[name], tensor), name
+
+    _, num_channels, seq_len, _, _ = JOB_SHAPES[shape]
+    x = torch.randn(3, num_channels, seq_len)
+    mv.eval()
+    ccm.eval()
+    with torch.no_grad():
+        assert torch.equal(ccm(x), mv(x))
+
+
 def test_get_model_rejects_a_model_without_a_ccm_adaptation():
     # TimesNet (since the upstream bridge left) has no linear map applied to
     # each channel on its own to route, and ARIMA and Persistence forecast each
