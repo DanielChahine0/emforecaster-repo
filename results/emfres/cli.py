@@ -253,6 +253,13 @@ def cmd_tables(args) -> int:
     paradigm_md = PG.render(runs_csv, family, setting, **labels)
     if paradigm_md:
         sections.append(("paradigms", "Paradigm Comparison", paradigm_md))
+    # The family's other windows, each its own section: the same comparison as a
+    # robustness check, never pooled with the benchmark's cells.
+    for seq_len, pred_len in WINDOWS[family][1:]:
+        title = f"Paradigm Comparison · L{seq_len}/O{pred_len}"
+        md = PG.render(runs_csv, family, (seq_len, pred_len), title=title, **labels)
+        if md:
+            sections.append((f"paradigms-l{seq_len}", title, md))
     if not sections:
         print(f"no runs in family {family!r}", file=sys.stderr)
         return 1
