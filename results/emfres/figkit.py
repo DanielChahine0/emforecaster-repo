@@ -316,14 +316,19 @@ def place_clear(ax, text: str, candidates, pad: float = 1.5, ignore=(), **kw):
     """Annotate at the first candidate spot whose text box clears the marks.
 
     ``candidates`` are (xy, xycoords, xytext offset in points, ha, va). The
-    text must fit inside the axes and cover no marker and no straight rule
+    text must fit inside the axes and cover no marker, no straight rule
     (figkit._obstacles; ``ignore`` names rules it may touch, such as the one
-    it labels). Where no candidate is clear the first is kept: its opaque box
-    still keeps what it covers off the text. Call after the layout and the
-    axis limits are final.
+    it labels) and no text already on the axes. Where no candidate is clear
+    the first is kept: its opaque box still keeps what it covers off the
+    text. Call after the layout, the axis limits and the axes' other labels
+    are final.
     """
     renderer = ax.figure.canvas.get_renderer()
     marks = _obstacles(ax, renderer, ignore)
+    for other in ax.texts:
+        if other.get_visible() and other.get_text():
+            e = other.get_window_extent(renderer)
+            marks.append((e.x0, e.y0, e.x1, e.y1))
     frame = ax.get_window_extent(renderer)
     kept = None
     for xy, coords, offset, ha, va in candidates:
