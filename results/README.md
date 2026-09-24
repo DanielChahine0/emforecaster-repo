@@ -168,7 +168,13 @@ reported as a `NOTE`; only a changed value is fatal.
   run's own for `log` and `k1`, the re-score's commit for a `sidecar` — and
   `MANIFEST.json` totals them under `fixed_code_versions`, so a sidecar written
   later by other re-score code shows up as a second version.
-  Other setups leave these blank. A cell's fixed means are blank unless every
+  Other setups leave these blank. A sidecar is a CPU re-evaluation, `log` and
+  `k1` the training run's own on its GPU, and the same checkpoint scored both
+  ways differs by up to 2.6e-5 relative in `val_loss_fixed` on EMF (1.7e-4 on
+  VoIP PatchTST) — as much as the gap between the best and the next k of an
+  EMF DLinear sweep. So a k chosen on `val_loss_fixed` may only rank runs of
+  one origin: `runlogs.comparable_fixed` says whether a sweep's
+  `fixed_source` values allow it (all 22 live sweeps do today). A cell's fixed means are blank unless every
   run of it has one; `fixed_sources` lists what went in.
 - **`mse_std` / `mae_std` are the seed standard deviation in every setup.** For
   a per-channel cell that is the sd of its per-seed band means, over the seeds

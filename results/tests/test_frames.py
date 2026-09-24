@@ -15,7 +15,7 @@ import statistics
 import pytest
 
 from emfres import baselines, cli, frames, paradigms
-from emfres.runlogs import FIXED_SIDECAR, MARKER, load_runs
+from emfres.runlogs import FIXED_SIDECAR, MARKER, comparable_fixed, load_runs
 
 
 def _log(**extra):
@@ -170,6 +170,24 @@ def test_runs_csv_and_the_manifest_name_the_fixed_code(tmp_path, monkeypatch):
     manifest = json.loads((tmp_path / "MANIFEST.json").read_text())
     assert manifest["fixed_code_versions"] == {
         "ccc": {"runs": 1, "sources": ["log"]}, "rrr": {"runs": 1, "sources": ["sidecar"]}}
+
+
+def test_fixed_numbers_rank_only_within_one_origin(tmp_path):
+    # The run's own evaluation (log, and k1's batch values) and a CPU
+    # re-score (sidecar) differ by device noise, so a k-sweep mixing them
+    # cannot choose its best k on val_loss_fixed.
+    assert comparable_fixed(["sidecar"] * 3)
+    assert comparable_fixed(["log", "k1", "log"])
+    assert not comparable_fixed(["k1", "sidecar", "sidecar"])
+    assert not comparable_fixed(["log", "none"])
+    assert not comparable_fixed(["sidecar", ""])
+    assert not comparable_fixed([])
+    # A k = 1 run left without a sidecar beside re-scored k > 1 runs: mixed.
+    _cluster(tmp_path, 1, 1)
+    _cluster(tmp_path, 3, 1, sidecar=SIDECAR)
+    sweep = load_runs(tmp_path, [], setup="cluster")
+    assert sorted(r.fixed_source for r in sweep) == ["k1", "sidecar"]
+    assert not comparable_fixed(r.fixed_source for r in sweep)
 
 
 def test_a_non_cluster_run_has_no_fixed_source(tmp_path):

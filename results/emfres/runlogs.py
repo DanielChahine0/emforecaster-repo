@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from .vocab import parse_duration
 
@@ -41,6 +41,31 @@ FIXED_SIDECAR = "eval_fixed.json"
 # membership has nothing to fix and the fixed metrics are the batch ones by
 # construction; "none": a k > 1 run with neither. Blank on non-cluster runs.
 FIXED_SOURCES = ("log", "sidecar", "k1", "none")
+
+# Which evaluation a fixed_source's numbers come from: "run", the training
+# run's own on the device it trained on ("log", and "k1", its batch values),
+# or "rescore", the CPU re-evaluation of forecasting/ccm_rescore.py
+# ("sidecar"). One checkpoint scored both ways differs by device noise alone:
+# at k = 1 a sidecar's val_loss_fixed sits up to 2.6e-5 (relative) from the
+# run's logged best val_loss on EMF and 1.7e-4 on VoIP PatchTST (2026-09-24),
+# as large as the val-loss gap between the best and the next k of an EMF
+# DLinear sweep (7e-6 to 2e-5). Within one origin they agree: a k = 1 run that
+# logs its fixed metrics has sl_val_fixed/loss equal to its best sl_val/loss
+# bit for bit. So a k chosen on val_loss_fixed may only rank runs of one
+# origin (comparable_fixed).
+FIXED_ORIGIN = {"log": "run", "k1": "run", "sidecar": "rescore"}
+
+
+def comparable_fixed(sources: Iterable[str]) -> bool:
+    """Whether runs with these fixed_source values can be ranked on their fixed metrics.
+
+    True when every run has fixed metrics and all come from one origin
+    (FIXED_ORIGIN): a best k picked between a CPU re-score at one k and the
+    training run's own numbers at another can be decided by the device, not
+    the model. False for no runs at all.
+    """
+    origins = {FIXED_ORIGIN.get(s) for s in sources}
+    return len(origins) == 1 and None not in origins
 
 
 def parse_running_time(raw: Optional[str]) -> Optional[float]:
