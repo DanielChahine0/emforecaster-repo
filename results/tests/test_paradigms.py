@@ -198,6 +198,51 @@ def test_deterministic_models_are_identical_by_construction_not_ties(tmp_path):
     assert "±" not in arima
 
 
+# --------------------------------------------------------------- trains
+
+def _transformer_rows(mv_skill, pc_skill, *, dataset="ed2022", lookback=1.0):
+    """MV and PC Transformer seeds at the given skills, beside a DLinear reference
+    at skill 0.5 (so a seed trains at skill >= 0.25)."""
+    rows = []
+    for s in SEEDS:
+        rows.append(_run("multivariate", s, 0.3, model="DLinear", dataset=dataset,
+                         mse=lookback * 0.5, lookback=lookback))
+        rows.append(_run("perchannel", s, 0.3, model="DLinear", dataset=dataset,
+                         channel=0, mse=lookback * 0.5, lookback=lookback))
+    for s, a, b in zip(SEEDS, mv_skill, pc_skill):
+        rows.append(_run("multivariate", s, 0.4, model="RF_EMF_Transformer",
+                         dataset=dataset, mse=lookback * (1 - a), lookback=lookback))
+        rows.append(_run("perchannel", s, 0.4, model="RF_EMF_Transformer", dataset=dataset,
+                         channel=0, mse=lookback * (1 - b), lookback=lookback))
+    return rows
+
+
+def test_a_transformer_seed_trains_relative_to_the_best_other_model(tmp_path):
+    rows = _transformer_rows((0.48, 0.0, 0.0001), (0.40, 0.07, 0.24))
+    board = paradigms.build(_values(tmp_path, rows))
+    cell = ("ed2022", "RF_EMF_Transformer")
+    assert paradigms.trains_reference(board, "ed2022") == pytest.approx(0.5)
+    assert paradigms.trained_seeds(board, cell, MV) == {"69421"}
+    assert paradigms.trained_seeds(board, cell, PC) == {"69421"}      # 0.24 < 0.25
+    # Only the Transformer is judged.
+    assert paradigms.trained_seeds(board, ("ed2022", "DLinear"), MV) is None
+    assert not paradigms.does_not_train(board, cell)
+    md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96))
+    assert "seed 69421 only (descriptive)" in md
+    assert "| 3/3/-/- | 1/1/-/- |" in md
+    assert "do not train" not in md
+
+
+def test_a_cell_where_no_seed_trains_is_flagged_and_left_out_once(tmp_path):
+    rows = _transformer_rows((-0.02, -0.01, -0.03), (0.01, 0.0, 0.05))
+    board = paradigms.build(_values(tmp_path, rows))
+    assert paradigms.does_not_train(board, ("ed2022", "RF_EMF_Transformer"))
+    md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96))
+    assert "RF_EMF_Transformer (does not train)" in md
+    assert "without the cells that do not train (ed2022 RF_EMF_Transformer)" in md
+    assert "only (descriptive)" not in md               # no seed to describe
+
+
 # --------------------------------------------------------------- rendering
 
 def test_render_names_the_chosen_k_and_its_origin(tmp_path):
