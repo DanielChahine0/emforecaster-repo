@@ -358,10 +358,22 @@ def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
 
     rules, notes = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
     assert rules and notes == []
+    held, notes = R.load_held_elsewhere(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
+    assert notes == [] and [h.models for h in held] == [("DLinear", "PatchTST", "TSMixer")]
     sweep = dict(dataset="ED2022", window="L336/O96", metric="MAE", model="DLinear")
     cells = dict(setup="cluster", model="DLinear", dataset="ED2022", window="L336/O96",
                  metric="MSE")
+    board = dict(section="Paradigm Comparison", table="scoreboard", variant="", metric="MSE")
     must_reproduce = [
+        # The cluster comparisons are held against the batch-protocol row over
+        # the snapshot's three models: only their median moved (the median
+        # over every counted cell), and only for k=1.
+        R.Change("scoreboard", dict(board, comparison="Cluster (k=1) vs Multivariate",
+                                    column="Cells"), "9", "11"),
+        R.Change("scoreboard", dict(board, comparison="Cluster (best k) vs Cluster (k=1)",
+                                    column="Wilcoxon p"), "0.00391", "0.00781"),
+        R.Change("scoreboard", dict(board, comparison="Cluster (best k) vs Multivariate",
+                                    column="Median gap"), "-0.73%", "-1.67%"),
         R.Change("sweep", dict(sweep, column="k", k="1"), "0.3771", "0.3772"),
         R.Change("sweep", dict(sweep, column="plain", k=""), "0.3771", "0.3772"),
         # The Cluster section still prints the batch protocol: its runs did not change.

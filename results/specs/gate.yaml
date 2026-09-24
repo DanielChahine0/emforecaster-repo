@@ -17,19 +17,31 @@
 #               fields: dataset, window, metric, model, column, k
 #
 # A published value that no longer reproduces is a change. A change a rule
-# below matches prints as EXPECTED, under the rule's reason; any other is
-# UNEXPECTED and fails the gate. A rule matches on the fields it names (a value
-# or a list; case does not matter) plus an optional k_min, and every field it
-# omits is a wildcard. A rule with no reason, an unknown kind, or a field its
-# kind does not have is ignored with a warning: dropping a rule can only make
-# the gate stricter. Values today's report has and the snapshot does not --
-# new models, new rows, new columns -- are counted as new and need no rule.
+# under `expected` matches prints as EXPECTED, under the rule's reason; any
+# other is UNEXPECTED and fails the gate. A rule matches on the fields it names
+# (a value or a list; case does not matter) plus an optional k_min, and every
+# field it omits is a wildcard. A rule with no reason, an unknown kind, or a
+# field its kind does not have is ignored with a warning: dropping a rule can
+# only make the gate stricter. No rule forgives a value that vanished or turned
+# into '-': a rule declares a value that moved, not one that went missing.
+# Values today's report has and the snapshot does not -- new models, new rows,
+# new columns -- are counted as new and need no rule.
 #
-# The rules belong to one snapshot. Against any other they are ignored, so
+# `held_elsewhere` is for a scoreboard row whose quantity today's report prints
+# under another name. Each entry names the comparisons, the sensitivity row
+# (`variant`) that now carries the snapshot's quantity, the `models` the
+# snapshot counted (model ids as in runs.csv) and a reason. The gate re-counts
+# today's paradigm comparison over those models alone and holds every value of
+# those scoreboard rows against that sensitivity row, where it has to
+# reproduce like any other; today's scoreboard values under the old name count
+# as new. An entry missing a field is ignored with a warning, and its rows are
+# then held under their own name.
+#
+# Both lists belong to one snapshot. Against any other they are ignored, so
 # re-freezing is the step that retires them: once the changes below are
 # reviewed and accepted (after the 2026-09-24 CCM sweep ends), copy
 # tables/all.md into archive/, repoint PUBLISHED, and set `snapshot` to the new
-# file with an empty `expected` list.
+# file with empty `held_elsewhere` and `expected` lists.
 #
 # Deliberately NOT expected: the cluster k >= 2 cells of Cluster (k-Grouped
 # Channels). That section and frames/cells.csv still print the logged batch
@@ -38,6 +50,22 @@
 # same commit.
 
 snapshot: 2026-09-22_tables.md
+
+held_elsewhere:
+  - comparison: [Cluster (k=1) vs Multivariate, Cluster (best k) vs Cluster (k=1),
+                 Cluster (best k) vs Multivariate]
+    variant: batch protocol (k chosen on the logged `sl_val/loss`)
+    models: [DLinear, PatchTST, TSMixer]
+    reason: >
+      The snapshot's three cluster comparisons are the logged batch protocol
+      (k chosen on sl_val/loss) over the three models it clustered. Today's
+      scoreboard rows of the same name are the fixed train-mean membership
+      protocol (primary since the owner's 2026-09-24 decision), over six models
+      as EMForecaster, the Transformer and LSTM complete: a quantity the
+      snapshot never published. The snapshot's quantity is today's
+      batch-protocol sensitivity row, re-counted over DLinear, PatchTST and
+      TSMixer, whose cluster runs the sweep does not touch -- so every value
+      of those rows has to reproduce there.
 
 expected:
   - kind: cells
@@ -70,21 +98,15 @@ expected:
 
   - kind: scoreboard
     comparison: Cluster (k=1) vs Multivariate
+    column: Median gap
     reason: >
-      EMForecaster, the Transformer and LSTM are clustered for the first time
-      by the 2026-09-24 sweep. Their k = 1 cells are pending until every seed
-      finishes and then enter the count, so every column of this comparison
-      may change. The k = 1 values themselves stay guarded by the sweep and
-      cells kinds.
-
-  - kind: scoreboard
-    comparison: [Cluster (best k) vs Cluster (k=1), Cluster (best k) vs Multivariate]
-    reason: >
-      The fixed train-mean membership is now the primary cluster protocol
-      (owner decision, 2026-09-24): the best k is chosen on sl_val_fixed/loss
-      and scored on sl_test_fixed/*, where the snapshot used the logged batch
-      protocol (still rendered, as a sensitivity row). The newly clustered
-      EMForecaster, Transformer and LSTM also enter once complete.
+      The median gap is now taken over every counted cell (e54f8910b); it
+      used to leave out the cells whose two sides differ by less than 5e-05,
+      which the Wilcoxon test still does. At k = 1 the cluster module is off,
+      so 6 of the 9 MAE cells and 7 of the 9 MSE cells are such cells, and
+      the median moves to zero: MAE +0.09% -> +0.00%, MSE +0.01% -> -0.00%.
+      Held against the batch-protocol row (held_elsewhere 1); its counts and
+      p still reproduce.
 
   - kind: sweep
     column: k
