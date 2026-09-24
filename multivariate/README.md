@@ -28,6 +28,7 @@ The processed folder holds five datasets:
 | ED2024.csv | ED_2024 | ED2024 |
 
 UH = University Hospital, ED = Electronic Department.
+The two 2024 campaigns were never part of the forecasting benchmark, so the figure commands leave them out unless they are named in `--datasets`.
 Each row is a timestamped reading; each numeric column header is a frequency band in MHz, with values in V/m.
 Each file also carries the `Timestamp` column and the `EMF_2G/3G/4G/5G`, `EMF_Iliad/TIM/VF/W3`, and `EMF_Total` aggregation columns.
 
@@ -63,6 +64,8 @@ List the commands, or show the options for a single command:
 ../../venv/bin/python emf_multivariate.py normalize
 ```
 
+Every figure is set in IBM Plex Sans, the typeface of all `results/` figures (`results/emfres/style.rc_fonts`; install it once with `cd results && python -m emfres.fonts`).
+
 ## Commands
 
 ### `all`
@@ -78,7 +81,7 @@ It writes one combined stacked figure, one operators-and-technologies figure, an
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--datasets LABEL [LABEL ...]` | all | Restrict to a subset of datasets (use the labels above). |
+| `--datasets LABEL [LABEL ...]` | all but UH_2024, ED_2024 | Restrict to a subset of datasets (use the labels above); the 2024 campaigns are drawn only when named. |
 | `--zoom-days N` | 14 | Length of the auto-derived zoom window in days (the 2023 dataset keeps its curated window). |
 | `--remove-outliers-std N` | off | Drop points outside +/- N standard deviations per series before plotting. |
 | `--freq-legend-mode {colorbar,legend}` | colorbar | How the all-frequencies panels are keyed: a frequency colorbar, or a multi-column legend. |
@@ -94,7 +97,7 @@ For each dataset it writes a combined trio plus the three individual heatmaps in
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--datasets LABEL [LABEL ...]` | all | Restrict to a subset of datasets (use the labels above). |
+| `--datasets LABEL [LABEL ...]` | all but UH_2024, ED_2024 | Restrict to a subset of datasets (use the labels above); the 2024 campaigns are drawn only when named. |
 | `--freq-clip-quantile Q` | 0.999 | Quantile used for per-frequency spike clipping. |
 | `--freq-clip-factor F` | 3.0 | A sample above `F x` the quantile is treated as an artifact and masked. |
 | `--no-freq-clip` | off | Disable per-frequency spike clipping entirely. |

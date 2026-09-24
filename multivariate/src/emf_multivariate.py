@@ -116,7 +116,8 @@ def set_plot_font(size=None):
     """IBM Plex Sans, the one typeface of every results/ figure.
 
     The font stack lives in results/emfres/style.rc_fonts; install the family
-    with results/emfres/fonts.py if matplotlib falls back to another one.
+    with `python -m emfres.fonts` from results/ if matplotlib falls back to
+    another one.
     """
     results = str(REPO_ROOT / "results")
     if results not in sys.path:
