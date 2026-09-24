@@ -76,6 +76,19 @@ def test_a_p_printed_without_its_trailing_zeros_is_not_a_coarse_number():
     assert R.same("0.438", "0.4375")
 
 
+def test_a_value_printed_to_more_places_agrees_at_the_fewer():
+    # Each side is known at least to its third significant digit, and the two
+    # are compared at the coarser of those steps: at the snapshot's places
+    # when today prints more of them, and the other way round.
+    assert R.same("0.3765 ±0.0002", "0.37649 ±0.0002")
+    assert R.same("+1.04%", "+1.035%")
+    assert R.same("1235", "1234.6")
+    assert R.same("1234.6", "1235")
+    assert R.same("7.6e-06", "7.6049e-06")
+    assert not R.same("1235", "1233.6")
+    assert not R.same("+1.04%", "+1.034%")
+
+
 def test_the_text_around_a_value_is_part_of_it():
     assert not R.same("≈ +0.6%", "+0.6%")          # a tie mark lost
     assert not R.same("0.3768 ±0.0002", "0.3768 ±0.0002 (n=2)")   # now incomplete

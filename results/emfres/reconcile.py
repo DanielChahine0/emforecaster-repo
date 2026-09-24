@@ -159,35 +159,29 @@ class Change:
 _NUM = re.compile(r"[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 
 
-def _places(token: str) -> int:
-    return len(token.split(".")[1]) if "." in token else 0
+def _quantum(token: str) -> Decimal:
+    """The step a printed number is known to.
 
-
-def _sig(token: str) -> int:
-    return len(token.lower().split("e")[0].lstrip("+-").replace(".", "").lstrip("0")) or 1
-
-
-def _sig3(token: str) -> float:
-    return float(f"{float(token):.3g}")
+    The smaller of its printed quantum and that of its third significant
+    digit: a value printed with ``:.3g`` (a Wilcoxon p) drops trailing zeros,
+    so "1" is 1.00, known to 0.01, and "0.5" is 0.500, known to 0.001 -- not
+    a number known only to the unit or the tenth. "0.3765" is known to 1e-4,
+    "7.6e-06" to 1e-8, and a zero to the places it is printed with.
+    """
+    d = Decimal(token)
+    printed = Decimal(1).scaleb(d.as_tuple().exponent)
+    return printed if d.is_zero() else min(printed, Decimal(1).scaleb(d.adjusted() - 2))
 
 
 def _num_same(a: str, b: str) -> bool:
-    """Two printed numbers agree to the coarser of their printed precisions,
-    and to three significant digits.
+    """Two printed numbers agree at the coarser of the steps they are known to.
 
-    The second condition is for a value printed with ``:.3g`` (a Wilcoxon p),
-    which drops trailing zeros: "1" is 1.00 and "0.5" is 0.500, not a number
-    known only to the unit or the tenth. At the coarser precision alone, "1"
-    would match anything in [0.5, 1.5) and "0.5" anything in [0.45, 0.55).
-    Where both sides print the same number of places, the first condition
-    already implies the second.
+    So "1" does not match "0.5" (1.00 against 0.50), while "0.3765" matches
+    "0.37649" and "1235" matches "1234.6": printed to more places, a value
+    still agrees at the fewer places the other side printed. A signed zero is
+    no change.
     """
-    if _sig3(a) != _sig3(b):             # -0.0 == 0.0: a signed zero is no change
-        return False
-    if "e" in a.lower() or "e" in b.lower():
-        sig = min(_sig(a), _sig(b))
-        return f"{float(a):.{sig - 1}e}" == f"{float(b):.{sig - 1}e}"
-    q = Decimal(1).scaleb(-min(_places(a), _places(b)))
+    q = max(_quantum(a), _quantum(b))
     return (Decimal(a).quantize(q, rounding=ROUND_HALF_UP)
             == Decimal(b).quantize(q, rounding=ROUND_HALF_UP))
 
@@ -198,8 +192,8 @@ def same(published: str, current: str) -> bool:
     The text around the numbers has to match exactly -- a tie mark, a sign
     of incompleteness, an sd that appeared or vanished is a change -- and the
     numbers have to agree at the precision the snapshot (or today, if it
-    prints fewer digits) printed them with, and to three significant digits
-    (_num_same).
+    prints fewer digits) printed them with, where a number is known at least
+    to its third significant digit (_num_same).
     """
     if published == current:
         return True
