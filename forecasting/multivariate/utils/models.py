@@ -393,6 +393,24 @@ def get_criterion(args, criterion_type):
         raise ValueError("Please select a valid criterion_type.")
 
 
+def model_input(args, batch, device):
+    """The tensor forward_pass feeds the model for a batch.
+
+    Separate so a pass that needs the model's input without its forecast
+    (fitting the CCM fixed membership, models/ccm.py) sees exactly it.
+    """
+    x = batch[0]
+    x = hardware.to_device(x, device)
+
+    if args.data.difference_input:
+        x = x.diff(dim=1)
+
+        # Pad the last dimension with the last value of the sequence
+        x = torch.cat([x, x[:, -1].unsqueeze(1)], dim=1)
+
+    return x
+
+
 def forward_pass(args, model, batch, model_id, device):
 
     if model_id in {
@@ -415,16 +433,7 @@ def forward_pass(args, model, batch, model_id, device):
         "Persistence",
     }:
 
-        x = batch[0]
-        x = hardware.to_device(x, device)
-
-        if args.data.difference_input:
-            x = x.diff(dim=1)
-
-            # Pad the last dimension with the last value of the sequence
-            x = torch.cat([x, x[:, -1].unsqueeze(1)], dim=1)
-
-        output = model(x)
+        output = model(model_input(args, batch, device))
         # output = output.view(-1)[0].view(1) if args.sl.batch_size==1 and args.open_neuro.task else output
     else:
         raise ValueError("Please select a valid model_id.")
