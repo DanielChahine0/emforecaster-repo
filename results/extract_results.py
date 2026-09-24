@@ -314,6 +314,30 @@ def coverage_summary(runs: list[Run], cells: dict[tuple, Cell]) -> str:
     return f"{len(runs)} logs; each cell averages {span} replicate run(s)"
 
 
+# What the single-series tree is and is not (.personal/AUDIT_2026-09-24.md
+# S1, S2, S3/E8, S7), printed at the top of its section: it is a different
+# dataset family, trained before the comparability contract, and one of its
+# three columns is another shifted by one sample.
+SERIES_CAVEATS = [
+    "a separate dataset -- one broadband series per probe (det, ptv, ptv2), not the "
+    "27/29 bands of ED2022/UH2022/EMF2023, on its own sampling grid and calendar. Its "
+    "numbers are never pooled or ranked with the multivariate, per-channel or cluster "
+    "ones",
+    "ptv is det shifted by one 6-minute step (correlation 0.991 at +6 min), so the tree "
+    "holds 2 independent series, not 3: count det and ptv as one site. Their columns "
+    "are not duplicate numbers -- each is tested on its own calendar window, and ptv's "
+    "lies inside det's training window",
+    "out of contract -- no run is provenance-stamped (its three training batches ran "
+    "at different code versions), PatchTST and the Transformer trained compiled, the "
+    "Transformer has no RevIN in this code (the logged revin=True does nothing) and "
+    "trained at batch 512 (128 with RevIN in the joint grids), and every run predates "
+    "the +1 window fix. L336/O96 has 5 seeds per cell, every other window 1 (69421)",
+    "collapsed seeds are averaged in: the series Transformer collapses to about the "
+    "training mean at 11 of its 15 L336/O96 seeds, so its 5-seed means mix collapsed "
+    "and trained seeds",
+]
+
+
 def concurrency_text(runs: list[Run]) -> str:
     """How many trainings shared the GPU with these runs, from their stamps.
 
@@ -361,6 +385,8 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
                       f"k = {', '.join(str(k) for k in ks)} "
                       f"(each k is its own cell, never averaged together)"))
     items.append(("Runs", coverage_summary(runs, cells)))
+    if title == UNIVARIATE_SERIES_TITLE:
+        items += [("Caveat", text) for text in SERIES_CAVEATS]
     items.append(("Conformal prediction",
                   "on for every run" if confs == [True] else
                   "off for every run" if confs == [False] else
