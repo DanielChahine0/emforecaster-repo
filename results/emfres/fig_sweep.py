@@ -32,6 +32,9 @@ from .fig_paradigms import METRIC_NAME, WIDTH
 
 NCOL = 3
 
+# Marker size step (in marker units) between datasets' rings and test-best marks.
+RING_STEP = 0.45
+
 
 def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> list:
     models = [m for m in corpus.models() if any(c[1] == m for c in corpus.board.sweeps)]
@@ -53,7 +56,7 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
         style_axes(ax, style, grid="y")
         ax.axhline(0, color=INK_SECONDARY, lw=0.6, zorder=2)
         partial = False
-        for ds in datasets:
+        for step, ds in enumerate(datasets):
             cell = (ds, model)
             prof = FD.k_profile(corpus, cell, metric, "fixed")
             if prof is None:
@@ -71,16 +74,21 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
                         markerfacecolor=color if p.complete else SURFACE,
                         markeredgecolor=color, markeredgewidth=style.line_width * 0.45)
                 partial |= not p.complete
+            # Each dataset's ring (and test-best mark) one size step up, so two
+            # datasets choosing the same k at the same change -- every k = 1
+            # sits at 0 -- stay two concentric marks rather than one.
             if prof.chosen is not None and prof.chosen in xpos:
                 yc = y[[p.k for p in prof.points].index(prof.chosen)]
                 ax.plot([xpos[prof.chosen]], [yc], marker="o", linestyle="None", zorder=6,
-                        markersize=style.marker * 1.9, markerfacecolor="none",
-                        markeredgecolor=color, markeredgewidth=style.line_width * 0.5)
+                        markersize=style.marker * (1.9 + RING_STEP * step),
+                        markerfacecolor="none", markeredgecolor=color,
+                        markeredgewidth=style.line_width * 0.5)
             if prof.oracle is not None and prof.oracle != prof.chosen and prof.oracle in xpos:
                 yo = y[[p.k for p in prof.points].index(prof.oracle)]
-                ax.plot([xpos[prof.oracle]], [yo], marker="v", linestyle="None", zorder=6,
-                        markersize=style.marker * 0.9, markerfacecolor=color,
-                        markeredgecolor=SURFACE, markeredgewidth=0.6,
+                ax.plot([xpos[prof.oracle]], [yo], marker="v", linestyle="None",
+                        zorder=6 - 0.1 * step,
+                        markersize=style.marker * (0.9 + RING_STEP * step),
+                        markerfacecolor=color, markeredgecolor=SURFACE, markeredgewidth=0.6,
                         transform=ax.transData)
                 oracle_any = True
             batch = FD.k_profile(corpus, cell, metric, "batch")
