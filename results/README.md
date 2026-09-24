@@ -154,11 +154,14 @@ sweep finishes, so `make.py reconcile --all` is where to read them:
 | `scoreboard` | the Paradigm Comparison's scoreboard and sensitivity rows: the three counts, cells, median gap, Wilcoxon p | today's render (the cluster rows: see below) | 48 |
 | `sweep` | the CCM sweep: each model's plain cell, its cell at every k, its val k and oracle k | today's render | 21 |
 
-A value is compared at the precision the snapshot printed it and to three
-significant digits: a Wilcoxon p is printed with `:.3g`, which drops trailing
-zeros, so a p of `1` is 1.00 and does not match `0.5`. The text around a value
-counts: a tie mark (≈) that appears, or an `(n=…)` marking a cell still
-training, is a change. A scoreboard row is keyed by its comparison
+Two values are compared at the coarser of the steps they are known to. A
+number is known to its printed places, or to its third significant digit
+where that is finer: a Wilcoxon p is printed with `:.3g`, which drops
+trailing zeros, so a p of `1` is 1.00 and does not match `0.5`, while
+`0.3765` matches `0.37649` and `+1.04%` matches `+1.035%` (printed to more
+places, a value agrees at the fewer). The text around a value counts: a tie
+mark (≈) that appears, or an `(n=…)` marking a cell still training, is a
+change. A scoreboard row is keyed by its comparison
 ("Per-channel vs Multivariate"), not by its question's wording. The sweep is
 read in both layouts it has had: the snapshot's one section per dataset and
 metric, which underlined the k with the best *test* value, and today's single
@@ -167,10 +170,13 @@ its heading, or by its heading plus a ` · ` suffix (the old sweep's
 `… vs. plain · ED2022 · MAE`).
 
 A changed value is **expected** when a rule in `specs/gate.yaml` matches it.
-Each rule names the kind and fields it covers and why they changed, and the
-file names the snapshot its rules were written for: against any other they
-do not apply. The declared changes are the per-channel EMForecaster cells (16
-bands retrained at 128x4); ARIMA's cells moving from Tie to the Identical
+Each rule names the kind and fields it covers, why they changed, and in `now`
+the value each of them prints today: a matched value that prints anything
+else is unexpected, so a rule forgives the transition its reason quotes
+(Tie 10 → 7) and no other value in its columns. The file names the snapshot
+its rules were written for: against any other they do not apply. The
+declared changes are the per-channel EMForecaster cells (16 bands retrained
+at 128x4); ARIMA's cells moving from Tie to the Identical
 column, and the per-channel vs multivariate median gap; the k = 1 vs
 multivariate median gap, now taken over every counted cell; and the sweep's
 k ≥ 2 values and oracle k under the fixed protocol. The sweep's plain and
@@ -187,8 +193,12 @@ of the same name are the fixed protocol over up to six models, which the
 snapshot never published. So `held_elsewhere` in `specs/gate.yaml` holds each
 of their values against today's batch-protocol sensitivity row, re-counted
 over DLinear, PatchTST and TSMixer alone (`render_paradigms(models=…)` in
-`emfres/cli.py`), where every count and p has to reproduce; today's
-fixed-protocol values under the old names count as new.
+`emfres/cli.py`), where every count and p has to reproduce. Today's
+fixed-protocol values under the old names are a quantity the snapshot never
+published, so they are not compared and count as new, but they still have to
+be printed: a value missing from its own row, or printed `-` where the
+snapshot printed one, fails the gate however well the batch-protocol row
+reproduces, and no rule forgives it.
 
 `make.py reconcile --all` lists every change and every new value. A changed
 section's `NOTE` says what the gate held of it and, for a partly gated
