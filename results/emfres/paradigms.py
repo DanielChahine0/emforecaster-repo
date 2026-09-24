@@ -316,13 +316,15 @@ class Board:
 
 
 def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
-          planned: tuple = ()) -> Board:
+          planned: tuple = (), choices: Optional[dict] = None) -> Board:
     """The Board of seed_values' output under ``protocol``.
 
     ``seeds`` keeps only those seeds (the descriptive trained-seed row); the
     family's seed set is then that set. ``planned`` names the models the
     family's cluster grid trains (CLUSTERED[family]): one with no cluster run
-    yet still counts as pending there.
+    yet still counts as pending there. ``choices`` reuses another board's
+    chosen k per cell instead of choosing again -- the descriptive row takes
+    the pooled cell's k, so no table names two best k's for one cell.
     """
     if protocol not in PROTOCOLS:
         raise ValueError(f"unknown cluster protocol {protocol!r}")
@@ -341,17 +343,20 @@ def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
                 by_cell_k[(dataset, model)][pipeline[1]] = kept
         elif kept:
             cells[(dataset, model)][pipeline] = kept
-    choices = {}
+    chosen = {}
     for cell, ks in by_cell_k.items():
         if 1 in ks:
             cells[cell][K1] = ks[1]
-        choice = choose_k(ks, protocol, grid, len(family_seeds))
-        choices[cell] = choice
-        if choice.k is not None:
+        if choices is None:
+            choice = choose_k(ks, protocol, grid, len(family_seeds))
+        else:
+            choice = choices.get(cell) or Choice(None, reason="no k for the pooled cell")
+        chosen[cell] = choice
+        if choice.k is not None and choice.k in ks:
             cells[cell][BEST] = ks[choice.k]
     clusterable = (frozenset(key[2] for key in values if isinstance(key[0], tuple))
                    | frozenset(planned))
-    return Board(dict(cells), choices, tuple(sorted(family_seeds)), grid, protocol,
+    return Board(dict(cells), chosen, tuple(sorted(family_seeds)), grid, protocol,
                  clusterable, dict(by_cell_k))
 
 
@@ -684,7 +689,8 @@ def render(runs_csv: Path, family: str, setting: tuple,
             f"least {TRAINS_FRACTION:g} of the best multivariate skill of the other "
             "gradient-trained models on the dataset; a collapsed seed forecasts the "
             "lookback mean (skill 0). Its cell is pooled over every seed as usual, with "
-            "a descriptive row over the seeds whose multivariate run trains"
+            "a descriptive row over the seeds whose multivariate run trains, at the "
+            "pooled cell's best k"
             + ("; a cell where no seed of any paradigm trains is flagged, and the "
                "scoreboard is also given without it" if flagged else ""))
     out.append("")
@@ -793,7 +799,7 @@ def render(runs_csv: Path, family: str, setting: tuple,
             alive[c] = mv_trained
     described = {}
     for seeds in {frozenset(s) for s in alive.values()}:
-        sub = build(values, "fixed", seeds=set(seeds))
+        sub = build(values, "fixed", seeds=set(seeds), choices=board.choices)
         for c, s in alive.items():
             if frozenset(s) == seeds:
                 described[c] = sub

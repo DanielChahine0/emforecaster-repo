@@ -253,6 +253,20 @@ def test_a_transformer_seed_trains_relative_to_the_best_other_model(tmp_path):
     assert "do not train" not in md
 
 
+def test_the_descriptive_row_keeps_the_pooled_cells_k(tmp_path):
+    rows = _transformer_rows((0.48, 0.0, 0.0001), (0.40, 0.07, 0.24))
+    # Pooled, k=2 validates best (0.30 against 0.63); seed 69421 alone would
+    # pick k=1 (0.10 against 0.30).
+    for s, v1 in zip(SEEDS, (0.10, 0.90, 0.90)):
+        rows.append(_run("cluster", s, 0.4, model="RF_EMF_Transformer", k=1, val_loss=v1,
+                         mse=0.5, lookback=1.0))
+        rows.append(_run("cluster", s, 0.4, model="RF_EMF_Transformer", k=2, val_loss=0.30,
+                         mse=0.5, lookback=1.0))
+    md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96))
+    described = [line for line in md.splitlines() if "only (descriptive)" in line]
+    assert described and all("(k=2, sidecar" in line for line in described)
+
+
 def test_a_cell_where_no_seed_trains_is_flagged_and_left_out_once(tmp_path):
     rows = _transformer_rows((-0.02, -0.01, -0.03), (0.01, 0.0, 0.05))
     board = paradigms.build(_values(tmp_path, rows))
