@@ -223,7 +223,7 @@ sweep finishes, so `make.py reconcile --all` is where to read them:
 
 | Kind | What | Held against | Published in the snapshot |
 | :--- | :--- | :--- | ---: |
-| `cells` | the MSE/MAE tables of Multivariate, Univariate Series, Per Channel and Cluster | `frames/cells.csv` | 342 |
+| `cells` | the MSE/MAE tables of Multivariate, Univariate Series, Per Channel and Cluster | `frames/cells.csv`, the column each section prints (Cluster: the fixed means, and the batch ones too; see below) | 342 |
 | `scoreboard` | the Paradigm Comparison's scoreboard and sensitivity rows: the three counts, cells, median gap, Wilcoxon p | today's render (the cluster rows: see below) | 48 |
 | `sweep` | the CCM sweep: each model's plain cell, its cell at every k, its val k and oracle k | today's render | 21 |
 
@@ -251,10 +251,12 @@ its rules were written for: against any other they do not apply. The
 declared changes are the per-channel EMForecaster cells (16 bands retrained
 at 128x4); ARIMA's cells moving from Tie to the Identical
 column, and the per-channel vs multivariate median gap; the k = 1 vs
-multivariate median gap, now taken over every counted cell; and the sweep's
-k ≥ 2 values and oracle k under the fixed protocol. The sweep's plain and
-k = 1 values, the Cluster section's batch-protocol cells and the per-channel
-vs multivariate wins, losses and p are deliberately not declared. No rule
+multivariate median gap, now taken over every counted cell; the sweep's
+k ≥ 2 values and oracle k under the fixed protocol; and the Cluster
+section's k ≥ 2 cells, which it now prints under the fixed protocol too (63
+of the 72 move in the fourth decimal). The sweep's plain and k = 1 values,
+the Cluster section's k = 1 cells and the per-channel vs multivariate wins,
+losses and p are deliberately not declared. No rule
 forgives a value that vanished or turned into `-`: a rule declares a value
 that moved, not one that went missing. A change no rule declares fails the
 gate; a value the snapshot never had is counted as new and never fails it.
@@ -273,6 +275,16 @@ be printed: a value missing from its own row, or printed `-` where the
 snapshot printed one, fails the gate however well the batch-protocol row
 reproduces, and no rule forgives it.
 
+The snapshot's Cluster cells are the logged batch protocol, and today's
+section leads with the fixed one. So `hold_cells` holds each of them twice:
+against today's fixed mean (`mse_fixed`/`mae_fixed`), where the k ≥ 2 values
+moved and the last rule in `specs/gate.yaml` pins each one; and against the
+batch mean it was published from (`mse`/`mae`), whose runs nothing touched.
+There it has to reproduce, and no rule forgives a change
+(`reconcile.BATCH_VIA`). Which protocol a snapshot's Cluster section printed
+is read from its first MSE heading (`sl_test/loss` or `sl_test_fixed/loss`),
+so after a re-freeze its cells are held against the fixed means alone.
+
 `make.py reconcile --all` lists every change and every new value. A changed
 section's `NOTE` says what the gate held of it and, for a partly gated
 section, which part is text only: the per-setup sections' tables other than
@@ -283,9 +295,11 @@ cluster cells in the sweep, which in this snapshot covers ED2022 MAE only.
 
 On the tracked frames the gate fails until they are re-extracted: they
 predate the fixed-protocol columns, so the sweep cannot render and all 21 of
-its published values read as no longer published, and the three cluster
-scoreboard rows count no cell and print `-` for their median gap and p, 12
-values their own rows no longer print.
+its published values read as no longer published, the three cluster
+scoreboard rows count no cell and print `-` for their median gap and p (12
+values their own rows no longer print), and the Cluster section's 90 cells
+have no fixed mean to be held against. That section then renders under the
+batch protocol, labelled as such, with a warning.
 
 Earlier snapshots are kept as provenance: `2026-09-19_tables.md` holds the
 single-seed EMF benchmark that the three-seed Phase 2 rerun replaced, and
@@ -401,6 +415,20 @@ docstring has the full rules.
 - The cluster sweep marks the validation k and prints the test-best k as an
   *oracle* when they differ; per-channel times everywhere are labelled per
   band and contended.
+- **The per-setup and cross tables lead with the fixed protocol too.** The
+  Cluster section prints `sl_test_fixed/*` in its accuracy and conformal
+  tables. The logged batch protocol is its last group, `Batch protocol
+  (sensitivity)`. CCM vs Base's + CCM column is the fixed cell at the k
+  chosen on `sl_val_fixed/loss`, the paradigm comparison's own choice
+  (`tables.validation_choices`), so the three tables cannot name different
+  k's for a cell. Table 1.2 repeats it under the batch protocol with that
+  protocol's own validation k, and the test-best k appears only in a
+  configuration row labelled as an oracle. The Ultimate Comparison's cluster
+  rows are the fixed protocol, and the batch ones follow the time table
+  (1.4, 1.5; 1.3 stays the time table). `extract_results.render_setup` and
+  `protocol_cells` do the split for the frames path and the logs walk alike.
+  The legacy plotters' records (`emfres/records.py`) read a cluster cell's
+  fixed twins as well, so a regenerated figure plots what the table prints.
 
 ## Which runs count
 
