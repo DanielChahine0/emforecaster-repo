@@ -75,36 +75,51 @@ def render(frames_dir: Path, outdir: Path, *, families=("emf", "voip"), only=Non
     def want(fid, fam):
         return fid in wanted and fam in FIGURES[fid][0] and fam in families
 
+    noted = set()
     for fid, name in (("P3", "bands.csv"), ("P7", "timing.csv")):
         if fid in wanted and not (frames_dir / name).exists():
             print(f"NOTE: {frames_dir / name} not found -- {fid} ({FIGURES[fid][1]}) is not "
                   f"drawn; `make.py extract` writes it", file=sys.stderr)
+            noted.add(fid)
 
     written = []
+    drawn: dict = {}
+
+    def draw(fid, fam, paths):
+        drawn[(fid, fam)] = drawn.get((fid, fam), 0) + len(paths)
+        written.extend(paths)
+
     for fam, cs in corpora.items():
         if not cs:
             continue
         for metric, _ in PG.METRICS:
             if want("P1", fam):
-                written += FP.fig_dots(cs[:1], metric, style, outdir, formats, family=fam)
+                draw("P1", fam, FP.fig_dots(cs[:1], metric, style, outdir, formats, family=fam))
             if want("P4", fam):
-                written += FP.fig_dots(cs, metric, style, outdir, formats, family=fam)
+                draw("P4", fam, FP.fig_dots(cs, metric, style, outdir, formats, family=fam))
             if want("P2", fam):
                 for corpus in cs:
-                    written += FP.fig_forest(corpus, metric, style, outdir, formats)
+                    draw("P2", fam, FP.fig_forest(corpus, metric, style, outdir, formats))
             if want("P5", fam):
                 for corpus in cs:
-                    written += FS.fig_k_gain(corpus, metric, style, outdir, formats)
+                    draw("P5", fam, FS.fig_k_gain(corpus, metric, style, outdir, formats))
             if want("P7", fam):
-                written += FC.fig_cost(cs[0], runs_csv, frames_dir / "timing.csv", metric,
-                                       style, outdir, formats)
+                draw("P7", fam, FC.fig_cost(cs[0], runs_csv, frames_dir / "timing.csv", metric,
+                                            style, outdir, formats))
         if want("P3", fam):
             for corpus in cs:
-                written += FB.fig_bands(corpus, frames_dir / "bands.csv", style, outdir, formats)
+                draw("P3", fam, FB.fig_bands(corpus, frames_dir / "bands.csv", style, outdir,
+                                             formats))
         if want("P8", fam):
-            written += FC.fig_calibration(cs, runs_csv, style, outdir, formats, family=fam)
+            draw("P8", fam, FC.fig_calibration(cs, runs_csv, style, outdir, formats, family=fam))
         if want("P9", fam):
-            written += FP.fig_seed_skill(cs, style, outdir, formats, family=fam)
+            draw("P9", fam, FP.fig_seed_skill(cs, style, outdir, formats, family=fam))
+    # A figure the frames give nothing to draw (P5 before any cluster run,
+    # say) is named, as a missing bands.csv or timing.csv is above.
+    for (fid, fam), n in sorted(drawn.items()):
+        if not n and fid not in noted:
+            print(f"NOTE: nothing in the {fam} frames for {fid} ({FIGURES[fid][1]}) -- "
+                  f"it is not drawn", file=sys.stderr)
     if "P6" in wanted:
         written += FP.fig_scoreboard([c for fam in families for c in corpora.get(fam, [])],
                                      style, outdir, formats)
