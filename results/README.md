@@ -210,7 +210,9 @@ cluster cells in the sweep, which in this snapshot covers ED2022 MAE only.
 
 On the tracked frames the gate fails until they are re-extracted: they
 predate the fixed-protocol columns, so the sweep cannot render and all 21 of
-its published values read as no longer published.
+its published values read as no longer published, and the three cluster
+scoreboard rows count no cell and print `-` for their median gap and p, 12
+values their own rows no longer print.
 
 Earlier snapshots are kept as provenance: `2026-09-19_tables.md` holds the
 single-seed EMF benchmark that the three-seed Phase 2 rerun replaced, and
