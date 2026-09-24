@@ -98,7 +98,8 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     for i in range(nm):
         for j in range(nb):
             if np.isfinite(data[i, j]) and abs(data[i, j]) > vmax:
-                ax.text(j, i, f"{data[i, j]:+.1f}", ha="center", va="center",
+                ax.text(j, i, f"{data[i, j]:+.1f}".replace("-", "\u2212"), ha="center",
+                        va="center",
                         fontsize=style.context * 0.7, color="white")
     ax.set_yticks(range(nm))
     ax.set_yticklabels([model_name(m) + (f" {DAGGER}" if m in flagged else "") for m in models],
