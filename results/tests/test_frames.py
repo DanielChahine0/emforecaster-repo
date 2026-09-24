@@ -14,7 +14,7 @@ import statistics
 
 import pytest
 
-from emfres import baselines, cli, frames
+from emfres import baselines, cli, frames, paradigms
 from emfres.runlogs import FIXED_SIDECAR, MARKER, load_runs
 
 
@@ -241,7 +241,9 @@ def test_a_seed_missing_a_band_is_left_out_of_the_seed_sd():
     rows.append(_row("perchannel", 3, 9.0, channel=0))      # half a seed
     cell = _cells(rows)[("perchannel", "")]
     assert float(cell["mse_std"]) == pytest.approx(statistics.stdev([1.05, 1.2]))
-    assert cell["n_seeds"] == 3
+    # n_seeds and the mean still count the half seed; the sd's sample size says 2.
+    assert (cell["n_seeds"], cell["n_complete_seeds"]) == (3, 2)
+    assert float(cell["mse"]) == pytest.approx(statistics.mean([0.1, 2.0, 0.2, 2.2, 9.0]))
     # One complete seed has no seed spread at all.
     one = _cells([_row("perchannel", 1, v, channel=ch) for ch, v in enumerate((0.1, 2.0))])
     assert one[("perchannel", "")]["mse_std"] == ""
@@ -251,8 +253,31 @@ def test_a_joint_cell_keeps_its_std_and_has_no_band_spread():
     rows = [_row("multivariate", s, v) for s, v in ((1, 0.50), (2, 0.52), (3, 0.51))]
     cell = _cells(rows)[("multivariate", "")]
     assert float(cell["mse_std"]) == pytest.approx(statistics.stdev([0.50, 0.52, 0.51]))
+    assert (cell["n_seeds"], cell["n_complete_seeds"]) == (3, 3)
     assert cell["mse_band_seed_sd"] == "" and cell["mae_band_seed_sd"] == ""
     assert cell["fixed_sources"] == "" and cell["mse_fixed"] == ""
+
+
+def test_a_seed_is_complete_on_the_same_bands_not_the_same_count(tmp_path):
+    # Seeds 1 and 2 each have two of the cell's three bands: as many as the
+    # fullest seed, but neither has them all. Seed 3 has all three.
+    bands = {1: (0, 1), 2: (0, 2), 3: (0, 1, 2)}
+    rows = [_row("perchannel", s, 0.1 * (ch + 1), channel=ch)
+            for s, chans in bands.items() for ch in chans]
+    by_seed = {}
+    for r in rows:
+        by_seed.setdefault(r["seed"], []).append(r)
+    assert frames.complete_seeds(by_seed) == {"3"}
+    # A band logged twice does not make a seed complete twice over.
+    assert frames.complete_seeds({"1": [rows[0], rows[0], rows[1]],
+                                  "2": rows[:2]}) == {"2"}
+    assert frames.complete_seeds({}) == set()
+    assert _cells(rows)[("perchannel", "")]["n_complete_seeds"] == 1
+    # The paradigm comparison keeps exactly those seeds.
+    runs_csv = tmp_path / "runs.csv"
+    frames.write_csv(runs_csv, rows, frames.RUN_FIELDS)
+    values = paradigms.seed_values(runs_csv, "emf", 336, 96)
+    assert set(values[("perchannel", "ed2022", "DLinear")]) == {"3"}
 
 
 def test_a_cluster_cell_has_fixed_means_only_when_every_run_has_one():

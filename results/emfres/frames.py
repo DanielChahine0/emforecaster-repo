@@ -177,7 +177,12 @@ CELL_FIELDS = [
     # runs' fixed_source values, ';'-joined.
     "mse_fixed", "mse_fixed_std", "mae_fixed", "mae_fixed_std", "val_loss_fixed",
     "ic_fixed", "jc_fixed", "interval_width_fixed", "fixed_sources",
-    "n_runs", "n_seeds", "n_channels",
+    # n_seeds counts every seed with a run, as mse and mae average every run
+    # (extract_results.aggregate parity, what reconcile checks); a
+    # per-channel seed still training counts there. n_complete_seeds is the
+    # sample size of mse_std: the seeds of a joint cell with an MSE, the
+    # complete seeds of a per-channel cell (complete_seeds).
+    "n_runs", "n_seeds", "n_complete_seeds", "n_channels",
     # Distinct training-code versions behind the cell's runs, ';'-joined, with
     # "?" for any run whose code cannot be established; more than one means
     # the cell mixes code versions and is not a clean seed mean --
@@ -404,20 +409,37 @@ def _stdev_all(vals: list[Optional[float]]) -> Optional[float]:
             if len(vals) > 1 and all(v is not None for v in vals) else None)
 
 
+def complete_seeds(by_seed: dict) -> set:
+    """The seeds of a per-channel cell that have every one of its bands.
+
+    ``by_seed`` maps each seed to its runs.csv rows. A seed is complete when
+    its bands are exactly the union over the cell's seeds, one run each: a
+    seed half-way through a sweep, averaged over whichever bands finished, is
+    a different quantity from a full seed. The one completeness rule behind
+    cells.csv's per-channel seed sd (_seed_band_means), timing.csv
+    (build_timing) and the paradigm comparison (paradigms.seed_values).
+    """
+    bands = {seed: [r["channel"] for r in rs] for seed, rs in by_seed.items()}
+    union = set().union(*map(set, bands.values())) if bands else set()
+    return {seed for seed, chans in bands.items()
+            if len(chans) == len(union) and set(chans) == union}
+
+
 def _seed_band_means(rs: list[dict], metric: str) -> list[float]:
     """Per-seed means over the bands of a per-channel cell, complete seeds only.
 
-    A seed counts only if it has every band any seed of the cell has, and a
-    value for each: a seed half-way through a sweep, averaged over whichever
-    bands finished, is a different quantity from a full seed (the same rule as
-    paradigms.seed_values).
+    A seed counts only if it is complete (complete_seeds) and has a value on
+    every band.
     """
-    bands: dict = defaultdict(dict)
+    by_seed: dict = defaultdict(list)
     for r in rs:
-        bands[r["seed"]][r["channel"]] = _f(r[metric])
-    union = set().union(*(set(b) for b in bands.values())) if bands else set()
-    return [statistics.mean(b.values()) for _, b in sorted(bands.items())
-            if set(b) == union and all(v is not None for v in b.values())]
+        by_seed[r["seed"]].append(r)
+    means = []
+    for seed in sorted(complete_seeds(by_seed)):
+        vals = [_f(r[metric]) for r in by_seed[seed]]
+        if all(v is not None for v in vals):
+            means.append(statistics.mean(vals))
+    return means
 
 
 def build_cells(runs: list[dict]) -> list[dict]:
@@ -433,6 +455,8 @@ def build_cells(runs: list[dict]) -> list[dict]:
     spread over all of its band x seed runs, which measures how different the
     bands are, not how repeatable the cell is (ED2022 DLinear: 0.494 against a
     seed sd of 1.3e-4); that number is kept as mse_band_seed_sd.
+    n_complete_seeds is the sd's sample size; mse, mae and n_seeds still
+    count every run, a per-channel seed still training included.
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in runs:
@@ -448,9 +472,12 @@ def build_cells(runs: list[dict]) -> list[dict]:
         if channels:
             spread = {m: _num(_stdev(get(m))) for m in ("mse", "mae")}
             std = {m: _num(_stdev(_seed_band_means(rs, m))) for m in ("mse", "mae")}
+            n_complete = len(_seed_band_means(rs, "mse"))
         else:
             spread = {"mse": "", "mae": ""}
             std = {m: _num(_stdev(get(m))) for m in ("mse", "mae")}
+            n_complete = len({r["seed"] for r in rs
+                              if r["seed"] and _f(r["mse"]) is not None})
         sources = sorted({r.get("fixed_source", "") for r in rs} - {""})
         out.append({
             "setup": setup, "family": family_of(dataset),
@@ -477,6 +504,7 @@ def build_cells(runs: list[dict]) -> list[dict]:
             "fixed_sources": ";".join(sources),
             "n_runs": len(rs),
             "n_seeds": len(seeds) or "",
+            "n_complete_seeds": n_complete if seeds else "",
             "n_channels": len(channels) or "",
             "code_versions": ";".join(sorted({r["code_version"] or "?" for r in rs})),
             "code_equivalents": ";".join(sorted({r.get("code_equivalent", r["code_version"])
@@ -552,7 +580,7 @@ def build_timing(runs: list[dict], solo: Optional[dict]) -> list[dict]:
 
     ``solo`` is specs/timing.yaml's ``solo_pass`` block. Only cells it
     measured get rows, at its window, and only seeds that have every band of
-    the cell and an epoch count on each (the rule of _seed_band_means).
+    the cell (complete_seeds) and an epoch count on each.
     """
     if not solo or not solo.get("bands"):
         return []
@@ -580,11 +608,9 @@ def build_timing(runs: list[dict], solo: Optional[dict]) -> list[dict]:
             (float(b["twin_seconds"]) / int(b["twin_epochs"])) / pe
             for b, pe in zip(bands, per_epoch))
         by_seed = pc.get((model, dataset), {})
-        union = set().union(*({r["channel"] for r in rs} for rs in by_seed.values())) \
-            if by_seed else set()
+        complete = complete_seeds(by_seed)
         for seed, rs in sorted(by_seed.items()):
-            if ({r["channel"] for r in rs} != union or len(rs) != len(union)
-                    or any(not r.get("epochs") for r in rs)):
+            if seed not in complete or any(not r.get("epochs") for r in rs):
                 continue
             epochs = sum(int(r["epochs"]) for r in rs)
             times = [_f(r["running_time"]) for r in rs]

@@ -176,7 +176,12 @@ reported as a `NOTE`; only a changed value is fatal.
   seed run, which measures how different the bands are (ED2022 DLinear 0.494
   against a seed sd of 1.3e-4); that spread is kept as `mse_band_seed_sd` /
   `mae_band_seed_sd`. The per-channel CSV twins in `tables/csv/` publish the
-  column, so they change meaning with it; no rendered table used it.
+  column, so they change meaning with it; no rendered table used it. A seed is
+  complete when it has exactly the bands every other seed of the cell has, one
+  run each (`frames.complete_seeds`, the one rule the paradigm comparison and
+  `timing.csv` use too); `n_complete_seeds` is the sd's sample size. `mse`,
+  `mae` and `n_seeds` still count every run, a seed still training included,
+  as the published tables always have.
 - **`bands.csv`**: one row per run and band, over the joint-channel corpora —
   a multivariate or cluster run's `sl_test/mse_per_channel` (and its fixed
   twin), a per-channel run's own band. `channel` is the loader's column index,

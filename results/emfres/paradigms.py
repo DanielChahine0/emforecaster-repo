@@ -41,7 +41,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Optional
 
-from .frames import family_of
+from .frames import complete_seeds, family_of
 
 METRICS = (("mae", "MAE"), ("mse", "MSE"))
 
@@ -69,8 +69,9 @@ def seed_values(runs_csv: Path, family: str, seq_len: int, pred_len: int) -> dic
     """{(pipeline, dataset, model): {seed: {"mse", "mae", "val"}}} at one window.
 
     pipeline is "multivariate", "perchannel" or ("cluster", k). A per-channel
-    seed is the mean over its channels, and is kept only if it has as many
-    channels as the most complete seed of the same cell.
+    seed is the mean over its channels, and is kept only if it has every
+    channel any seed of the cell has (frames.complete_seeds, the rule
+    cells.csv's per-channel seed sd uses too).
     """
     raw: dict = defaultdict(lambda: defaultdict(list))
     with open(runs_csv) as f:
@@ -92,10 +93,10 @@ def seed_values(runs_csv: Path, family: str, seq_len: int, pred_len: int) -> dic
 
     out = {}
     for key, by_seed in raw.items():
-        full = max(len(rs) for rs in by_seed.values())
+        complete = complete_seeds(by_seed) if key[0] == PC else set(by_seed)
         cell = {}
         for seed, rs in by_seed.items():
-            if key[0] == PC and len(rs) < full:
+            if seed not in complete:
                 continue
             # .get: a frames file written before val_loss existed still renders,
             # just without the validation-chosen best k.
