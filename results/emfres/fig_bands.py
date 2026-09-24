@@ -7,7 +7,9 @@ where the baseline is. The strip under it gives each band's signed share of
 the summed absolute band gap over the dataset's models (figdata.BandGrid.share),
 so a gap concentrated in a few bands shows as a few long bars. A model that
 does not train on the dataset (corpus.flagged) keeps its row, marked with a
-dagger and muted, but is left out of the strip.
+dagger and muted, but is left out of the strip. A model the
+comparison applies to but that has no row -- a side still training, or no
+band vectors -- is named in a note.
 
 Two comparisons: per-channel against multivariate, and the validation-chosen
 k against k = 1 (the fixed-membership band vectors, once a model's sweep is
@@ -26,7 +28,7 @@ from . import figdata as FD
 from . import paradigms as PG
 from .figkit import (
     BURNT_PEACH, INK_MUTED, INK_SECONDARY, VERDIGRIS, dataset_name, diverging_cmap,
-    footnote, model_name, style_axes, title, window_label, write,
+    footnotes, model_name, style_axes, title, window_label, write,
 )
 from .fig_paradigms import DAGGER, WIDTH
 
@@ -56,9 +58,21 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     # A model that does not train here keeps its row, marked and muted as in
     # every other paradigm figure, but stays out of the share strip.
     flagged = {m for ds, m in corpus.flagged if ds == grid.dataset} & set(models)
+    # The models the comparison applies to that have no row: named in a note
+    # rather than silently absent.
+    pending = [m for ds, m in FD.pending_cells(corpus, base, chal) if ds == grid.dataset]
+    unbanded = [m for ds, m in corpus.order if ds == grid.dataset and m not in models
+                and m not in pending and m not in PG.DETERMINISTIC
+                and corpus.board.applies((ds, m), base) and corpus.board.applies((ds, m), chal)]
+    notes = [f"{DAGGER} no seed trains in any paradigm; left out of the share strip"
+             if flagged else None,
+             "pending, not drawn: " + ", ".join(model_name(m) for m in pending)
+             if pending else None,
+             "no band vectors: " + ", ".join(model_name(m) for m in unbanded)
+             if unbanded else None]
     heat_h = 0.2 * nm + 0.1
     strip_h = 0.75
-    bottom = 0.55 + (0.05 if flagged else 0.0)
+    bottom = 0.55 + (0.12 if any(notes) else 0.0)
     height = 0.45 + heat_h + strip_h + bottom
     fig = plt.figure(figsize=(WIDTH, height))
     gs = fig.add_gridspec(2, 2, height_ratios=[heat_h, strip_h], width_ratios=[1, 0.018],
@@ -122,9 +136,7 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     title(fig, f"{label}, band by band · {dataset_name(grid.dataset)}", style,
           f"{fam} · {window_label(corpus.window)} · MSE · "
           f"{'/'.join(map(str, seeds))} matched seeds · positive = baseline better")
-    if flagged:
-        footnote(fig, f"{DAGGER} no seed trains in any paradigm; left out of the share strip",
-                 style)
+    footnotes(fig, notes, style)
     return write(fig, root, family="per-band", group=dataset_name(grid.dataset), subject=slug,
                  configs=[corpus.window], metric="mse", formats=formats)
 

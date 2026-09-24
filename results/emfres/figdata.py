@@ -230,6 +230,13 @@ def pending_cells(corpus: Corpus, base: str, chal: str,
             and not (board.complete(c, base) and board.complete(c, chal))]
 
 
+def unswept(corpus: Corpus) -> list:
+    """(dataset, model) cells with a planned cluster pipeline and no run yet."""
+    board = corpus.board
+    return [c for c in corpus.order if c[1] not in PG.DETERMINISTIC
+            and board.applies(c, PG.BEST) and not board.sweeps.get(c)]
+
+
 # --------------------------------------------------------------------------- #
 # Clustering gain against k
 # --------------------------------------------------------------------------- #

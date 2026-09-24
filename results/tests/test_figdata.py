@@ -96,6 +96,7 @@ def test_pending_cells_are_the_ones_the_scoreboard_counts_pending(tmp_path):
     # LSTM's has a gap to plot; PatchTST's has none yet, only a count.
     drawn = {g.cell for g in FD.gaps(corpus, K1, BEST, "mae") if g.outcome == "pending"}
     assert drawn == {("ed2022", "LSTM")}
+    assert FD.unswept(corpus) == [("ed2022", "PatchTST")]
 
 
 def test_the_k_profile_is_relative_to_k1_and_rings_only_a_finished_sweep(tmp_path):

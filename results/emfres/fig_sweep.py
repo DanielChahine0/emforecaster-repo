@@ -13,7 +13,9 @@ Replaces the ED2022-only absolute cluster-sweep figure of plot_metrics: every
 dataset of the family, every model with a sweep, and the protocols side by
 side. A model whose sweep is still training is drawn from what it has, its
 points hollow, and gets no ring until its sweep is complete. A model that
-does not train (corpus.flagged) is marked with a dagger, its title muted.
+does not train (corpus.flagged) is marked with a dagger, its title muted. A
+planned sweep with no run yet on a dataset is named in a note, not left out
+in silence.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from matplotlib.lines import Line2D
 from . import figdata as FD
 from .figkit import (
     INK_MUTED, INK_PRIMARY, INK_SECONDARY, SURFACE, dataset_colors, dataset_name,
-    footnote, layout, legend, model_name, panel_title, style_axes, title, window_label,
+    footnotes, layout, legend, model_name, panel_title, style_axes, title, window_label,
     write, xlabel,
 )
 from .fig_paradigms import DAGGER, METRIC_NAME, WIDTH
@@ -44,6 +46,27 @@ def _where(corpus: FD.Corpus, models: set) -> str:
     whole = all((ds, m) in corpus.flagged for m in models for ds in corpus.datasets
                 if (ds, m) in corpus.board.cells)
     return "" if whole else " on " + ", ".join(dataset_name(ds) for ds in on)
+
+
+def _unswept_note(corpus: FD.Corpus) -> str | None:
+    """'no cluster run yet: <models> [on <datasets>]' for the planned sweeps not started.
+
+    Models missing on the same datasets share one clause; a model missing on
+    every dataset is named alone.
+    """
+    groups: dict = {}
+    for ds, m in FD.unswept(corpus):
+        groups.setdefault(m, []).append(ds)
+    by_where: dict = {}
+    for m, dss in groups.items():
+        where = () if len(dss) == len(corpus.datasets) else tuple(dss)
+        by_where.setdefault(where, []).append(model_name(m))
+    if not by_where:
+        return None
+    clauses = [" and ".join(names) + (" on " + ", ".join(dataset_name(d) for d in where)
+                                      if where else "")
+               for where, names in by_where.items()]
+    return "no cluster run yet: " + "; ".join(clauses)
 
 
 def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> list:
@@ -146,8 +169,7 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     legend(fig, handles, style, y=1 - 0.24 / height)
     layout(fig, style, top=0.82, bottom=0.42, left=0.09, wspace=0.08, hspace=0.42)
     xlabel(fig, list(axes.flat), "k (clusters)", style)
-    if flagged_models:
-        footnote(fig, f"{DAGGER} no seed trains in any paradigm"
-                 + _where(corpus, flagged_models), style)
+    footnotes(fig, [f"{DAGGER} no seed trains in any paradigm" + _where(corpus, flagged_models)
+                    if flagged_models else None, _unswept_note(corpus)], style)
     return write(fig, root, group=corpus.family, subject="k-gain",
                  configs=[corpus.window], metric=metric, formats=formats)
