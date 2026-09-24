@@ -1025,7 +1025,10 @@ def _run_voip_cell(k, logs_root, job="rf_emf_mv/dlinear", settings=None):
                             recursive=True)
     with open(log_path) as f:
         log = json.load(f)
-    checkpoint = torch.load(os.path.join(os.path.dirname(log_path), "supervised.pth"))
+    # None for a no_train model (Persistence), which saves no checkpoint.
+    checkpoint_path = os.path.join(os.path.dirname(log_path), "supervised.pth")
+    checkpoint = (torch.load(checkpoint_path) if os.path.exists(checkpoint_path)
+                  else None)
     return log, checkpoint, exp
 
 

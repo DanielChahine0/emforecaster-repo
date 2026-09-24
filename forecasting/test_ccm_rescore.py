@@ -21,7 +21,8 @@ import torch
 import yaml
 
 from forecasting import ccm_rescore
-from forecasting.ccm_rescore import FIXED_GATED, GATED, SIDECAR, TOL, rescore_run
+from forecasting.ccm_rescore import (FIXED_GATED, GATED, SIDECAR, TOL, WINDOW_KEYS,
+                                     rescore_run)
 # The end-to-end cell recipe test_cluster's fixed-protocol tests train on.
 from forecasting.test_cluster import _run_voip_cell
 
@@ -212,14 +213,38 @@ def test_an_existing_sidecar_is_left_alone_unless_forced(cpu_run, tmp_path):
     assert "sl_test_fixed/mse" in _read(path)
 
 
-def test_the_channel_count_comes_from_the_data_not_args_yaml(cpu_run, tmp_path):
+def test_an_old_runs_channel_count_comes_from_the_data_not_args_yaml(
+        cpu_run, tmp_path):
     # Finding C7: args.yaml was dumped before the loaders inferred the channel
     # count, so the VoIP runs on disk record the job config's 27 for their 6
-    # channels. Set explicitly, so this holds once new runs record 6.
+    # channels. Those runs log no window counts; the copy is made to look like
+    # one, since this cell's args.yaml was dumped again after its loaders.
     run = _copy(cpu_run, tmp_path)
+    log_path = os.path.join(run, "log.json")
+    _write(log_path, {key: value for key, value in _read(log_path).items()
+                      if key not in WINDOW_KEYS})
     _edit_yaml(run, "data", "num_channels", 27)
-    assert _read(os.path.join(run, "log.json"))["parameters/data/num_channels"] == 6
+    assert _read(log_path)["parameters/data/num_channels"] == 6
     assert rescore_run(run, "batch")["status"] == "checked"
+
+
+def test_a_run_that_logs_its_windows_is_held_to_its_channel_count(
+        cpu_run, tmp_path):
+    run = _copy(cpu_run, tmp_path)
+    assert all(key in _read(os.path.join(run, "log.json")) for key in WINDOW_KEYS)
+    _edit_yaml(run, "data", "num_channels", 27)
+    with pytest.raises(ValueError, match="parameters/data/num_channels"):
+        rescore_run(run, "batch")
+
+
+def test_a_run_whose_loaders_give_other_windows_is_refused(cpu_run, tmp_path):
+    run = _copy(cpu_run, tmp_path)
+    log_path = os.path.join(run, "log.json")
+    log = _read(log_path)
+    log["parameters/data/n_val_windows"] += 1
+    _write(log_path, log)
+    with pytest.raises(ValueError, match="n_val_windows"):
+        rescore_run(run, "batch")
 
 
 def test_a_config_that_disagrees_with_its_log_is_refused(cpu_run, tmp_path):
@@ -269,10 +294,12 @@ def test_the_validation_check_confirms_the_splits_at_k1(cpu_run_k1):
     run, windows = cpu_run_k1
     check = rescore_run(run, "batch")["val_check"]
     assert check["windows"] == windows
+    log = _read(os.path.join(run, "log.json"))
+    assert windows == {split: log[f"parameters/data/n_{split}_windows"]
+                       for split in windows}
     # At k=1 a forecast ignores its batch-mates, so the unshuffled validation
     # loss is the checkpoint's logged one up to the summation order.
-    assert check["logged_best_val_loss"] == min(
-        _read(os.path.join(run, "log.json"))["sl_val/loss"])
+    assert check["logged_best_val_loss"] == min(log["sl_val/loss"])
     assert check["rel_dev"] < 1e-5
 
 

@@ -197,6 +197,19 @@ class Experiment:
         # files (6 channels) run through job configs that still say 27.
         self.logger["parameters/data/num_channels"] = self.args.data.num_channels
 
+        # How many windows each split gave the run, so that runs compared
+        # across paradigms can be checked to have fitted and scored the same
+        # data from their logs alone (finding PE-9 had to recompute the counts
+        # with the loader). test() loads the test split before it logs any
+        # test metric, so these always precede the grid's resume marker.
+        if not self.args.exp.sklearn:
+            for split in ("train", "val", "test"):
+                loader = getattr(self, f"{split}_loader", None)
+                if loader is not None:
+                    self.logger[f"parameters/data/n_{split}_windows"] = len(
+                        loader.dataset
+                    )
+
     def free_memory(self):
         for k in ["train", "val", "test"]:
             if hasattr(self, f"{k}_loader"):

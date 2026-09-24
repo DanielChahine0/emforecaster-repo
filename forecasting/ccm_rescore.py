@@ -16,9 +16,11 @@ beside the run:
 
 log.json is never edited. A run is rebuilt from its own args.yaml, checked
 field by field against log.json's parameters/*, and refused if the two
-disagree anywhere but num_channels: code older than the fix for finding C7
-dumped args.yaml only before the loaders set it, so it is taken from the
-data, as the run itself did.
+disagree. The one exception is num_channels in a run that logs no window
+counts (parameters/data/n_*_windows): such runs come from code that dumped
+args.yaml before the loaders set the channel count (finding C7), so it is
+taken from the data, as the run itself did. A run that logs its window counts
+is also refused if the rebuilt loaders give other counts.
 
 Two modes:
 
@@ -51,11 +53,12 @@ in whole windows. The fixed protocol has no such dependence: every number in
 the sidecar is a function of the checkpoint and the data alone.
 
 The test keys see the train and val splits only through the scaler, so each
-run also records, ungated, its window counts and the batch protocol's
-validation loss against min(sl_val/loss), the checkpoint's epoch. At k=1 the
-two carry the same device noise as the test keys when the splits are the
-run's: over the 87 k=1 runs a median 1.1e-5 and at most 1.7e-4 (PatchTST on
-VoIP; DLinear on EMF at most 1.1e-6), against a median 2.9e-3 at k>1.
+run also records its window counts, which only a run that logs its own is held
+to (above), and, ungated, the batch protocol's validation loss against
+min(sl_val/loss), the checkpoint's epoch. At k=1 the two carry the same device
+noise as the test keys when the splits are the run's: over the 87 k=1 runs a
+median 1.1e-5 and at most 1.7e-4 (PatchTST on VoIP; DLinear on EMF at most
+1.1e-6), against a median 2.9e-3 at k>1.
 
     venv/bin/python -m forecasting.ccm_rescore logs/cluster --mode batch
     venv/bin/python -m forecasting.ccm_rescore logs/cluster --mode fixed --jobs 8
@@ -108,6 +111,10 @@ FIXED_GATED = tuple(key.replace("sl_test/", "sl_test_fixed/") for key in GATED)
 # args.yaml keys whose value, in a run that dumped it before the loaders
 # (finding C7), is not the one the run used.
 FROM_DATA = {"parameters/data/num_channels"}
+# The window counts a run logs. The code that logs them also dumps args.yaml
+# again after the loaders, so a run that has them is held to FROM_DATA too.
+WINDOW_KEYS = tuple(f"parameters/data/n_{split}_windows"
+                    for split in ("train", "val", "test"))
 
 
 def find_runs(paths):
@@ -160,11 +167,12 @@ def logged_config(run_dir, log):
     """The run's config from its args.yaml, refused if log.json disagrees."""
     with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
         args = load_config(os.path.join(run_dir, "args.yaml"))
+    exempt = set() if any(key in log for key in WINDOW_KEYS) else FROM_DATA
     mismatched = []
     for group, section in args:
         for field, value in section:
             key = f"parameters/{group}/{field}"
-            if (key in log and key not in FROM_DATA
+            if (key in log and key not in exempt
                     and convert_pydantic_types(value) != log[key]):
                 mismatched.append(key)
     if mismatched:
@@ -179,6 +187,8 @@ def rebuild(run_dir, log):
 
     Only what Experiment.test needs is set up: nothing is logged or written,
     and num_channels is inferred by the loaders before the model is built.
+    Refused if the loaders' window counts or the model's parameter count
+    differ from the ones the run logged.
     """
     args = logged_config(run_dir, log)
     if not args.cluster.enabled:
@@ -205,6 +215,12 @@ def rebuild(run_dir, log):
     exp.generator = torch.Generator().manual_seed(args.exp.seed)
 
     exp.init_dataloaders(loader_type="all", learning_type="sl")
+    for key in WINDOW_KEYS:
+        if key in log and exp.logger[key] != log[key]:
+            raise ValueError(
+                f"rebuilt loaders give {key} = {exp.logger[key]:,}, "
+                f"the run logged {log[key]:,}"
+            )
     exp.init_model()
     if exp.logger["parameters/sl/num_params"] != log["parameters/sl/num_params"]:
         raise ValueError(
