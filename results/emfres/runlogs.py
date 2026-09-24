@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .contention import flag as contention_flag
 from .vocab import parse_duration
 
 _CHANNEL_RE = re.compile(r"^ch(\d+)$")
@@ -147,6 +148,16 @@ class Run:
     # rescore.git_commit) for "sidecar" -- None when that ran on a dirty tree,
     # or on "none".
     fixed_commit: Optional[str] = None
+    # When the run started (parameters/exp/time, the machine's local clock);
+    # its training window is [started, started + running_time].
+    started: Optional[datetime] = None
+    # The fraction of that window with another user's process on the GPU
+    # (emfres.contention, specs/contention.yaml), None where no GPU record
+    # covers it, and the run's contended flag (contention.flag): concurrent,
+    # foreign, both, none, or ? for an unstamped concurrency. Filled in by
+    # load_runs when it is given the windows, or read back from runs.csv.
+    foreign_overlap: Optional[float] = None
+    contended: str = ""
 
 
 @dataclass
@@ -424,13 +435,17 @@ def fixed_metrics(d: dict, run_dir: Path, k: Optional[int], conf: bool,
 
 def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = None,
               inferred: Optional[list[dict]] = None,
-              attested: Optional[list[dict]] = None) -> list[Run]:
+              attested: Optional[list[dict]] = None,
+              contention=None) -> list[Run]:
     """A Run per finished log.json under logs_root.
 
     A log without MARKER, or one that does not parse (log.json is written in
     one go at the end of a run, but a reader can catch the write), is a run
     still training or one that crashed: it is skipped and counted in a NOTE,
-    never read as a result.
+    never read as a result. ``contention`` (emfres.contention.Contention, the
+    foreign GPU windows of specs/contention.yaml) fills in each run's
+    foreign_overlap; its contended flag is set either way, from its
+    concurrency stamp and that overlap.
     """
     runs = []
     incomplete = []
@@ -542,9 +557,14 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
             if fixed_source in ("log", "k1"):
                 fixed["fixed_commit"] = code_commit
 
+        started = _run_time(exp_time)
+        overlap = (contention.overlap(started, running_time)
+                   if contention is not None else None)
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
                          running_time, per_epoch, num_params, ic, jc, interval_width,
                          channel, k, seed, log_path,
+                         started=started, foreign_overlap=overlap,
+                         contended=contention_flag(concurrency, overlap),
                          git_commit=git_commit, concurrency=concurrency,
                          commit_source=commit_source, val_loss=val_loss,
                          git_dirty=git_dirty, code_commit=code_commit,
