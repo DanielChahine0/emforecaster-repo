@@ -16,8 +16,9 @@ beside the run:
 
 log.json is never edited. A run is rebuilt from its own args.yaml, checked
 field by field against log.json's parameters/*, and refused if the two
-disagree anywhere but num_channels: args.yaml dumps that before the loaders
-set it (finding C7), so it is taken from the data, as the run itself did.
+disagree anywhere but num_channels: code older than the fix for finding C7
+dumped args.yaml only before the loaders set it, so it is taken from the
+data, as the run itself did.
 
 Two modes:
 
@@ -104,7 +105,8 @@ GATED = ("sl_test/loss", "sl_test/mse", "sl_test/mae")
 # Their fixed-protocol twins, for a run that logged the fixed protocol itself.
 FIXED_GATED = tuple(key.replace("sl_test/", "sl_test_fixed/") for key in GATED)
 
-# args.yaml keys whose value is not the one the run used (finding C7).
+# args.yaml keys whose value, in a run that dumped it before the loaders
+# (finding C7), is not the one the run used.
 FROM_DATA = {"parameters/data/num_channels"}
 
 

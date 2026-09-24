@@ -786,6 +786,14 @@ class Experiment:
         else:
             self.init_dataloaders(loader_type="train", learning_type="sl")
 
+        # Dump args.yaml again now that the loaders have set num_channels: the
+        # copy init_logger wrote still has the job config's 27, and a 29-band or
+        # VoIP run rebuilt from it does not fit its own checkpoint (finding C7).
+        yaml_path = os.path.join(self.log_dir, "args.yaml")
+        global_to_yaml(self.args, yaml_path)
+        if self.args.exp.neptune:
+            # Replace the copy init_logger uploaded, which has the same stale 27.
+            self.logger["config"].upload(yaml_path)
 
         # Initialize Model and Optimizer
         self.init_model()
