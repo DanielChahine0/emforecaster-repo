@@ -193,7 +193,12 @@ reported as a `NOTE`; only a changed value is fatal.
   run each (`frames.complete_seeds`, the one rule the paradigm comparison and
   `timing.csv` use too); `n_complete_seeds` is the sd's sample size. `mse`,
   `mae` and `n_seeds` still count every run, a seed still training included,
-  as the published tables always have.
+  as the published tables always have -- but no table passes such a cell off
+  as complete: one with fewer complete seeds than the other cells of its
+  dataset and window have (`extract_results.shortfall`) is printed with
+  `(n=…)` and left out of every bold, underline, win count and IMP mean in
+  the per-setup sections, CCM vs Base, the Ultimate Comparison and MV vs
+  univariate.
 - **`bands.csv`**: one row per run and band, over the joint-channel corpora —
   a multivariate or cluster run's `sl_test/mse_per_channel` (and its fixed
   twin), a per-channel run's own band. `channel` is the loader's column index,
