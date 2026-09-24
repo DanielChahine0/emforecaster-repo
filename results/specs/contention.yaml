@@ -32,11 +32,17 @@
 #                    (blank: no part of it was monitored)
 #   contended        concurrent (its own grid trained several runs at once,
 #                    concurrency > 1), foreign (foreign_overlap > 0), both
-#                    ';'-joined, none (neither recorded), or ? (concurrency
-#                    not stamped, runs before 2026-09-19)
+#                    ';'-joined, none (neither recorded), or ? (not known:
+#                    concurrency not stamped, runs before 2026-09-19; or no
+#                    overlap seen in a run that trained past `observed_until`
+#                    while this file is `open`)
 # and to cells.csv each cell's distinct values and n_foreign, its runs with a
 # foreign overlap. The timing tables mark such a cell and P7 draws it hollow.
-# The flag says the time may be inflated; the accuracy is unaffected.
+# The flag says the time may be inflated; the accuracy is unaffected. Frames
+# extracted while runs trained past `observed_until` of an open file, or while
+# the GPU logs go on after it, say so in MANIFEST.json, and `make.py tables`
+# will not write from them: after a sweep, rerun `make.py contention`, check
+# it with `--check`, extract, and commit this file with the frames.
 #
 # Earlier trees. No run before the CCM sweep has a GPU record, except the solo
 # timing pass of 2026-09-22 (specs/timing.yaml: foreign processes none in all
@@ -49,11 +55,11 @@
 # whose window was monitored, how many overlapped `foreign`, and the mean and
 # largest overlap fraction.
 source: .personal/ccm_gpu_contention.log
-observed_until: '2026-09-24 18:00:04'
+observed_until: '2026-09-24 18:48:25'
 open: true
 poll_seconds: 60
 monitored:
-  - {from: '2026-09-24 10:38:48', to: '2026-09-24 18:00:04'}
+  - {from: '2026-09-24 10:38:48', to: '2026-09-24 18:48:25'}
 foreign:
   - {from: '2026-09-24 10:38:48', to: '2026-09-24 10:41:48', peak_mib: 672, processes: 1}
   - {from: '2026-09-24 10:45:48', to: '2026-09-24 10:47:48', peak_mib: 672, processes: 1}
@@ -64,7 +70,7 @@ foreign:
   - {from: '2026-09-24 13:52:54', to: '2026-09-24 13:56:54', peak_mib: 4344, processes: 1}
   - {from: '2026-09-24 13:57:54', to: '2026-09-24 14:13:55', peak_mib: 4356, processes: 4}
   - {from: '2026-09-24 14:14:55', to: '2026-09-24 16:04:58', peak_mib: 4200, processes: 17}
-  - {from: '2026-09-24 16:05:58', to: '2026-09-24 18:00:04', peak_mib: 1994, processes: 10}
+  - {from: '2026-09-24 16:05:58', to: '2026-09-24 18:48:25', peak_mib: 1994, processes: 14}
 cells:
   - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 1, runs: 1, foreign: 0, mean_overlap: 0.0, max_overlap: 0.0}
   - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 2, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
@@ -73,6 +79,9 @@ cells:
   - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 9, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 1, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 2, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 3, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 5, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 9, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: voip_fixed, window: L24/O6, k: 1, runs: 5, foreign: 5, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: voip_fixed, window: L24/O6, k: 2, runs: 5, foreign: 5, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: voip_fixed, window: L24/O6, k: 3, runs: 5, foreign: 5, mean_overlap: 1.0, max_overlap: 1.0}
