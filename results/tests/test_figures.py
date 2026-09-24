@@ -310,3 +310,37 @@ def test_the_legacy_figures_read_a_cluster_cells_fixed_protocol(tmp_path):
                      frames.CELL_FIELDS)
     old = {(r.section.split()[0], r.metric): r.value for r in records_from_cells(path, results)}
     assert old[("Cluster", "MSE")] == 0.50
+
+
+def test_p7_counts_and_notes_a_cost_another_users_gpu_process_may_have_inflated(
+        tmp_path, monkeypatch):
+    import csv
+
+    from emfres import fig_cost, figdata as FD
+
+    frames_dir = _partial_frames(tmp_path / "frames")
+    runs_csv = frames_dir / "runs.csv"
+    with open(runs_csv) as f:
+        rows = list(csv.DictReader(f))
+    # Two seeds of DLinear's k=2 on ED2022 overlapped another user's process.
+    for r in rows:
+        if (r["setup"], r["model"], r["dataset"], r["k"]) == ("cluster", "DLinear",
+                                                              "ed2022", "2") \
+                and r["seed"] != str(SEEDS[0]):
+            r["foreign_overlap"], r["contended"] = "0.5", "foreign"
+    frames.write_csv(runs_csv, rows, frames.RUN_FIELDS)
+    corpus = FD.load(runs_csv, "emf", (336, 96))
+    costs = FD.costs(corpus, runs_csv, frames_dir / "timing.csv")
+    assert corpus.board.choices[("ed2022", "DLinear")].k == 2
+    from emfres import paradigms as PG
+    best = costs[(("ed2022", "DLinear"), PG.BEST)]
+    assert best.foreign == 2 and best.n == 3
+    assert costs[(("ed2022", "DLinear"), PG.MV)].foreign == 0
+    assert all(c.foreign == 0 for (cell, _), c in costs.items() if cell[0] == "uh2022")
+
+    notes = []
+    monkeypatch.setattr(fig_cost, "footnote", lambda fig, text, style, y=0.0: notes.append(text))
+    from emfres import figkit
+    written = fig_cost.fig_cost(corpus, runs_csv, frames_dir / "timing.csv", "mae",
+                                figkit.setup("paper"), tmp_path / "figs", ["png"])
+    assert written and fig_cost.CONTENDED_NOTE in notes

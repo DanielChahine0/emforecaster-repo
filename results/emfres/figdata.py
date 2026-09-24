@@ -393,11 +393,18 @@ def _f(v) -> Optional[float]:
 
 @dataclass
 class Cost:
-    """Seed-mean training seconds of one pipeline; lo/hi bracket a per-channel estimate."""
+    """Seed-mean training seconds of one pipeline; lo/hi bracket a per-channel estimate.
+
+    ``foreign`` counts the seeds whose run trained while another user's
+    process was on the GPU (runs.csv foreign_overlap > 0, specs/
+    contention.yaml): their logged time may be inflated. Always 0 for the
+    per-channel estimate, which is the solo pass's.
+    """
     seconds: float
     lo: Optional[float] = None
     hi: Optional[float] = None
     n: int = 0
+    foreign: int = 0
 
 
 def costs(corpus: Corpus, runs_csv: Path, timing_csv: Path) -> dict:
@@ -410,7 +417,8 @@ def costs(corpus: Corpus, runs_csv: Path, timing_csv: Path) -> dict:
     uncontended estimate (every band's epochs at the solo pass's seconds per
     epoch, summed over bands) with the fastest and slowest measured band as
     the bracket, averaged over the seeds the paradigm comparison keeps. No
-    timing.csv, no per-channel cost.
+    timing.csv, no per-channel cost. A logged cost counts the seeds whose run
+    overlapped another user's GPU process (Cost.foreign).
     """
     board = corpus.board
     seq_len, pred_len = corpus.window
@@ -427,7 +435,8 @@ def costs(corpus: Corpus, runs_csv: Path, timing_csv: Path) -> dict:
             if t is None:
                 continue
             k = int(r["k"]) if r["setup"] == "cluster" else None
-            times[(r["setup"], r["dataset"], r["model"], k, r["seed"])] = t
+            times[(r["setup"], r["dataset"], r["model"], k, r["seed"])] = \
+                (t, bool(_f(r.get("foreign_overlap"))))
     out = {}
     for c in corpus.order:
         p = board.cells.get(c, {})
@@ -439,7 +448,8 @@ def costs(corpus: Corpus, runs_csv: Path, timing_csv: Path) -> dict:
             ts = [times.get((setup, c[0], c[1], k, s)) for s in p[pipe]]
             ts = [t for t in ts if t is not None]
             if ts:
-                out[(c, pipe)] = Cost(statistics.fmean(ts), n=len(ts))
+                out[(c, pipe)] = Cost(statistics.fmean(t for t, _ in ts), n=len(ts),
+                                      foreign=sum(1 for _, f in ts if f))
     if Path(timing_csv).exists():
         solo: dict = {}
         with open(timing_csv) as f:

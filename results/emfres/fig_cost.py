@@ -1,13 +1,15 @@
 """P7 and P8: what each paradigm costs, and what it does to the intervals.
 
-P7  cost         accuracy against uncontended training cost (EMF only: VoIP
-                 had no solo timing pass). Multivariate and cluster runs
-                 trained one at a time, so their logged time is their cost; a
-                 per-channel pipeline's cost is timing.csv's solo estimate
-                 summed over its bands, with the fastest-to-slowest measured
-                 band as a whisker where it is wider than the mark (a note
-                 gives the range where it is not). Never the contended
-                 per-channel log time.
+P7  cost         accuracy against training cost (EMF only: VoIP had no solo
+                 timing pass). Multivariate and cluster runs trained one at a
+                 time, so their logged time is their cost; a per-channel
+                 pipeline's cost is timing.csv's solo estimate summed over its
+                 bands, with the fastest-to-slowest measured band as a whisker
+                 where it is wider than the mark (a note gives the range where
+                 it is not). Never the contended per-channel log time. A
+                 cluster cost with a seed that trained while another user's
+                 process was on the GPU (specs/contention.yaml) is drawn
+                 hollow and noted: its time may be inflated.
 P8  calibration  per-channel coverage and interval width of the conformal
                  intervals (target 1 - alpha = 90%), in P1's model rows and
                  paradigm lanes.
@@ -40,6 +42,10 @@ from .style import log_ticks
 
 PIPES = (PG.MV, PG.PC, PG.BEST)
 
+# What a hollow cluster diamond means (figdata.Cost.foreign).
+CONTENDED_NOTE = ("‡ A seed trained while another user's process was on the GPU "
+                  "(specs/contention.yaml): its time may be inflated, its error is not")
+
 
 def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, style,
              root: Path, formats) -> list:
@@ -69,6 +75,8 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
     fig, axes = plt.subplots(nrow, ncol, figsize=(WIDTH, height), squeeze=False,
                              sharex=True, sharey=True)
     partial = False
+    contended = False      # a cluster cost with a foreign-contended seed
+    base_contended = []    # models whose multivariate reference is
     xs, ys = [1.0], [0.0]
     whiskers = []          # (ax, lo, hi, y, colour, alpha, estimate), drawn after layout
     for idx, model in enumerate(models):
@@ -83,6 +91,8 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
             p = board.cells.get(cell, {})
             if base is None or PG.MV not in p:
                 continue
+            if base.foreign:
+                base_contended.append(f"{model_name(model)} {dataset_name(ds)}")
             for pipe, marker, filled in ((PG.PC, "o", False), (PG.BEST, "D", True)):
                 c = costs.get((cell, pipe))
                 if c is None or pipe not in p:
@@ -93,6 +103,11 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                 complete = board.complete(cell, PG.MV) and board.complete(cell, pipe)
                 partial |= not complete
                 alpha = 1.0 if complete else PARTIAL_ALPHA
+                # Another user's process on the GPU may have inflated this
+                # time: hollow, so the shape still says cluster.
+                if c.foreign:
+                    filled = False
+                    contended = True
                 x, y = c.seconds / base.seconds, 100 * r["rel"]
                 if c.lo is not None:
                     whiskers.append((ax, c.lo / base.seconds, c.hi / base.seconds, y, hue[ds],
@@ -134,6 +149,12 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
     if drawn:
         handles.append(Line2D([], [], color=INK_SECONDARY, lw=0.8, marker="|",
                               markersize=style.marker * 0.8, label="Fastest–slowest band"))
+    if contended:
+        handles.append(Line2D([], [], marker="D", linestyle="None",
+                              markersize=style.marker * 0.9, markerfacecolor=SURFACE,
+                              markeredgecolor=INK_SECONDARY,
+                              markeredgewidth=style.line_width * 0.5,
+                              label="Cluster, time contended‡"))
     if partial:
         # Grey, not Verdigris: in this figure a hue names a dataset.
         handles.append(Line2D([], [], marker="D", linestyle="None", alpha=PARTIAL_ALPHA,
@@ -141,10 +162,16 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                               markeredgecolor=INK_SECONDARY,
                               markeredgewidth=style.line_width * 0.5, label="Still training"))
     legend(fig, handles, style, y=1 - 0.24 / height)
-    if note:
+    notes = [CONTENDED_NOTE if contended else None,
+             (f"Multivariate time contended‡: {', '.join(base_contended)}"
+              if base_contended else None), note]
+    notes = [n for n in notes if n]
+    if notes:
         # Only the bottom margin moves: the whiskers were judged on the widths.
-        layout(fig, style, top=0.84, bottom=0.52, left=0.09, wspace=0.08, hspace=0.42)
-        footnote(fig, note, style)
+        layout(fig, style, top=0.84, bottom=0.52 + 0.04 * (len(notes) - 1), left=0.09,
+               wspace=0.08, hspace=0.42)
+        for i, text in enumerate(reversed(notes)):
+            footnote(fig, text, style, y=i * (style.footnote * 1.5) / 72 / height)
     xlabel(fig, list(axes.flat), "Training time, × the multivariate run", style)
     return write(fig, root, group=corpus.family, subject="cost",
                  configs=[corpus.window], metric=metric, formats=formats)
