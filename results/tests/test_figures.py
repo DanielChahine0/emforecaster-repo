@@ -234,6 +234,41 @@ def test_a_chosen_k_of_one_is_labelled_beside_its_diamond_not_past_an_outlier(tm
     plt.close(fig)
 
 
+def test_every_pending_cell_a_gap_forest_counts_is_drawn(tmp_path, monkeypatch):
+    import re
+
+    import matplotlib.pyplot as plt
+
+    from emfres import fig_paradigms, figdata, figkit
+    from emfres.figkit import INK_MUTED
+
+    style = figkit.setup("paper")
+    # LSTM's sweep has one run; PatchTST is planned but has no cluster run.
+    rows = [_run(setup, s, 0.4 + 0.01 * i, model=model, lookback=1.0, **kw)
+            for i, s in enumerate(SEEDS) for model in ("DLinear", "LSTM", "PatchTST")
+            for setup, kw in (("multivariate", {}), ("perchannel", {"channel": 0}))]
+    rows += [_run("cluster", s, 0.39, k=k, val_loss=0.5 - 0.1 * k, lookback=1.0)
+             for s in SEEDS for k in (1, 2)]
+    rows.append(_run("cluster", SEEDS[0], 0.44, k=1, val_loss=0.5, model="LSTM",
+                     lookback=1.0))
+    frames.write_csv(tmp_path / "runs.csv", rows, frames.RUN_FIELDS)
+    corpus = figdata.load(tmp_path / "runs.csv", "emf", (336, 96))
+    kept = []
+    monkeypatch.setattr(fig_paradigms, "write", lambda fig, *a, **kw: kept.append(fig) or [])
+    fig_paradigms.fig_forest(corpus, "mae", style, tmp_path, ("png",))
+    (fig,) = kept
+    for ax in fig.axes:
+        sub = [t.get_text() for t in ax.texts if "/" in t.get_text()][0]
+        counted = int(re.search(r"(\d+) pending", sub).group(1)) if "pending" in sub else 0
+        markers = sum(1 for line in ax.lines if line.get_marker() == "o"
+                      and line.get_markeredgecolor() == INK_MUTED)
+        words = sum(1 for t in ax.texts if t.get_text() == "pending")
+        assert markers + words == counted
+    # Best k vs k=1 counts both: LSTM's gap and PatchTST's placeholder.
+    assert [t.get_text() for t in fig.axes[1].texts].count("pending") == 1
+    plt.close(fig)
+
+
 def test_a_cluster_lane_with_no_run_yet_reads_pending(tmp_path):
     import matplotlib.pyplot as plt
 

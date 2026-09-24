@@ -304,11 +304,20 @@ def fig_forest(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     for ax, (base, chal, label) in zip(axes, comps):
         style_axes(ax, style)
         by_cell = {g.cell: g for g in FD.gaps(corpus, base, chal, metric)}
+        waiting = set(FD.pending_cells(corpus, base, chal))
         xs, bands = [0.0], []
         counts[ax] = []
         for y, _, cell in rows:
             g = by_cell.get(cell) if cell else None
             if g is None:
+                # Counted pending in the title but no gap to plot yet (a side
+                # has no run): written on the zero rule, so every pending cell
+                # the title counts is drawn.
+                if cell in waiting:
+                    counts[ax].append(ax.annotate(
+                        "pending", (0, y), ha="center", va="center",
+                        fontsize=style.context * 0.9, color=INK_MUTED, zorder=5,
+                        bbox=LABEL_BOX))
                 continue
             ax.add_patch(Rectangle((-100 * g.band, y - 0.36), 200 * g.band, 0.72,
                                    facecolor=BAND_FILL, edgecolor="none", zorder=1))

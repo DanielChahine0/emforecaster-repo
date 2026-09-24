@@ -214,6 +214,22 @@ def score(corpus: Corpus, base: str, chal: str, metric: str,
     return PG.tally(corpus.board, base, chal, metric, corpus.order, skip=skip)
 
 
+def pending_cells(corpus: Corpus, base: str, chal: str,
+                  skip: frozenset = frozenset()) -> list:
+    """The cells score() counts as pending, in corpus order.
+
+    paradigms.tally's rule: the comparison applies to the cell (a planned
+    cluster pipeline counts, run or not), the model is not deterministic, and
+    a side is short of seeds, still sweeping or has no run yet. gaps() draws
+    those with a value on both sides; the rest have nothing to plot yet.
+    """
+    board = corpus.board
+    return [c for c in corpus.order
+            if c not in skip and c[1] not in PG.DETERMINISTIC
+            and board.applies(c, base) and board.applies(c, chal)
+            and not (board.complete(c, base) and board.complete(c, chal))]
+
+
 # --------------------------------------------------------------------------- #
 # Clustering gain against k
 # --------------------------------------------------------------------------- #

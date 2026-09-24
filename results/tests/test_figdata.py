@@ -82,6 +82,22 @@ def test_a_sweep_still_training_is_drawn_but_marked_incomplete(tmp_path):
     assert t["pending"] == 1 and t["cells"] == 1
 
 
+def test_pending_cells_are_the_ones_the_scoreboard_counts_pending(tmp_path):
+    # PatchTST is planned for the cluster grid but has no cluster run yet.
+    rows = _corpus_rows() + [_run(setup, s, 0.45, model="PatchTST", lookback=1.0, **kw)
+                             for s in SEEDS for setup, kw in
+                             (("multivariate", {}), ("perchannel", {"channel": 0}))]
+    corpus, _ = _load(tmp_path, rows)
+    for base, chal, _ in FD.GAP_COMPARISONS:
+        waiting = FD.pending_cells(corpus, base, chal)
+        assert len(waiting) == FD.score(corpus, base, chal, "mae")["pending"]
+    waiting = FD.pending_cells(corpus, K1, BEST)
+    assert waiting == [("ed2022", "LSTM"), ("ed2022", "PatchTST")]
+    # LSTM's has a gap to plot; PatchTST's has none yet, only a count.
+    drawn = {g.cell for g in FD.gaps(corpus, K1, BEST, "mae") if g.outcome == "pending"}
+    assert drawn == {("ed2022", "LSTM")}
+
+
 def test_the_k_profile_is_relative_to_k1_and_rings_only_a_finished_sweep(tmp_path):
     corpus, _ = _load(tmp_path)
     prof = FD.k_profile(corpus, ("ed2022", "DLinear"), "mae")
