@@ -833,9 +833,10 @@ def render(runs_csv: Path, family: str, setting: tuple,
                     f"{marked_delta(cut, c, K1, BEST, 'mse') if cluster else '-'} |")
 
     out += ["", f"*n = seeds for multivariate / per-channel / cluster k=1 / cluster best "
-                f"k, of the family's {n_family}. Trains = the seeds that train, same order "
-                "(Transformer only). A bold Δ means the challenger (per-channel, or the "
-                "best k) is better beyond seed noise.*"]
+                f"k, of the family's {n_family}. Trains = the seeds that train of the "
+                "pipeline's own seeds, n/N in the same order (Transformer only). A bold Δ "
+                "means the challenger (per-channel, or the best k) is better beyond seed "
+                "noise.*"]
     return "\n".join(out) + "\n"
 
 
@@ -907,7 +908,8 @@ def _cell_row(board: Board, c: tuple, metric: str, dataset_label, model_label,
         label += " (does not train)"
     trains = ""
     if trained is not None and c[1] in TRAINS_MODELS:
-        trains = "/".join("-" if trained.get(x) is None else str(len(trained[x]))
-                          for x in PIPES)
+        # n/N per pipeline: a bare count beside the n column read as "1 of 1".
+        trains = " · ".join("-" if trained.get(x) is None
+                            else f"{len(trained[x])}/{len(p[x])}" for x in PIPES)
     return (f"| {dataset_label(c[0])} | {label} | {value(MV)} | {value(PC)} | {pc_delta} "
             f"| {value(K1)} | {value(BEST)} | {k1_delta} | {ns} | {trains} |")

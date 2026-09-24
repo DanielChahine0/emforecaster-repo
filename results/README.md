@@ -234,10 +234,10 @@ docstring has the full rules.
   and test, and n/a for clustering.
 - **Whether the Transformer trains.** A Transformer seed trains when its skill
   is at least half the best multivariate skill of the other models on the
-  dataset; the tables give a trains count per pipeline, a descriptive row over
-  the seeds whose multivariate run trains (EMF: 69421), and flag a cell where
-  no seed of any paradigm trains (the VoIP Transformer), with the scoreboard
-  repeated without it.
+  dataset; the tables give, per pipeline, how many of its seeds train (n/N), a
+  descriptive row over the seeds whose multivariate run trains (EMF: 69421),
+  and flag a cell where no seed of any paradigm trains (the VoIP Transformer),
+  with the scoreboard repeated without it.
 - **Sensitivity rows** re-count the comparisons on the ratio-of-sums skill,
   without the two near-unforecastable bands (UH2022 ch21, EMF2023 ch24), and
   without the failed per-channel bands (`best_epoch` <= 2), both sides

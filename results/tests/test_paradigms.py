@@ -249,7 +249,7 @@ def test_a_transformer_seed_trains_relative_to_the_best_other_model(tmp_path):
     assert not paradigms.does_not_train(board, cell)
     md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96))
     assert "seed 69421 only (descriptive)" in md
-    assert "| 3/3/-/- | 1/1/-/- |" in md
+    assert "| 3/3/-/- | 1/3 · 1/3 · - · - |" in md       # n of N per pipeline
     assert "do not train" not in md
 
 
