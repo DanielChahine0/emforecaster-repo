@@ -49,15 +49,25 @@ OOM_RETRIES = 2
 def _memory_profile(model_id, dataset, seq_len):
     """(batch_size, accum_steps) override for known memory-heavy cells, or None.
 
+    Keyed on the model, never the grid, so every cluster cell trains on the same
+    micro-batches as the multivariate cell it is compared against: a cluster
+    EMForecaster cell inherits 128 x 4, and CCM's batch statistics (the
+    membership, the cluster-embedding refresh, the similarity loss) are then
+    taken per 128-window micro-batch. The val and test loaders take the same
+    batch_size, so its batch-protocol eval (the sensitivity row) pools the
+    membership over 128 windows where DLinear, PatchTST and TSMixer pool 512;
+    the primary fixed-membership eval does not depend on the batch.
+
     No cluster-grid entry, deliberately. CCM adds k parallel per-cluster layers,
     so cost does grow with k, but from a small base: measured backward peak at 27
     channels / L336_O96 / batch 512, k=2 -> k=9, was DLinear 1.05 -> 1.26 GiB,
     PatchTST 3.15 -> 3.19, TSMixer 1.54 -> 1.82 against a 31.3 GiB card
     (measured on the retired upstream-network implementation; the native one has
-    the same layer structure, so the shape of the growth carries over). Every
-    cluster cell therefore runs at its job config's own batch size, matching the
-    multivariate cell it is compared against, and OOM_RETRIES still covers a
-    co-tenant squeezing the card.
+    the same layer structure, so the shape of the growth carries over). So no
+    cluster cell gets a profile of its own: each runs at its multivariate
+    twin's batch size, and OOM_RETRIES still covers a co-tenant squeezing the
+    card. EMForecaster's k read-out copies (2.06M parameters each at L336_O96)
+    are not measured yet.
     """
     if model_id == "EMForecaster" and (
         seq_len >= 336 or dataset == "EMF_2023_university_5_with_PTV"

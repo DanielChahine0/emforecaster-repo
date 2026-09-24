@@ -27,9 +27,15 @@ upstream's Cluster_wise_linear.
 Where the clustering enters each model (mirroring where upstream's own wrappers
 put Cluster_wise_linear):
 
-  DLinear   the seasonal and trend linears (the whole model).
-  PatchTST  the flatten head; the per-channel attention encoder is untouched.
-  TSMixer   the temporal MLP linears in every ResBlock, and the head.
+  DLinear       the seasonal and trend linears (the whole model).
+  PatchTST      the flatten head; the per-channel attention encoder is
+                untouched.
+  TSMixer       the temporal MLP linears in every ResBlock, and the head.
+  EMForecaster  the Linear read-out (base_model) every channel's flattened
+                patch embedding goes through; the patch embedding is
+                untouched. Upstream has no such model; this follows its
+                PatchTST precedent of clustering the one read-out shared
+                across channels.
 
 Repo-side adaptations, each marked ADAPTED below or at its site:
 
@@ -82,10 +88,24 @@ import contextlib
 import torch
 import torch.nn as nn
 
-# The models the cluster grid covers: exactly the ones whose implementations in
-# models/ have a per-channel temporal linear for CCM to route. get_model rejects
-# a cluster cell for any other model_id before building anything.
-CCM_MODELS = frozenset({"DLinear", "PatchTST", "TSMixer"})
+# The models a cluster cell can be built for: the ones whose implementations in
+# models/ have been given a cluster-wise form of a linear map they apply to each
+# channel on its own -- a per-channel temporal linear, or a read-out shared
+# across channels -- for CCM to route. get_model rejects a cluster cell for any
+# other model_id before building anything.
+CCM_MODELS = frozenset({"DLinear", "PatchTST", "TSMixer", "EMForecaster"})
+
+
+def no_adaptation_error(model_id):
+    """The error for a cluster cell of a model outside CCM_MODELS."""
+    return ValueError(
+        f"{model_id} has no CCM adaptation; cluster cells can be built for "
+        f"{', '.join(sorted(CCM_MODELS))}, whose linear maps applied to each "
+        f"channel on its own (a temporal linear, or a read-out shared across "
+        f"channels) have a k-copy cluster-wise form. ARIMA and Persistence "
+        f"can have none: they have no gradient path and forecast each band on "
+        f"its own, which is k = num_channels by construction."
+    )
 
 
 class CCMForecaster(nn.Module):
@@ -104,11 +124,7 @@ class CCMForecaster(nn.Module):
 
         model_id = args.exp.model_id
         if model_id not in CCM_MODELS:
-            raise ValueError(
-                f"{model_id} has no CCM adaptation. The cluster grid covers "
-                f"exactly the models whose implementations have a per-channel "
-                f"temporal linear to route: {', '.join(sorted(CCM_MODELS))}."
-            )
+            raise no_adaptation_error(model_id)
         if args.cluster.k_clusters < 1:
             raise ValueError(
                 f"cluster.k_clusters must be at least 1, got {args.cluster.k_clusters}"

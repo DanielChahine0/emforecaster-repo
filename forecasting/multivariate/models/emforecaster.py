@@ -18,6 +18,12 @@ from forecasting.multivariate.utils.utils import Transpose, Unsqueeze
 # Revin
 from forecasting.multivariate.layers.patchtst.revin import RevIN
 
+# Offset from the run seed for the private generator that draws the CCM
+# read-out's cluster copies 1..k-1 (see _init_cluster_copies). Fixed, and well
+# clear of the seed spacing: at 0 copy 1 would repeat copy 0's draw, and at 1
+# it would repeat the next seed's copy 0.
+CLUSTER_COPY_SALT = 7919
+
 class EMForecaster(nn.Module):
     def __init__(
         self,
@@ -42,6 +48,7 @@ class EMForecaster(nn.Module):
         patching_on: bool = True,
         num_patches: int = 0,
         return_head: bool = True,
+        n_clusters: Optional[int] = None,
     ) -> None:
         super(EMForecaster, self).__init__()
 
@@ -71,6 +78,10 @@ class EMForecaster(nn.Module):
             d_model (int): Dimension of the model.
             patching_on (bool): Only used for extensions of EMForecaster when patching is done externally.
             num_patches (int): Only used for extensions of EMForecaster when patching is done externally.
+            n_clusters (int): CCM cluster grid only (models/ccm.py). Replaces the
+                Linear read-out every channel shares with k cluster-wise copies
+                mixed by the soft membership that forward() then requires; the
+                patch embedding stays shared. None = off.
         """
 
         # Parameters
@@ -84,6 +95,17 @@ class EMForecaster(nn.Module):
         self.patch_dim = patch_dim
         self.patching_on = patching_on
         self.return_head = return_head
+        self.n_clusters = n_clusters
+        # Only the Linear read-out has a cluster-wise form, and routing it by the
+        # membership (one row per channel) needs the patching path, the one
+        # that still knows which rows of the folded batch are which channel.
+        if n_clusters is not None and (
+            backbone_id != "Linear" or not patching_on or not return_head
+        ):
+            raise ValueError(
+                "n_clusters only replaces the Linear read-out; cluster cells run "
+                "backbone_id='Linear' with patching_on=True and return_head=True."
+            )
 
         if self.patching_on:
             if patch_stride == -1:
@@ -140,8 +162,31 @@ class EMForecaster(nn.Module):
 
         # Weight initialization
         self.apply(lambda m: xavier_init(m, seed=seed))
+        if self.n_clusters is not None:
+            self._init_cluster_copies(seed)
 
-    def forward(self, x):
+    def _init_cluster_copies(self, seed: int) -> None:
+        """Redraw the CCM read-out's copies 1..k-1 from a private generator.
+
+        xavier_init reseeds before every module, so all k copies come out of it
+        as the same matrix: copy 0, which is exactly the multivariate read-out
+        and is kept. The rest are drawn in order from their own generator, so
+        they differ from copy 0 and from each other, copy j is the same whatever
+        k is, and the global RNG stream (every later draw: the assigner,
+        dropout) is the one the multivariate build leaves. Biases stay zero, as
+        xavier_init set them.
+        """
+        generator = torch.Generator().manual_seed(seed + CLUSTER_COPY_SALT)
+        with torch.no_grad():
+            for linear in self.base_model.linears[1:]:
+                nn.init.xavier_uniform_(linear.weight, generator=generator)
+
+    def forward(self, x, cluster_prob=None):
+        if self.n_clusters is not None and cluster_prob is None:
+            raise ValueError(
+                "This EMForecaster was built with n_clusters; forward() needs "
+                "the ClusterAssigner's membership (see models/ccm.py)."
+            )
 
         B = C = None
         if self.patching_on:
@@ -187,7 +232,12 @@ class EMForecaster(nn.Module):
             x = x + self.pos_enc  # (B*C, 1, num_patches * patch_embed_dim)
 
             # Base Model + Linear Head
-            x = self.base_model(x)  # (B*C, 1, pred_len)
+            if self.n_clusters is not None:
+                # CCM routes each channel by its own membership row, so the
+                # read-out needs the channel axis back first.
+                x = self.base_model(x.reshape(B, C, -1), cluster_prob)  # (B, C, pred_len)
+            else:
+                x = self.base_model(x)  # (B*C, 1, pred_len)
 
             # Unfold the channels back out before the per-channel RevIN denorm
             if self.patching_on:
@@ -222,6 +272,19 @@ class EMForecaster(nn.Module):
                 return_head=True,
             )
         elif self.backbone_id == "Linear":
+            if self.n_clusters is not None:
+                # Upstream's own cluster-wise layer, run verbatim from the
+                # vendored tree (lazy import so only cluster cells touch it).
+                # Its trailing device arg is unused by the released class.
+                from forecasting.multivariate.utils.ccm_upstream import Cluster_wise_linear
+
+                return Cluster_wise_linear(
+                    self.n_clusters,
+                    self.num_channels,
+                    self.num_patches * self.patch_embed_dim,
+                    self.pred_len,
+                    None,
+                )
             return nn.Linear(self.num_patches * self.patch_embed_dim, self.pred_len)
         else:
             raise ValueError(f"Invalid backbone_id: {self.backbone_id}")

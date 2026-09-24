@@ -32,6 +32,8 @@ from forecasting.multivariate.config.config import Global
 from forecasting.multivariate.exp.exp import Experiment
 from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
 from forecasting.multivariate.models.dlinear import DLinear
+from forecasting.multivariate.models.emforecaster import EMForecaster
+from forecasting.multivariate.utils import models
 from forecasting.multivariate.utils.ccm_upstream import (Cluster_assigner,
                                                          Cluster_wise_linear,
                                                          sinkhorn)
@@ -64,7 +66,52 @@ def make_args(model_id, k=K, beta=0.3):
     args.cluster.enabled = True
     args.cluster.k_clusters = k
     args.cluster.beta = beta
+    if model_id == "EMForecaster":
+        # Its production structure (rf_emf_mv/emforecaster): a TSMixer patch
+        # embedding into the Linear read-out, the layer CCM clusters.
+        args.exp.patch_model_id = "TSMixer"
+        args.exp.backbone_id = "Linear"
+        args.sl.patch_embed_dim = 16
     return args
+
+
+# The grids' production shapes: the EMF benchmark on ED2022's 27 bands, and
+# VoIP with its grid overrides.
+JOB_SHAPES = {
+    "emf": ("ED2022", 27, 336, 96, None),
+    "voip": ("VOIP_MOBILE", 6, 48, 12, grids.VOIP_OVERRIDES),
+}
+
+
+def make_job_args(model_id, k=None, shape="emf", seed=grid.SEED):
+    """The config a grid cell hands Experiment, at production size.
+
+    The model's rf_emf_mv/* job config with the cell's window, the grid's
+    overrides and, for k, the cluster switch: what run_grid sets, minus the
+    host profile. num_channels is set by hand because get_loaders infers it
+    from the data, which a build does not load.
+    """
+    dataset, num_channels, seq_len, pred_len, overrides = JOB_SHAPES[shape]
+    job = {mv_id: job for _, mv_id, job in grids.MV_MODELS}[model_id]
+    load_config, _ = grid.setup_modules("multivariate")
+    args = load_config(grid.args_path("multivariate", job))
+    args.data.dataset = dataset
+    args.data.num_channels = num_channels
+    args.data.seq_len = seq_len
+    args.data.pred_len = pred_len
+    args.exp.seed_list = [seed]
+    args.exp.seed = seed
+    if k is not None:
+        args.cluster.enabled = True
+        args.cluster.k_clusters = k
+    grid.apply_overrides(args, overrides)
+    return args
+
+
+def build(args):
+    """get_model from the RNG state Experiment.run seeds before it builds."""
+    torch.manual_seed(args.exp.seed)
+    return get_model(args)
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +247,11 @@ def test_ccm_checkpoint_round_trips_into_a_fresh_model():
         torch.testing.assert_close(model(x), fresh(x))
 
 
-def test_ccm_membership_routes_the_cluster_wise_layers():
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
+def test_ccm_membership_routes_the_cluster_wise_layers(model_id):
     # With k>1, the same input under a different membership must produce a
     # different forecast; otherwise the "clustering" is decoration.
-    model = get_model(make_args("DLinear"))
+    model = get_model(make_args(model_id))
     model.eval()
     x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
     one_hot = torch.eye(K)[torch.tensor([0] * NUM_CHANNELS)]
@@ -242,19 +290,21 @@ def test_ccm_k1_dlinear_matches_the_multivariate_implementation():
 
 
 def test_get_model_rejects_a_model_without_a_ccm_adaptation():
-    # EMForecaster (and TimesNet, since the upstream bridge left) have no
-    # per-channel temporal linear to route; building something else under their
+    # TimesNet (since the upstream bridge left) has no linear map applied to
+    # each channel on its own to route, and ARIMA and Persistence forecast each
+    # band alone with no gradient path; building something else under their
     # name would put a column in the results table that is not the method it
     # claims to be.
-    for model_id in ("EMForecaster", "TimesNet"):
+    for model_id in ("TimesNet", "ARIMA", "Persistence"):
         with pytest.raises(ValueError, match="no CCM adaptation"):
             get_model(make_args(model_id))
 
 
-def test_cluster_built_models_require_the_membership_at_forward():
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
+def test_cluster_built_models_require_the_membership_at_forward(model_id):
     # A cluster-built backbone silently run without its membership would be an
     # un-clustered model wearing the cluster cell's name.
-    model = get_model(make_args("DLinear"))
+    model = get_model(make_args(model_id))
     with pytest.raises(ValueError, match="needs the"):
         model.backbone(torch.randn(2, NUM_CHANNELS, SEQ_LEN))
 
@@ -293,16 +343,163 @@ def test_ccm_backward_reaches_the_cluster_assigner():
     assert grad is not None and grad.abs().sum() > 0
 
 
-def test_multivariate_models_are_untouched_when_clustering_is_off():
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
+def test_multivariate_models_are_untouched_when_clustering_is_off(model_id):
     # The MV and per-channel grids must keep building the exact baselines: no
     # cluster modules in the tree, and the plain forward signature still works.
-    args = make_args("DLinear")
+    args = make_args(model_id)
     args.cluster.enabled = False
     model = get_model(args)
     assert not any(isinstance(m, (Cluster_wise_linear, Cluster_assigner))
                    for m in model.modules())
     assert model(torch.randn(2, NUM_CHANNELS, SEQ_LEN)).shape == (
         2, NUM_CHANNELS, PRED_LEN)
+
+
+# ---------------------------------------------------------------------------
+# EMForecaster: CCM on the read-out its channels share
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("shape", sorted(JOB_SHAPES))
+def test_ccm_k1_emforecaster_is_the_multivariate_build(shape):
+    """k=1 is the multivariate cell bit for bit, with no weights copied over:
+    its one read-out copy is drawn as the multivariate read-out, and the all-
+    ones membership passes the forecast through unchanged."""
+    mv = build(make_job_args("EMForecaster", shape=shape))
+    ccm = build(make_job_args("EMForecaster", k=1, shape=shape))
+    assert isinstance(ccm.backbone, EMForecaster)
+
+    want = mv.state_dict()
+    got = {name.replace("base_model.linears.0.", "base_model."): tensor
+           for name, tensor in ccm.backbone.state_dict().items()}
+    assert list(got) == list(want)
+    for name, tensor in want.items():
+        assert torch.equal(got[name], tensor), name
+
+    _, num_channels, seq_len, _, _ = JOB_SHAPES[shape]
+    x = torch.randn(3, num_channels, seq_len)
+    mv.eval()
+    ccm.eval()
+    with torch.no_grad():
+        assert torch.equal(ccm(x), mv(x))
+
+
+def test_emforecaster_backbone_init_is_the_multivariate_build_at_every_k(
+        monkeypatch):
+    """Clustering the read-out moves nothing else. At every k the rest of the
+    network is the multivariate init, and the build leaves the global RNG where
+    the multivariate build does, so the assigner and dropout draw the same
+    stream. Copy 0 of the read-out is the multivariate one; the others are
+    distinct draws, and copy j is the same whatever k is."""
+    # The backbone exactly as get_model builds it, before the wrapper's
+    # assigner draws from the RNG.
+    monkeypatch.setattr(models, "CCMForecaster", lambda args, backbone: backbone)
+    mv = build(make_job_args("EMForecaster"))
+    mv_rng = torch.get_rng_state()
+    want = mv.state_dict()
+    del mv
+
+    reference = None
+    for k in (9, 5, 3, 2, 1):
+        backbone = build(make_job_args("EMForecaster", k=k))
+        assert torch.equal(torch.get_rng_state(), mv_rng), k
+
+        state = backbone.state_dict()
+        copies = {f"base_model.linears.{i}.{p}" for i in range(k)
+                  for p in ("weight", "bias")}
+        assert set(state) == set(want) - {"base_model.weight",
+                                          "base_model.bias"} | copies
+        for name, tensor in want.items():
+            if not name.startswith("base_model."):
+                assert torch.equal(state[name], tensor), (k, name)
+
+        linears = backbone.base_model.linears
+        assert torch.equal(linears[0].weight, want["base_model.weight"])
+        assert all(torch.equal(linear.bias, want["base_model.bias"])
+                   for linear in linears)
+        for i in range(k):
+            assert not any(torch.equal(linears[i].weight, linears[j].weight)
+                           for j in range(i)), (k, i)
+        if reference is None:
+            reference = [linear.weight for linear in linears]
+        for i in range(k):
+            assert torch.equal(linears[i].weight, reference[i]), (k, i)
+
+
+def test_emforecaster_routes_each_channel_by_its_own_membership_row():
+    """Channel c's read-out is its own mixture, sum_j p[c, j] * copy_j(h[b, c]),
+    so moving one channel's membership row moves that channel's forecast and no
+    other's. A uniform membership, or one shared by every channel, would pass
+    with the rows misaligned."""
+    model = get_model(make_args("EMForecaster"))
+    model.eval()
+    linears = model.backbone.base_model.linears
+    with torch.no_grad():
+        # xavier_init leaves the biases at zero; nonzero ones check their
+        # mixture too.
+        for linear in linears:
+            linear.bias.normal_()
+    seen = {}
+    model.backbone.base_model.register_forward_hook(
+        lambda module, inputs, out: seen.update(h=inputs[0], out=out))
+
+    x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
+    prob = torch.softmax(3 * torch.randn(NUM_CHANNELS, K), dim=-1)
+    moved = prob.clone()
+    moved[2] = torch.eye(K)[prob[2].argmin()]
+    with torch.no_grad():
+        out = model.backbone(x, cluster_prob=prob)
+        want = sum(prob[:, j, None] * linears[j](seen["h"]) for j in range(K))
+        torch.testing.assert_close(seen["out"], want)
+        out_moved = model.backbone(x, cluster_prob=moved)
+    assert [c for c in range(NUM_CHANNELS)
+            if not torch.equal(out_moved[:, c], out[:, c])] == [2]
+
+
+# Each cluster beyond the first adds one more copy of the read-out,
+# Linear(num_patches x patch_embed_dim -> pred_len): 84 x 256 -> 96, 2,064,480
+# parameters, on EMF; 12 x 256 -> 12, 36,876, on VoIP. Any k adds the
+# assigner's Linear(seq_len -> sl.d_model=128): 43,136 on EMF, 6,272 on VoIP.
+@pytest.mark.parametrize("shape, k, expected", [
+    ("emf", None, 2_416_959), ("emf", 1, 2_460_095), ("emf", 2, 4_524_575),
+    ("emf", 3, 6_589_055), ("emf", 5, 10_718_015), ("emf", 9, 18_975_935),
+    ("voip", None, 315_441), ("voip", 1, 321_713), ("voip", 2, 358_589),
+    ("voip", 3, 395_465), ("voip", 6, 506_093),
+])
+def test_emforecaster_parameter_counts_at_production_size(shape, k, expected):
+    model = build(make_job_args("EMForecaster", k=k, shape=shape))
+    assert sum(p.numel() for p in model.parameters()) == expected
+
+
+def test_emforecaster_clusters_only_the_patching_linear_read_out():
+    # Any other structure either has no Linear read-out to swap or has lost the
+    # channel axis the membership indexes; it must fail at build rather than
+    # train something else under the cluster cell's name.
+    args = make_args("EMForecaster")
+    args.exp.backbone_id = "DLinear"
+    with pytest.raises(ValueError, match="Linear read-out"):
+        get_model(args)
+
+    args = make_args("EMForecaster")
+    for structure in ({"patching_on": False, "num_patches": 7},
+                      {"return_head": False}):
+        with pytest.raises(ValueError, match="Linear read-out"):
+            EMForecaster(args=args, seq_len=SEQ_LEN, pred_len=PRED_LEN,
+                         num_channels=NUM_CHANNELS, patch_model_id="TSMixer",
+                         backbone_id="Linear", patch_dim=8, patch_stride=4,
+                         patch_embed_dim=16, n_clusters=K, **structure)
+
+
+def test_cluster_emforecaster_cells_keep_the_multivariate_micro_batches():
+    # The memory profile is keyed on the model, so a cluster EMForecaster cell
+    # trains 128 x 4 like the multivariate cell it is compared against.
+    for dataset in ("ED2022", "UH2022", "EMF_2023_university_5_with_PTV"):
+        for k in (None, 1, 9):
+            ablation = grid.cell_ablation("EMForecaster", dataset, 336, 96, 0.1,
+                                          grid.SEED, k=k)
+            assert (ablation["global.sl.batch_size"],
+                    ablation["global.sl.accum_steps"]) == (128, 4), (dataset, k)
 
 
 # ---------------------------------------------------------------------------
@@ -487,10 +684,10 @@ def test_fixed_evaluation_refuses_a_forward_handle_on_another_model():
 E2E_CASES = {"mv": None, "k1": 1, "k3": 3}
 
 
-def _run_voip_cell(k, logs_root):
+def _run_voip_cell(k, logs_root, job="rf_emf_mv/dlinear", settings=None):
     setup = "voip_cluster" if k else "voip"
     load_config, Experiment = grid.setup_modules(setup)
-    args = load_config(grid.args_path(setup, "rf_emf_mv/dlinear"))
+    args = load_config(grid.args_path(setup, job))
     # What run_grid sets for a cell, minus the host profile.
     args.data.dataset = "VOIP_MOBILE"
     args.data.seq_len = 48
@@ -509,6 +706,8 @@ def _run_voip_cell(k, logs_root):
     args.sl.epochs = 2
     args.data.num_workers = 0
     args.data.pin_memory = False
+    # The test's own settings, last so they win.
+    grid.apply_overrides(args, settings)
 
     # Experiment writes under ./logs. One thread: on a shared many-core box the
     # default thread count makes this tiny model ~20x slower.
@@ -603,6 +802,26 @@ def test_k3_run_calibrates_the_fixed_intervals_under_the_fixed_membership(
     for key in ("uncorrected", "corrected"):
         torch.testing.assert_close(run_scores[key], fixed[key])
         assert not torch.allclose(run_scores[key], batch[key])
+
+
+def test_cluster_emforecaster_trains_on_accumulated_micro_batches(tmp_path):
+    """A cluster EMForecaster cell trains and scores end to end through
+    Experiment.run under gradient accumulation, as its EMF cells do (128 x 4):
+    every micro-batch forward computes its own membership and similarity loss.
+    Scaled down (16 x 4, a narrower patch embedding, one epoch) to run on CPU
+    in seconds."""
+    log, checkpoint, exp = _run_voip_cell(
+        2, tmp_path, job="rf_emf_mv/emforecaster",
+        settings={"sl.batch_size": 16, "sl.accum_steps": 4, "sl.epochs": 1,
+                  "sl.patch_embed_dim": 32, "tsmixer.d_model": 32})
+    assert isinstance(exp.model.backbone, EMForecaster)
+    assert (exp.args.sl.batch_size, exp.args.sl.accum_steps) == (16, 4)
+    # At least two optimizer steps of four micro-batches each.
+    assert len(exp.train_loader) >= 2 * 4
+    for key in ("sl_train/loss", "sl_train/similarity_loss", "sl_val/loss",
+                "sl_test/mse", "sl_test_fixed/mse", grid.MARKER):
+        assert torch.isfinite(torch.tensor(log[key])).all(), key
+    assert checkpoint["fixed_prob"].shape == (6, 2)
 
 
 def test_non_cluster_run_is_untouched_by_the_fixed_protocol(voip_runs):
@@ -717,9 +936,12 @@ def test_kmeans_cluster_fields_are_gone():
 # ---------------------------------------------------------------------------
 
 
-def test_cluster_models_are_exactly_the_natively_adapted_three():
+def test_cluster_models_all_have_a_ccm_adaptation():
+    # get_model can build a cluster cell for more models than the grid sweeps
+    # yet; the reverse would be a grid cell that fails at build.
     ids = {model_id for _, model_id, _ in grids.CLUSTER_MODELS}
-    assert ids == set(CCM_MODELS)
+    assert ids <= set(CCM_MODELS)
+    # And the sweep itself, so a model joins or leaves it only on purpose.
     assert ids == {"DLinear", "PatchTST", "TSMixer"}
 
 

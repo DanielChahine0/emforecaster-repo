@@ -24,7 +24,8 @@ from forecasting.multivariate.models.tsmixer import TSMixer
 from forecasting.multivariate.models.emforecaster import EMForecaster
 from forecasting.multivariate.models.arima import ARIMAForecaster
 from forecasting.multivariate.models.persistence import Persistence
-from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
+from forecasting.multivariate.models.ccm import (CCM_MODELS, CCMForecaster,
+                                                 no_adaptation_error)
 
 # Unsupervised models
 from tslearn.neighbors import KNeighborsTimeSeriesClassifier
@@ -44,22 +45,17 @@ from forecasting import hardware
 
 def get_model(args, generator=torch.Generator()):
     # The cluster grid runs the SAME constructors below with n_clusters set --
-    # the model's per-channel temporal linears become upstream's own
-    # Cluster_wise_linear, imported verbatim from the vendored
-    # TimeSeriesCCM-main/ tree -- and wraps the result in CCMForecaster
-    # (forecasting/multivariate/models/ccm.py), which drives upstream's
-    # Cluster_assigner and owns the similarity loss. Everything else about the
-    # run -- data, optimizer, conformal recalibration, logging -- is unchanged,
-    # so a cluster cell differs from its multivariate counterpart only in the
-    # clustering module.
+    # the model's per-channel temporal linears (EMForecaster: the read-out its
+    # channels share) become upstream's own Cluster_wise_linear, imported
+    # verbatim from the vendored TimeSeriesCCM-main/ tree -- and wraps the
+    # result in CCMForecaster (forecasting/multivariate/models/ccm.py), which
+    # drives upstream's Cluster_assigner and owns the similarity loss.
+    # Everything else about the run -- data, optimizer, conformal
+    # recalibration, logging -- is unchanged, so a cluster cell differs from
+    # its multivariate counterpart only in the clustering module.
     n_clusters = args.cluster.k_clusters if args.cluster.enabled else None
     if n_clusters is not None and args.exp.model_id not in CCM_MODELS:
-        raise ValueError(
-            f"{args.exp.model_id} has no CCM adaptation. The cluster grid "
-            f"covers exactly the models whose implementations have a "
-            f"per-channel temporal linear to route: "
-            f"{', '.join(sorted(CCM_MODELS))}."
-        )
+        raise no_adaptation_error(args.exp.model_id)
 
     if args.exp.model_id == "PatchTST":
         model = PatchTST(
@@ -150,6 +146,7 @@ def get_model(args, generator=torch.Generator()):
             patch_embed_dim=args.sl.patch_embed_dim,
             independent_patching=args.sl.independent_patching,
             pos_enc=args.sl.pos_enc,
+            n_clusters=n_clusters,
         )
 
     elif args.exp.model_id == "ModernTCN":

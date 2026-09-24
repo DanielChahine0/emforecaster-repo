@@ -85,13 +85,15 @@ UNIVARIATE_MODELS = MV_MODELS
 # 2026-08-25 they are threaded through THIS REPO'S OWN model implementations --
 # a cluster cell is the multivariate cell's exact network, same job config and
 # init, with its per-channel temporal linears swapped for upstream's
-# Cluster_wise_linear -- so a model is in this grid iff its implementation in
-# models/ has a per-channel temporal linear for CCM to route. That is exactly
-# these three, and all three are in MV_MODELS, so every cluster cell has
-# same-window multivariate and per-channel baselines beside it.
+# Cluster_wise_linear -- so a model can be in this grid only if get_model can
+# build it that way (ccm.CCM_MODELS). This sweep runs three of them, each with a
+# per-channel temporal linear for CCM to route, and all three are in MV_MODELS,
+# so every cluster cell has same-window multivariate and per-channel baselines
+# beside it.
 #
-# EMForecaster, Transformer, LSTM and ARIMA lack that per-channel structure (or,
-# for ARIMA, any gradient path) and are out; get_model raises on them instead of
+# EMForecaster can be built as a cluster cell as well -- CCM on the read-out its
+# channels share (models/ccm.py) -- but is not in this sweep yet. The
+# Transformer, LSTM and ARIMA are out; get_model raises on them instead of
 # silently building something else.
 #
 # History, for reading old results: until 2026-08-25 this grid ran the paper's
