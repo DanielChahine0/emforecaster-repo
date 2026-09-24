@@ -101,6 +101,11 @@ def parse_value(text: str) -> float:
     Durations come back in seconds. ``-`` (not logged) becomes NaN.
     """
     text = clean_cell(text)
+    # A timing table prints TIME_FLAG after a time another user's GPU process
+    # may have inflated: still the logged time (tables_contended keeps the
+    # flag). A cell still training, "(n=...)", stays NaN (reconcile's
+    # training_cells reads those).
+    text = re.sub(r"\s*‡$", "", text)
     if not text or text in {"-", "--", "n/a", "N/A"}:
         return float("nan")
     if is_duration(text):
@@ -161,21 +166,28 @@ SECTION_ALIASES = {
 # put the cluster count on the x-axis instead of the model generation.
 CLUSTER_SECTION = "Cluster (k-Grouped Channels)"
 
-# A per-channel "Training time" record is the sum over the cell's bands
-# (emfres.records.PER_CHANNEL_SUM), each band's time contended by the bands
-# that trained beside it. Every panel, axis and note says so.
+# A per-channel "Training time" record read from the frames is the sum over
+# the cell's bands (emfres.records.PER_CHANNEL_SUM), each band's time
+# contended by the bands that trained beside it. Read from a tables.md
+# (--source tables) it is what the per-channel section prints: one band's
+# time, the mean over the bands. Every panel, axis and note says which.
 PER_CHANNEL_SECTION = SECTION_ALIASES["perchannel"]
 PER_CHANNEL_TIME_NOTE = ("per-channel time = the sum of the band trainings, each band "
                          "trained alongside others (contended)")
+PER_BAND_TIME_NOTE = ("per-channel time = one band's training (the mean over the bands), "
+                      "each band trained alongside others (contended)")
 
 # A time point whose cell had a run overlap another user's process on the
 # GPU (emfres.records.contended_cells, specs/contention.yaml).
 TIME_FLAG = "‡"
 
 
-def time_title(section: str) -> str:
-    """The time panel's title: a per-channel time is the sum over its bands."""
-    return "Training time, Σ bands" if section == PER_CHANNEL_SECTION else "Training time"
+def time_title(section: str, summed: bool = True) -> str:
+    """The time panel's title: a per-channel time is the sum over its bands
+    (``summed``, the frames) or one band's (a tables.md)."""
+    if section != PER_CHANNEL_SECTION:
+        return "Training time"
+    return "Training time, Σ bands" if summed else "Training time, per band"
 
 
 def flagged_models(records, section: str, grid: str | None, contended: dict | None) -> list:
@@ -192,13 +204,14 @@ def flagged_models(records, section: str, grid: str | None, contended: dict | No
 
 
 def time_notes(records, section: str, grid: str | None, contended: dict | None,
-               marked: bool = False) -> list:
+               marked: bool = False, summed: bool = True) -> list:
     """The caveats a section's time panels carry, [] when they need none.
 
     ``marked``: the figure labels the flagged models with TIME_FLAG (the
-    trade-off view), so the note leads with it.
+    trade-off view), so the note leads with it. ``summed``: as time_title.
     """
-    notes = [PER_CHANNEL_TIME_NOTE] if section == PER_CHANNEL_SECTION else []
+    notes = ([PER_CHANNEL_TIME_NOTE if summed else PER_BAND_TIME_NOTE]
+             if section == PER_CHANNEL_SECTION else [])
     flagged = flagged_models(records, section, grid, contended)
     if flagged:
         notes.append(f"{TIME_FLAG + ' ' if marked else ''}another user's process was on "
@@ -213,7 +226,22 @@ CLUSTER_DEFAULT_DATASET = "ED2022"
 
 def parse_tables(path: Path) -> list[Record]:
     """Walk ``tables.md`` and pull out every (section, metric, dataset, model) cell."""
-    records: list[Record] = []
+    return [record for record, _ in _table_cells(path)]
+
+
+def tables_contended(path: Path) -> dict:
+    """{section: {(dataset, model, k)}} of the times a tables.md printed with
+    TIME_FLAG, keyed as parse_tables' records: what
+    emfres.records.contended_cells gives the frames path."""
+    out: dict = {}
+    for r, raw in _table_cells(path):
+        if r.metric == "Training time" and raw.rstrip().endswith(TIME_FLAG):
+            out.setdefault(r.section, set()).add((r.dataset, r.model, r.cluster))
+    return out
+
+
+def _table_cells(path: Path):
+    """(Record, the cell as printed) for every cell parse_tables reads."""
     section = ""
     header: list[str] | None = None
     metric: str | None = None
@@ -264,7 +292,7 @@ def parse_tables(path: Path) -> list[Record]:
         for col, (model, cell) in enumerate(
             zip(header[first_model:], cells[first_model:])
         ):
-            records.append(
+            yield (
                 Record(
                     section=section,
                     metric=metric,
@@ -275,10 +303,9 @@ def parse_tables(path: Path) -> list[Record]:
                     model_order=(model_rank(model), col),
                     value=parse_value(cell),
                     cluster=cluster,
-                )
+                ),
+                cell,
             )
-
-    return records
 
 
 # --------------------------------------------------------------------------- #
@@ -449,13 +476,16 @@ def build_figures(
     title_text: str | None,
     subtitle_text: str | None,
     contended: dict | None = None,
+    summed: bool = True,
 ) -> list[Path]:
+    """``summed``: the records sum a per-channel time over its bands (the
+    frames); False for records read from a tables.md, one band's time."""
     panels: list[Panel] = []
     context = None  # the sole dataset of a cluster study, surfaced in subtitles
     baselines: dict[str, list] = {}  # panel key -> no-clustering value per series
     for key, _, long_title, is_time in METRICS:
         if is_time:
-            long_title = time_title(section)
+            long_title = time_title(section, summed)
         if split == "cluster":  # lines = (dataset, model) pairs, columns = k
             ks, pairs, kvalues, configs = aggregate_clusters(records, section, key, grid)
             if not ks:
@@ -562,7 +592,7 @@ def build_figures(
         text.set_color(INK_PRIMARY)
 
     add_x_label(fig, axes, style, x_title)
-    notes = (time_notes(records, section, grid, contended)
+    notes = (time_notes(records, section, grid, contended, summed=summed)
              if any(p.is_time for p in panels) else [])
     if notes:
         footnote(fig, " · ".join(notes), style, y=0.012)
@@ -823,7 +853,9 @@ def build_tradeoff_figures(
     title_text: str | None,
     subtitle_text: str | None,
     contended: dict | None = None,
+    summed: bool = True,
 ) -> list[Path]:
+    """``summed``: as build_figures."""
     panels = []
     for key, _, long_title, is_time in METRICS:
         if is_time:
@@ -851,8 +883,9 @@ def build_tradeoff_figures(
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
     fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
              ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
-    add_x_label(fig, axes, style, f"{time_title(section)} ({TIME_UNIT_ABBREV.get(unit, unit)})")
-    notes = time_notes(records, section, grid, contended, marked=True)
+    add_x_label(fig, axes, style,
+                f"{time_title(section, summed)} ({TIME_UNIT_ABBREV.get(unit, unit)})")
+    notes = time_notes(records, section, grid, contended, marked=True, summed=summed)
     if notes:
         footnote(fig, " · ".join(notes), style, y=0.012)
     directory, base = artifact_path(outdir, "tradeoff", group=group,
@@ -868,7 +901,7 @@ def build_tradeoff_figures(
             ax, key, long_title, subtitle_text or grid_line(configs), points, style
         )
         add_x_label(fig, [ax], style,
-                    f"{time_title(section)} ({TIME_UNIT_ABBREV.get(unit, unit)})")
+                    f"{time_title(section, summed)} ({TIME_UNIT_ABBREV.get(unit, unit)})")
         for i, text in enumerate(reversed(notes)):
             footnote(fig, text, style,
                      y=0.012 + i * style.footnote * 1.4 / 72 / style.single_size[1])
@@ -941,7 +974,9 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             parser.error(str(exc))
 
-    contended: dict = {}
+    # The frames sum a per-channel time over its bands; a tables.md prints
+    # one band's (time_title).
+    summed = args.source == "frames"
     if args.source == "frames":
         from emfres.records import contended_cells, records_from_cells
         records = records_from_cells(args.frames, here)
@@ -949,6 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         where = args.frames
     else:
         records = parse_tables(args.tables)
+        contended = tables_contended(args.tables)
         where = args.tables
     if not records:
         parser.error(f"no metric records found in {where}")
@@ -1020,6 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
                 title_text=args.title,
                 subtitle_text=args.subtitle,
                 contended=contended,
+                summed=summed,
             ):
                 print(f"  wrote {path}")
         if args.section in ("all", "multivariate", "perchannel"):
@@ -1052,6 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
             title_text=args.title,
             subtitle_text=args.subtitle,
             contended=contended,
+            summed=summed,
         ):
             print(f"  wrote {path}")
 
@@ -1085,6 +1123,7 @@ def main(argv: list[str] | None = None) -> int:
             title_text=args.title,
             subtitle_text=args.subtitle,
             contended=contended,
+            summed=summed,
         ):
             print(f"  wrote {path}")
 

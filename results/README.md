@@ -467,7 +467,10 @@ docstring has the full rules.
   differ. A per-channel time is labelled per band and contended in its own
   section, and summed over the bands (the strategy's cost) in the cross
   tables and the legacy figures (`plot_metrics.py`: "Training time, Σ
-  bands"), contended there too. A timing table's pooled "Mean epoch cost"
+  bands"), contended there too. Read from a tables.md instead (`--source
+  tables`), the legacy figures get the section's per-band time and title it
+  "Training time, per band"; a time printed with ‡ still counts, and is
+  flagged. A timing table's pooled "Mean epoch cost"
   row that pools a cell still training prints `(n=c/C cells)`.
 - **The per-setup and cross tables lead with the fixed protocol too.** The
   Cluster section prints `sl_test_fixed/*` in its accuracy and conformal

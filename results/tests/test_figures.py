@@ -357,6 +357,82 @@ def test_the_legacy_figures_sum_a_per_channel_time_over_its_bands(tmp_path):
     assert not any(pm.PER_CHANNEL_SECTION in d and "Training time" in d for d in diffs)
 
 
+LEGACY_TABLES = """\
+# Univariate (Per Channel)
+
+### 2.1 · Total training time (`parameters/running_time`)
+
+| Dataset | $L$ | $O$ | EMForecaster (2025) | DLinear (2023) |
+|:---|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 1m 0s ‡ | **50s** |
+
+# Cluster (k-Grouped Channels)
+
+### 2.1 · Total training time (`parameters/running_time`)
+
+| Dataset | $L$ | $O$ | $k$ | EMForecaster (2025) | LSTM (1997) |
+|:---|---:|---:|---:|---:|---:|
+| ED2022 | 336 | 96 | 9 | 16m 29s (n=1) ‡ | **1m 53s** ‡ |
+"""
+
+
+def test_the_tables_path_reads_a_flagged_time_and_titles_a_per_channel_time_per_band(
+        tmp_path, monkeypatch):
+    """--source tables: a time printed with ‡ is still its time, and flagged; a
+    cell still training stays NaN; the per-channel section prints one band's
+    time, so the figures title and note it per band, not as a sum."""
+    import math
+    from pathlib import Path
+
+    import plot_metrics as pm
+    from emfres.records import contended_cells
+
+    md = tmp_path / "tables.md"
+    md.write_text(LEGACY_TABLES)
+    got = {(r.section.split()[0], r.model.split()[0], r.cluster): r.value
+           for r in pm.parse_tables(md)}
+    assert got[("Univariate", "EMForecaster", None)] == 60
+    assert got[("Univariate", "DLinear", None)] == 50
+    assert got[("Cluster", "LSTM", 9)] == 113
+    assert math.isnan(got[("Cluster", "EMForecaster", 9)])
+    flagged = pm.tables_contended(md)
+    assert flagged == {
+        pm.PER_CHANNEL_SECTION: {("ED2022", "EMForecaster (2025)", None)},
+        pm.CLUSTER_SECTION: {("ED2022", "EMForecaster (2025)", 9),
+                             ("ED2022", "LSTM (1997)", 9)}}
+
+    assert pm.time_title(pm.PER_CHANNEL_SECTION, summed=False) == "Training time, per band"
+    assert pm.time_title("Multivariate", summed=False) == "Training time"
+    records = pm.parse_tables(md)
+    notes = pm.time_notes(records, pm.PER_CHANNEL_SECTION, "336/96", flagged, summed=False)
+    assert notes[0] == pm.PER_BAND_TIME_NOTE and "EMForecaster" in notes[1]
+
+    # main hands each source's reading to the builders.
+    seen = []
+
+    def capture(*args, **kwargs):
+        seen.append((kwargs.get("summed"), kwargs.get("contended")))
+        return []
+
+    for name in ("build_figures", "build_tradeoff_figures"):
+        monkeypatch.setattr(pm, name, capture)
+    monkeypatch.setattr(pm, "build_overlay_figure", lambda *a, **k: [])
+    args = ["--section", "perchannel", "--outdir", str(tmp_path / "out")]
+    assert pm.main(["--source", "tables", "--tables", str(md)] + args) == 0
+    assert seen and all(s == (False, flagged) for s in seen)
+
+    base = {f: "" for f in frames.CELL_FIELDS}
+    cells = tmp_path / "cells.csv"
+    frames.write_csv(cells, [dict(base, setup="perchannel", family="emf",
+                                  model="EMForecaster", dataset="ed2022", seq_len=336,
+                                  pred_len=96, conf=1, mse="0.5", mae="0.4",
+                                  running_time="60", n_channels="27", n_foreign="8")],
+                     frames.CELL_FIELDS)
+    seen.clear()
+    assert pm.main(["--frames", str(cells)] + args) == 0
+    assert seen and all(s == (True, contended_cells(cells)) for s in seen)
+
+
 def test_p7_counts_and_notes_a_cost_another_users_gpu_process_may_have_inflated(
         tmp_path, monkeypatch):
     import csv
