@@ -115,6 +115,7 @@ def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
             n_seeds=len(seeds) or None,
             seeds=tuple(sorted(seeds)),
             n_complete_seeds=len(complete_seeds(by_seed)),
+            n_foreign=sum(1 for r in rs if r.foreign_overlap),
         )
     return cells
 
@@ -195,6 +196,26 @@ def shortfall(cell: Optional[Cell], key: tuple, targets: Optional[dict]) -> str:
 SHORT_NOTE = ("`(n=…)` = a cell with fewer complete seeds than the other cells of its "
               "dataset and window, still training: its mean is over the runs that "
               "finished, and it is never ranked, marked or averaged with complete cells.")
+
+# The timed columns. A cell whose runs overlapped another user's process on
+# the GPU (Cell.n_foreign, from specs/contention.yaml) carries FOREIGN_MARK
+# there and is not ranked: its time may be inflated. Its accuracy is not
+# marked -- sharing a GPU changes scheduling, not arithmetic.
+TIME_ATTRS = ("running_time", "per_epoch")
+FOREIGN_MARK = " ‡"
+FOREIGN_NOTE = ("‡ = a cell with a run that trained while another user's process was on "
+                "the GPU (`specs/contention.yaml`): its time may be inflated, so it is "
+                "not ranked. Its accuracy is unaffected.")
+
+
+def foreign_mark(cell: Optional[Cell]) -> str:
+    """FOREIGN_MARK for a cell with a foreign-contended run, else ''."""
+    return FOREIGN_MARK if cell is not None and getattr(cell, "n_foreign", 0) else ""
+
+
+def any_foreign(cells) -> bool:
+    """Whether any of these cells has a foreign-contended run."""
+    return any(getattr(c, "n_foreign", 0) for c in cells if c is not None)
 
 
 def diagnose(runs: list[Run], cells: dict[tuple, Cell]) -> None:
@@ -319,11 +340,15 @@ def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool,
         vals = [getattr(cells.get(key), attr, None) for key in keys]
         notes = [shortfall(cells.get(key), key, targets) if v is not None else ""
                  for key, v in zip(keys, vals)]
+        if attr in TIME_ATTRS:
+            notes = [note + (foreign_mark(cells.get(key)) if v is not None else "")
+                     for key, v, note in zip(keys, vals, notes)]
         strs = [fmt(v) + note for v, note in zip(vals, notes)]
         if mark_best:
             # Ranked within one k: the models of a cluster row compete at the same
             # cluster count, not against the other k's of the same window. A
-            # cell still training is not ranked against finished ones.
+            # cell still training is not ranked against finished ones, nor a
+            # time another user's GPU process may have inflated.
             mark_ranks(strs, [None if note else v for v, note in zip(vals, notes)])
         head = [dataset_label(ds), str(sl), str(pl)]
         if show_k:
@@ -393,12 +418,14 @@ def epoch_summary_table(runs, models, conf, cells: Optional[dict] = None,
         mine = [r for r in runs
                 if r.model == m and r.k == k and r.conf == conf and r.per_epoch is not None]
         if mine:
+            foreign = sum(1 for r in mine if r.foreign_overlap)
             rows.append((variant_label(m, k), statistics.mean(r.per_epoch for r in mine),
-                         len(mine), pooled_shortfall(mine, cells, targets)))
+                         f"{len(mine)}" + (f" ({foreign}{FOREIGN_MARK})" if foreign else ""),
+                         pooled_shortfall(mine, cells, targets)))
     table = md_table(
         ["Model", "Mean / epoch", "Estimation for 100 ep", "Runs"],
         "lrrr",
-        [[label, format_seconds_fine(mean) + note, f"~{format_seconds(mean * 100)}", str(n)]
+        [[label, format_seconds_fine(mean) + note, f"~{format_seconds(mean * 100)}", n]
          for label, mean, n, note in sorted(rows, key=lambda r: r[1])],
     )
     return table, any(note for *_, note in rows)
@@ -576,9 +603,11 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
                                    targets=targets))
 
         doc.group("Training cost" + suffix)
+        foreign = any_foreign(c for key, c in cells.items() if key[4] == conf)
         doc.para("**Bold** = fastest in the row, <u>underline</u> = runner-up."
                  + (f" `{MISSING}` = not logged (ARIMA is not gradient-trained)."
-                    if "ARIMA" in models else "") + per_band_note(runs) + legend)
+                    if "ARIMA" in models else "") + per_band_note(runs) + legend
+                 + (f" {FOREIGN_NOTE}" if foreign else ""))
         doc.table("Total training time (`parameters/running_time`)",
                   metric_table(cells, models, row_keys, conf, "running_time", format_seconds,
                                targets=targets))
@@ -588,7 +617,10 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
         epochs, pooled_short = epoch_summary_table(runs, models, conf, cells, targets)
         doc.table("Mean epoch cost by model", epochs,
                   note="Pooled over every run of that model in this section."
-                       + (f" {POOLED_SHORT_NOTE}" if pooled_short else ""))
+                       + (f" {POOLED_SHORT_NOTE}" if pooled_short else "")
+                       + (f" `(m{FOREIGN_MARK})` after the runs: m of them trained while "
+                          f"another user's process was on the GPU, so the mean may be "
+                          f"inflated." if foreign else ""))
 
         if conf:
             doc.group("Conformal prediction")
@@ -790,13 +822,15 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
 
         doc.group(f"Training cost ({pair})")
         conc = (concurrency or {}).get(label)
+        foreign = any_foreign(side.get(key) for key in keys for side in (mv, uv))
         doc.para(f"`{right}` is the mean cost of one channel's model; `all channels` multiplies it "
                  f"by the channel count. Δ compares that total against {left}."
                  + (f" The {right.lower()} runs trained alongside other bands ({conc}), "
-                    f"the {left.lower()} ones alone, so their times are contended and Δ is not a "
-                    f"like-for-like cost; `frames/timing.csv` holds the uncontended "
-                    f"estimate where the solo timing pass measured one (EMF, L336/O96)."
-                    if conc else ""))
+                    f"the {left.lower()} ones one run at a time, so their times are contended "
+                    f"and Δ is not a like-for-like cost; `frames/timing.csv` holds the "
+                    f"uncontended estimate where the solo timing pass measured one (EMF, "
+                    f"L336/O96)." if conc else "")
+                 + (f" {FOREIGN_NOTE}" if foreign else ""))
         rows = []
         for key in keys:
             a = getattr(mv.get(key), "running_time", None)
@@ -805,9 +839,11 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
             total = b * chans if b is not None and chans else None
             sd = fmt_delta((total - a) / a * 100, 1, "%") if a and total is not None else MISSING
             model, ds, sl, pl = key[0], key[1], key[2], key[3]
-            rows.append([dataset_label(ds), str(sl), str(pl), model, format_seconds(a),
-                         format_seconds(b), str(chans) if chans else MISSING,
-                         format_seconds(total), sd])
+            ma = foreign_mark(mv.get(key)) if a is not None else ""
+            mb = foreign_mark(uv.get(key)) if b is not None else ""
+            rows.append([dataset_label(ds), str(sl), str(pl), model, format_seconds(a) + ma,
+                         format_seconds(b) + mb, str(chans) if chans else MISSING,
+                         format_seconds(total) + mb, sd])
         doc.table("Total training time (`parameters/running_time`)",
                   md_table(["Dataset", "$L$", "$O$", "Model", left, right,
                             "Channels", "All channels", "Δ"], "lrrlrrrrr", rows))
@@ -888,10 +924,14 @@ def ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt,
             keys = [(m, ds, sl, pl, conf, p.k) for m in models]
             notes = [shortfall(p.cells.get(key), key, targets) if v is not None else ""
                      for key, v in zip(keys, vals)]
+            if attr in TIME_ATTRS:
+                notes = [note + (foreign_mark(p.cells.get(key)) if v is not None else "")
+                         for key, v, note in zip(keys, vals, notes)]
             strs = [fmt(v) + note for v, note in zip(vals, notes)]
             # Ranked across the row, i.e. model vs model under one strategy; the
             # strategies are compared by reading down a dataset block instead.
-            # A cell still training is not ranked against finished ones.
+            # A cell still training is not ranked against finished ones, nor a
+            # time another user's GPU process may have inflated.
             mark_ranks(strs, [None if note else v for v, note in zip(vals, notes)])
             rows.append([dataset_label(ds), p.label] + strs)
     return rows
@@ -1006,6 +1046,10 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
                                "running_time", format_seconds, targets)
         if table:
             chans = channel_counts(pipelines, datasets, sl, pl, conf)
+            foreign = any_foreign(cell for p in pipelines for key, cell in p.cells.items()
+                                  if key[2] == sl and key[3] == pl and key[4] == conf
+                                  and key[5] == p.k and key[0] in models
+                                  and key[1] in datasets)
             doc.table("Total training time (`parameters/running_time`)", table,
                       note=f"Cost of the whole strategy, so the per-channel row is the mean "
                            f"single-channel run times the channel count"
@@ -1013,9 +1057,10 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
                            f"model's training run, averaged over seeds. ARIMA is not gradient-trained and "
                            f"logs no time."
                            + (f" The per-channel bands trained alongside each other "
-                              f"({pc_concurrency}), every other row alone, so the "
-                              f"per-channel row is a contended time."
-                              if pc_concurrency else ""))
+                              f"({pc_concurrency}), every other row one run at a time, so "
+                              f"the per-channel row is a contended time."
+                              if pc_concurrency else "")
+                           + (f" {FOREIGN_NOTE}" if foreign else ""))
 
         for name, key, attr, fmt in accuracy if batch else []:
             table = ultimate_table(batch, models, datasets, sl, pl, conf, attr, fmt, targets)
@@ -1509,12 +1554,17 @@ def main() -> None:
         if not logs_roots:
             parser.error(f"no subdirectories found under {DEFAULT_LOGS_DIR}")
 
+    # The foreign GPU windows `make.py extract` reads too, so the timing tables
+    # mark the same cells on this path (emfres/contention.py).
+    from emfres.contention import load as load_contention
+    contention = load_contention(Path(__file__).resolve().parent / "specs" / "contention.yaml")
+
     loaded: list[tuple[str, list[Run], dict[tuple, Cell]]] = []
     for logs_root in logs_roots:
         if not logs_root.is_dir():
             parser.error(f"--logs-root {logs_root} is not a directory")
 
-        runs = load_runs(logs_root, args.exclude)
+        runs = load_runs(logs_root, args.exclude, contention=contention)
         if not runs:
             if len(logs_roots) == 1:
                 parser.error(f"no usable log.json files found under {logs_root}")

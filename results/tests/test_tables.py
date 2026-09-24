@@ -193,6 +193,33 @@ def test_the_pooled_epoch_table_marks_a_row_that_pools_a_cell_still_training():
                                                         er.aggregate(mv), targets=targets)
 
 
+def test_a_time_another_users_gpu_process_may_have_inflated_is_marked_not_ranked():
+    from dataclasses import replace
+
+    er, mv, cl = _trees()
+    # DLinear's k=2 seeds overlapped another user's process; its time is the
+    # fastest in the row, its accuracy untouched.
+    cl = [replace(r, running_time=30.0, per_epoch=0.5, foreign_overlap=0.4, contended="foreign")
+          if (r.model, r.k) == ("DLinear", 2) else r for r in cl]
+    cl += [_er_run("TSMixer", s, 0.6, k=2) for s in SEEDS]
+    cells = er.aggregate(cl)
+    targets = er.seed_targets(er.aggregate(mv), cells)
+    assert cells[("DLinear", "ed2022", 336, 96, True, 2)].n_foreign == 3
+    md = er.render_report(er.CLUSTER_TITLE, cl, cells, targets=targets)
+    tabs = _section_tables(md)
+    time = next(rows for head, rows in tabs.items() if head.startswith("Total training time"))
+    k2 = next(r for r in time if r[3] == "2")
+    assert k2[4] == "30s ‡" and k2[5] == "**1m 0s**"         # marked, the other ranked
+    mse = next(rows for head, rows in tabs.items() if head.startswith("MSE"))
+    assert "‡" not in " ".join(" ".join(r) for r in mse)
+    assert er.FOREIGN_NOTE in md
+    epochs = next(rows for head, rows in tabs.items() if head.startswith("Mean epoch"))
+    assert next(r for r in epochs if "(k=2)" in r[0] and "DLinear" in r[0])[3] == "3 (3 ‡)"
+    # The multivariate tree trained with nobody else on the card: no mark, no note.
+    plain = er.render_report(er.MULTIVARIATE_TITLE, mv, er.aggregate(mv), targets=targets)
+    assert "‡" not in plain
+
+
 def _fixed(run, mse_fixed, *, source="sidecar"):
     """A cluster run with fixed-membership metrics (MAE at the same 0.7 ratio)."""
     from dataclasses import replace
@@ -389,6 +416,35 @@ def test_the_ultimate_table_does_not_rank_a_cell_still_training():
     md = er.render_ultimate(er.ULTIMATE_TITLE, pipes)
     row = next(line for line in md.splitlines() if "| Cluster (k=1) |" in line)
     assert "| **0.5020** | 0.3000 (n=1) |" in row
+
+
+def test_the_ultimate_and_mv_vs_univariate_time_tables_mark_a_foreign_contended_cell():
+    from dataclasses import replace
+
+    er, mv, cl = _trees()
+    cl = [replace(r, foreign_overlap=1.0, contended="foreign") if (r.model, r.k) == ("DLinear", 1)
+          else r for r in cl]
+    pipes = er.build_pipelines({er.MULTIVARIATE_TITLE: er.aggregate(mv),
+                                er.CLUSTER_TITLE: er.aggregate(cl)})
+    md = er.render_ultimate(er.ULTIMATE_TITLE, pipes)
+    time = md[md.index("Total training time"):]
+    row = next(line for line in time.splitlines() if "| Cluster (k=1) |" in line)
+    assert "| 1m 0s ‡ |" in row and "**" not in row          # TSMixer is short, DLinear ‡
+    assert er.FOREIGN_NOTE in time
+    acc = md[:md.index("Total training time")]
+    assert "‡" not in acc
+
+    pc = [replace(_er_run("DLinear", s, 0.5, channel=ch), concurrency=8,
+                  foreign_overlap=0.2 if ch == 0 else 0.0,
+                  contended="concurrent;foreign" if ch == 0 else "concurrent")
+          for s in SEEDS for ch in (0, 1)]
+    md = er.render_comparison(er.COMPARISON_TITLE, er.MULTIVARIATE_TITLE, er.aggregate(mv),
+                              [(er.PER_CHANNEL_TITLE, er.aggregate(pc))],
+                              concurrency={er.PER_CHANNEL_TITLE: er.concurrency_text(pc)})
+    row = next(line for line in md[md.index("Total training time"):].splitlines()
+               if "| DLinear" in line)
+    assert row.count("‡") == 2                                  # per band and all channels
+    assert er.FOREIGN_NOTE in md and "ones one run at a time" in md
 
 
 def test_the_ultimate_tables_cluster_rows_are_fixed_the_batch_ones_after_the_time():

@@ -179,6 +179,9 @@ class Cell:
     # other cells is still training (extract_results.shortfall).
     seeds: tuple = ()
     n_complete_seeds: Optional[int] = None
+    # Runs of the cell whose training overlapped another user's GPU process
+    # (Run.foreign_overlap > 0): its time may be inflated.
+    n_foreign: int = 0
 
 
 def excluded(log_path: Path, exclude: list[str]) -> bool:
