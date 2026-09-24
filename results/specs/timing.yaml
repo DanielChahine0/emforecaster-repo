@@ -1,0 +1,102 @@
+# The solo per-channel timing pass: what a per-channel band costs to train
+# when it has the GPU to itself.
+#
+# Why it exists. The per-channel grid trains a dozen bands at once
+# (parameters/exp/concurrency 8 or 12), so a band's logged running_time is a
+# contended time: per epoch, 0.9x to 9.1x its solo time across the measured
+# bands, and 1.0x to 7.8x on average over a cell's (EMForecaster and the
+# Transformer the most). The multivariate and cluster grids train one run at a
+# time, so their running_time needs no correction.
+#
+# What was measured. On 2026-09-22 three bands of every per-channel
+# (model, dataset) cell at L336/O96 -- the first, middle and last band -- were
+# retrained at seed 69422, one at a time, from an isolated worktree at 8bccefb7
+# (training code 21e1374ddc2c, the code of the published runs), with a GPU
+# poller confirming no other process was on the card (foreign processes: none
+# in all 54). Each solo band is paired with its published seed-69422 twin,
+# which trained the same band 12 at a time. 39 of the 54 reproduce their twin
+# exactly (same epochs, same sl_test/loss; `reproduced` below); the other 15
+# are eight of the nine LSTM bands (at most 1.2e-4 relative in test loss) and
+# seven of the nine Transformer bands, two of which (ED2022 ch26, EMF2023
+# ch14) stopped at a different epoch. Cost is therefore compared per epoch,
+# never per run.
+#
+# Where it came from. The raw pass lives in .personal/timing/ (results.jsonl,
+# the solo run dirs, timing_pass.py and timing_analyze.py), which is
+# git-ignored; the table below copies from it, per band, the solo run's
+# epochs and parameters/total_training_seconds and its twin's, so the frames
+# never read .personal/. The model and dataset spellings are runs.csv's.
+#
+# How it is used. `make.py extract` writes frames/timing.csv from this block
+# and runs.csv (frames.build_timing): for every complete per-channel seed of a
+# measured cell, the seed's epochs summed over every band times the cell's solo
+# seconds per epoch (sum of seconds over sum of epochs of its measured bands),
+# bracketed by its fastest and slowest measured band, next to the logged
+# contended sum and the multivariate run of the same seed. Epochs come from the
+# live logs, so a band that is retrained (the 16 EMForecaster seed-69421 bands
+# of 2026-09-24) moves its seed's estimate with it. There is no VoIP pass: its
+# per-epoch per-channel/multivariate ratios (0.61-1.03) show no measurable
+# contention (.personal/AUDIT_2026-09-24.md, finding V7).
+solo_pass:
+  date: 2026-09-22
+  commit: 8bccefb7a7dc17036ff15aab3004d992d001004c
+  code_version: 21e1374ddc2c
+  seed: 69422
+  seq_len: 336
+  pred_len: 96
+  twin_concurrency: 12
+  bands:
+    - {model: DLinear, dataset: ed2022, channel: 0, epochs: 100, seconds: 27.364144, twin_epochs: 100, twin_seconds: 35.191736, reproduced: true}
+    - {model: DLinear, dataset: ed2022, channel: 13, epochs: 100, seconds: 27.513460, twin_epochs: 100, twin_seconds: 37.195639, reproduced: true}
+    - {model: DLinear, dataset: ed2022, channel: 26, epochs: 100, seconds: 27.502300, twin_epochs: 100, twin_seconds: 34.005465, reproduced: true}
+    - {model: DLinear, dataset: uh2022, channel: 0, epochs: 100, seconds: 29.277104, twin_epochs: 100, twin_seconds: 41.300217, reproduced: true}
+    - {model: DLinear, dataset: uh2022, channel: 13, epochs: 100, seconds: 29.437592, twin_epochs: 100, twin_seconds: 37.034359, reproduced: true}
+    - {model: DLinear, dataset: uh2022, channel: 26, epochs: 100, seconds: 29.104585, twin_epochs: 100, twin_seconds: 32.613463, reproduced: true}
+    - {model: DLinear, dataset: emf_2023_university_5_with_ptv, channel: 0, epochs: 100, seconds: 34.712327, twin_epochs: 100, twin_seconds: 50.073324, reproduced: true}
+    - {model: DLinear, dataset: emf_2023_university_5_with_ptv, channel: 14, epochs: 100, seconds: 34.689163, twin_epochs: 100, twin_seconds: 42.470562, reproduced: true}
+    - {model: DLinear, dataset: emf_2023_university_5_with_ptv, channel: 28, epochs: 32, seconds: 11.377146, twin_epochs: 32, twin_seconds: 13.019062, reproduced: true}
+    - {model: PatchTST, dataset: ed2022, channel: 0, epochs: 100, seconds: 43.097342, twin_epochs: 100, twin_seconds: 99.409790, reproduced: true}
+    - {model: PatchTST, dataset: ed2022, channel: 13, epochs: 100, seconds: 42.572135, twin_epochs: 100, twin_seconds: 107.539763, reproduced: true}
+    - {model: PatchTST, dataset: ed2022, channel: 26, epochs: 98, seconds: 42.042640, twin_epochs: 98, twin_seconds: 93.172393, reproduced: true}
+    - {model: PatchTST, dataset: uh2022, channel: 0, epochs: 79, seconds: 39.332894, twin_epochs: 79, twin_seconds: 95.586257, reproduced: true}
+    - {model: PatchTST, dataset: uh2022, channel: 13, epochs: 100, seconds: 48.798529, twin_epochs: 100, twin_seconds: 119.649359, reproduced: true}
+    - {model: PatchTST, dataset: uh2022, channel: 26, epochs: 100, seconds: 47.456610, twin_epochs: 100, twin_seconds: 126.102899, reproduced: true}
+    - {model: PatchTST, dataset: emf_2023_university_5_with_ptv, channel: 0, epochs: 62, seconds: 42.084529, twin_epochs: 62, twin_seconds: 140.617637, reproduced: true}
+    - {model: PatchTST, dataset: emf_2023_university_5_with_ptv, channel: 14, epochs: 46, seconds: 31.330836, twin_epochs: 46, twin_seconds: 103.940708, reproduced: true}
+    - {model: PatchTST, dataset: emf_2023_university_5_with_ptv, channel: 28, epochs: 100, seconds: 66.469826, twin_epochs: 100, twin_seconds: 193.801842, reproduced: true}
+    - {model: TSMixer, dataset: ed2022, channel: 0, epochs: 100, seconds: 31.664947, twin_epochs: 100, twin_seconds: 41.875741, reproduced: true}
+    - {model: TSMixer, dataset: ed2022, channel: 13, epochs: 100, seconds: 31.508788, twin_epochs: 100, twin_seconds: 31.515047, reproduced: true}
+    - {model: TSMixer, dataset: ed2022, channel: 26, epochs: 100, seconds: 31.371479, twin_epochs: 100, twin_seconds: 28.016717, reproduced: true}
+    - {model: TSMixer, dataset: uh2022, channel: 0, epochs: 100, seconds: 33.778668, twin_epochs: 100, twin_seconds: 33.546973, reproduced: true}
+    - {model: TSMixer, dataset: uh2022, channel: 13, epochs: 100, seconds: 33.106303, twin_epochs: 100, twin_seconds: 33.584936, reproduced: true}
+    - {model: TSMixer, dataset: uh2022, channel: 26, epochs: 100, seconds: 33.612816, twin_epochs: 100, twin_seconds: 37.378245, reproduced: true}
+    - {model: TSMixer, dataset: emf_2023_university_5_with_ptv, channel: 0, epochs: 100, seconds: 41.182894, twin_epochs: 100, twin_seconds: 59.699477, reproduced: true}
+    - {model: TSMixer, dataset: emf_2023_university_5_with_ptv, channel: 14, epochs: 100, seconds: 41.715871, twin_epochs: 100, twin_seconds: 63.508711, reproduced: true}
+    - {model: TSMixer, dataset: emf_2023_university_5_with_ptv, channel: 28, epochs: 100, seconds: 41.554295, twin_epochs: 100, twin_seconds: 133.122443, reproduced: true}
+    - {model: RF_EMF_Transformer, dataset: ed2022, channel: 0, epochs: 24, seconds: 31.224025, twin_epochs: 24, twin_seconds: 137.742529, reproduced: false}
+    - {model: RF_EMF_Transformer, dataset: ed2022, channel: 13, epochs: 22, seconds: 28.041580, twin_epochs: 22, twin_seconds: 198.681993, reproduced: false}
+    - {model: RF_EMF_Transformer, dataset: ed2022, channel: 26, epochs: 22, seconds: 28.073645, twin_epochs: 39, twin_seconds: 352.484988, reproduced: false}
+    - {model: RF_EMF_Transformer, dataset: uh2022, channel: 0, epochs: 24, seconds: 37.287491, twin_epochs: 24, twin_seconds: 273.657309, reproduced: false}
+    - {model: RF_EMF_Transformer, dataset: uh2022, channel: 13, epochs: 26, seconds: 40.305950, twin_epochs: 26, twin_seconds: 302.485245, reproduced: true}
+    - {model: RF_EMF_Transformer, dataset: uh2022, channel: 26, epochs: 22, seconds: 34.248293, twin_epochs: 22, twin_seconds: 251.225587, reproduced: false}
+    - {model: RF_EMF_Transformer, dataset: emf_2023_university_5_with_ptv, channel: 0, epochs: 21, seconds: 54.466730, twin_epochs: 21, twin_seconds: 435.307834, reproduced: true}
+    - {model: RF_EMF_Transformer, dataset: emf_2023_university_5_with_ptv, channel: 14, epochs: 53, seconds: 136.990771, twin_epochs: 22, twin_seconds: 466.760517, reproduced: false}
+    - {model: RF_EMF_Transformer, dataset: emf_2023_university_5_with_ptv, channel: 28, epochs: 21, seconds: 54.468593, twin_epochs: 21, twin_seconds: 394.730907, reproduced: false}
+    - {model: EMForecaster, dataset: ed2022, channel: 0, epochs: 43, seconds: 25.493034, twin_epochs: 43, twin_seconds: 232.353934, reproduced: true}
+    - {model: EMForecaster, dataset: ed2022, channel: 13, epochs: 51, seconds: 31.772458, twin_epochs: 51, twin_seconds: 200.016900, reproduced: true}
+    - {model: EMForecaster, dataset: ed2022, channel: 26, epochs: 56, seconds: 34.083406, twin_epochs: 56, twin_seconds: 191.332813, reproduced: true}
+    - {model: EMForecaster, dataset: uh2022, channel: 0, epochs: 40, seconds: 28.326138, twin_epochs: 40, twin_seconds: 176.635695, reproduced: true}
+    - {model: EMForecaster, dataset: uh2022, channel: 13, epochs: 53, seconds: 37.128253, twin_epochs: 53, twin_seconds: 234.506299, reproduced: true}
+    - {model: EMForecaster, dataset: uh2022, channel: 26, epochs: 100, seconds: 73.524719, twin_epochs: 100, twin_seconds: 437.343968, reproduced: true}
+    - {model: EMForecaster, dataset: emf_2023_university_5_with_ptv, channel: 0, epochs: 48, seconds: 54.466918, twin_epochs: 48, twin_seconds: 382.825043, reproduced: true}
+    - {model: EMForecaster, dataset: emf_2023_university_5_with_ptv, channel: 14, epochs: 52, seconds: 59.545332, twin_epochs: 52, twin_seconds: 415.619591, reproduced: true}
+    - {model: EMForecaster, dataset: emf_2023_university_5_with_ptv, channel: 28, epochs: 44, seconds: 48.623185, twin_epochs: 44, twin_seconds: 215.147914, reproduced: true}
+    - {model: LSTM, dataset: ed2022, channel: 0, epochs: 100, seconds: 34.220978, twin_epochs: 100, twin_seconds: 56.976574, reproduced: false}
+    - {model: LSTM, dataset: ed2022, channel: 13, epochs: 100, seconds: 34.407983, twin_epochs: 100, twin_seconds: 43.682771, reproduced: false}
+    - {model: LSTM, dataset: ed2022, channel: 26, epochs: 100, seconds: 34.279668, twin_epochs: 100, twin_seconds: 35.875111, reproduced: false}
+    - {model: LSTM, dataset: uh2022, channel: 0, epochs: 100, seconds: 36.741031, twin_epochs: 100, twin_seconds: 42.136176, reproduced: false}
+    - {model: LSTM, dataset: uh2022, channel: 13, epochs: 100, seconds: 36.660154, twin_epochs: 100, twin_seconds: 40.534057, reproduced: false}
+    - {model: LSTM, dataset: uh2022, channel: 26, epochs: 100, seconds: 36.233586, twin_epochs: 100, twin_seconds: 41.990306, reproduced: false}
+    - {model: LSTM, dataset: emf_2023_university_5_with_ptv, channel: 0, epochs: 100, seconds: 46.503052, twin_epochs: 100, twin_seconds: 73.020873, reproduced: false}
+    - {model: LSTM, dataset: emf_2023_university_5_with_ptv, channel: 14, epochs: 100, seconds: 50.656621, twin_epochs: 100, twin_seconds: 75.460697, reproduced: false}
+    - {model: LSTM, dataset: emf_2023_university_5_with_ptv, channel: 28, epochs: 100, seconds: 48.242533, twin_epochs: 100, twin_seconds: 54.638782, reproduced: true}

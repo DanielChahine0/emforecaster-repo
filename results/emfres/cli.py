@@ -66,6 +66,19 @@ def spec_equivalent() -> list[dict]:
     return [r for r in rules if valid_equivalence(r)]
 
 
+def spec_timing() -> dict:
+    """The solo per-channel timing pass, from specs/timing.yaml ({} if absent)."""
+    path = SPECS / "timing.yaml"
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+        return (yaml.safe_load(path.read_text()) or {}).get("solo_pass") or {}
+    except Exception as exc:
+        print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
+        return {}
+
+
 def cmd_extract(args) -> int:
     logs = args.logs or LOGS
     if not logs.is_dir():
@@ -79,12 +92,16 @@ def cmd_extract(args) -> int:
             print(f"specs/runs.yaml excludes: {', '.join(spec)}", file=sys.stderr)
         exclude += spec
 
-    runs = frames.build_runs(logs, REPO, exclude, inferred=spec_inferred(),
-                             attested=spec_attested(), equivalent=spec_equivalent())
+    loaded = frames.load_all(logs, exclude, inferred=spec_inferred(),
+                             attested=spec_attested())
+    runs = frames.build_runs(logs, REPO, exclude, equivalent=spec_equivalent(),
+                             loaded=loaded)
     if not runs:
         print(f"no usable log.json under {logs}", file=sys.stderr)
         return 1
     cells = frames.build_cells(runs)
+    bands = frames.build_bands(loaded)
+    timing = frames.build_timing(runs, spec_timing())
 
     # Contract C1 (.personal/PLAN.md): a comparison is only as good as the
     # code behind it. Say how many runs predate provenance stamping and
@@ -150,7 +167,8 @@ def cmd_extract(args) -> int:
               f"than 1e-3 (relative) from their batch MSE, e.g. {off[0]['path']}",
               file=sys.stderr)
 
-    counts = {"runs": len(runs), "cells": len(cells)}
+    counts = {"runs": len(runs), "cells": len(cells), "bands": len(bands),
+              "timing": len(timing)}
     per_setup = {}
     for r in runs:
         per_setup[r["setup"]] = per_setup.get(r["setup"], 0) + 1
@@ -164,6 +182,8 @@ def cmd_extract(args) -> int:
 
     frames.write_csv(FRAMES / "runs.csv", runs, frames.RUN_FIELDS)
     frames.write_csv(FRAMES / "cells.csv", cells, frames.CELL_FIELDS)
+    frames.write_csv(FRAMES / "bands.csv", bands, frames.BAND_FIELDS)
+    frames.write_csv(FRAMES / "timing.csv", timing, frames.TIMING_FIELDS)
 
     if args.epochs:
         epochs = frames.build_epochs(logs, REPO, exclude)
@@ -172,9 +192,11 @@ def cmd_extract(args) -> int:
 
     frames.write_manifest(FRAMES / "MANIFEST.json", REPO, runs, counts, exclude)
 
-    rel = FRAMES.relative_to(REPO)
+    rel = FRAMES.relative_to(REPO) if FRAMES.is_relative_to(REPO) else FRAMES
     print(f"wrote {rel}/runs.csv    {len(runs)} runs")
     print(f"wrote {rel}/cells.csv   {len(cells)} cells")
+    print(f"wrote {rel}/bands.csv   {len(bands)} run x band rows")
+    print(f"wrote {rel}/timing.csv  {len(timing)} per-channel seeds")
     if args.epochs:
         print(f"wrote {rel}/epochs.csv  {counts['epochs']} rows")
     print(f"wrote {rel}/MANIFEST.json")

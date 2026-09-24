@@ -36,6 +36,8 @@ are exactly the ones the runs were scored on.
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -54,6 +56,40 @@ LOADER_NAME = {
 }
 
 _CACHE: dict = {}
+
+_REPO = Path(__file__).resolve().parents[2]
+_NAMES: dict = {}
+
+
+def band_names(dataset: str) -> Optional[list]:
+    """The dataset's channel labels in the loader's channel order, or None.
+
+    The header of data/multivariate/processed/<name>.csv without the columns
+    load_forecasting drops: Timestamp, the EMF_* aggregates and the broadband
+    PTV on the EMF corpus (labels are the band frequency in MHz), Timestamp
+    and Trace on VoIP (the signal names). Only the header is read. Channel i
+    of a joint run's sl_test/mse_per_channel and the per-channel run ch<i> are
+    both column i of this list (tests/test_frames.py holds it to the loader's
+    channel count).
+    """
+    name = LOADER_NAME.get(str(dataset).lower())
+    if name is None:
+        return None
+    if name not in _NAMES:
+        path = _REPO / "data" / "multivariate" / "processed" / f"{name}.csv"
+        try:
+            with open(path, newline="") as f:
+                header = next(csv.reader(f))
+        except (OSError, StopIteration):
+            _NAMES[name] = None
+        else:
+            if name.startswith("VOIP_"):
+                keep = [c for c in header if c not in {"Timestamp", "Trace"}]
+            else:
+                keep = [c for c in header
+                        if c != "Timestamp" and not c.startswith("EMF_") and c != "PTV"]
+            _NAMES[name] = keep
+    return _NAMES[name]
 
 
 def lookback_mean_mse(dataset: str, seq_len: int, pred_len: int,

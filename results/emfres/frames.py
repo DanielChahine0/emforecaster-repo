@@ -137,7 +137,7 @@ RUN_FIELDS = [
     # repeating each window's lookback mean on the same windows, and the run's
     # skill over it (1 - mse / lookback_mse).
     "lookback_mse", "skill",
-    "running_time", "per_epoch", "num_params",
+    "running_time", "per_epoch", "epochs", "num_params",
     "ic", "jc", "interval_width",
     # Cluster runs only: the same metrics under the fixed train-mean membership
     # (the primary cluster protocol; mse, mae, val_loss, ic, jc and
@@ -181,6 +181,40 @@ CELL_FIELDS = [
     # unless code_equivalents, the same under the equivalent_code rules,
     # shows one.
     "code_versions", "code_equivalents",
+]
+
+# One row per (run, band): the per-band test error behind every joint and
+# per-channel cell. A joint (multivariate or cluster) run contributes one row
+# per entry of its sl_test/mse_per_channel, a per-channel run its one band.
+# channel is the loader's channel index in both, which is the same column of
+# the same file (per-channel runs select it with data.target_channel), and
+# band is that column's header: the frequency in MHz on the EMF corpus, the
+# signal name on VoIP. Joint runs log no per-band MAE, so mae is blank there;
+# mse_fixed is the fixed-membership twin on cluster rows (fixed_source as in
+# runs.csv). lookback_mse is the band's lookback-mean baseline on the same
+# windows. The series tree is one aggregate series, not bands, and has no rows.
+BAND_FIELDS = [
+    "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "seed",
+    "conf", "channel", "band", "mse", "mae", "mse_fixed", "fixed_source",
+    "lookback_mse",
+]
+
+# Uncontended per-channel training cost, one row per complete per-channel seed
+# of a (model, dataset, window) the solo timing pass measured
+# (specs/timing.yaml). The per-channel grid trains a dozen bands at once, so
+# its logged running_time is a contended per-band time; the solo pass retrained
+# three bands of every cell alone, and a seed's uncontended cost is estimated
+# as its total epochs over every band times the solo seconds per epoch
+# (solo_total), bracketed by the fastest and slowest measured band
+# (solo_lo / solo_hi). contended_total is the logged sum over bands, at the
+# concurrency the bands logged ("?" for bands logged before it was stamped),
+# and mv_running_time the multivariate run of the same seed (trained alone,
+# like every non-per-channel grid).
+TIMING_FIELDS = [
+    "family", "model", "dataset", "seq_len", "pred_len", "seed", "n_bands",
+    "epochs", "solo_bands", "solo_per_epoch", "solo_total", "solo_lo", "solo_hi",
+    "contention_mean", "contended_total", "concurrency", "mv_running_time",
+    "solo_x_mv", "contended_x_mv",
 ]
 
 EPOCH_FIELDS = ["setup", "model", "dataset", "seq_len", "pred_len", "k",
@@ -246,6 +280,7 @@ def _row(run: Run, setup: str, repo: Path,
         "skill": skill_value,
         "running_time": _num(run.running_time),
         "per_epoch": _num(run.per_epoch),
+        "epochs": "" if run.epochs is None else run.epochs,
         "num_params": "" if run.num_params is None else run.num_params,
         "ic": _num(run.ic),
         "jc": _num(run.jc),
@@ -273,27 +308,41 @@ def _num(v: Optional[float]) -> str:
     return "" if v is None else repr(float(v))
 
 
+def load_all(logs_dir: Path, exclude: list[str],
+             inferred: Optional[list[dict]] = None,
+             attested: Optional[list[dict]] = None) -> list[tuple[str, Run]]:
+    """(setup, Run) for every finished log.json under ``logs_dir``.
+
+    Read once and shared by build_runs and build_bands, so the two frames
+    describe exactly the same set of runs.
+    """
+    out = []
+    for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
+        if is_archive(sub):
+            continue
+        setup = setup_of(sub)
+        out += [(setup, run) for run in load_runs(sub, exclude, setup=setup,
+                                                  inferred=inferred, attested=attested)]
+    return out
+
+
 def build_runs(logs_dir: Path, repo: Path, exclude: list[str],
                inferred: Optional[list[dict]] = None,
                attested: Optional[list[dict]] = None,
-               equivalent: Optional[list[dict]] = None) -> list[dict]:
+               equivalent: Optional[list[dict]] = None,
+               loaded: Optional[list[tuple[str, Run]]] = None) -> list[dict]:
     """One row per log.json across every setup under ``logs_dir``.
 
     ``inferred``, ``attested`` and ``equivalent`` are the rule lists from
     specs/provenance.yaml: the first dates runs logged before provenance
     stamping, the second resolves runs stamped on a dirty tree (see
     runlogs.infer_commit / attest_commit), the third counts one training-code
-    version as another (runlogs.equivalent_code).
+    version as another (runlogs.equivalent_code). ``loaded`` is load_all's
+    result, when the caller already has it.
     """
-    rows = []
-    for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
-        if is_archive(sub):
-            continue
-        setup = setup_of(sub)
-        for run in load_runs(sub, exclude, setup=setup, inferred=inferred,
-                             attested=attested):
-            rows.append(_row(run, setup, repo, equivalent))
-    return rows
+    if loaded is None:
+        loaded = load_all(logs_dir, exclude, inferred, attested)
+    return [_row(run, setup, repo, equivalent) for setup, run in loaded]
 
 
 def build_epochs(logs_dir: Path, repo: Path, exclude: list[str]) -> list[dict]:
@@ -428,6 +477,131 @@ def build_cells(runs: list[dict]) -> list[dict]:
             "code_equivalents": ";".join(sorted({r.get("code_equivalent", r["code_version"])
                                                  or "?" for r in rs})),
         })
+    return out
+
+
+def band_rows(setup: str, run: Run, names: Optional[list],
+              lookback: Optional[list]) -> list[dict]:
+    """bands.csv rows of one run (see BAND_FIELDS).
+
+    ``names`` are the dataset's band labels and ``lookback`` its per-band
+    lookback-mean MSE on the run's windows, each in channel order (None when
+    unknown). A joint run's per-band vector must have one entry per band.
+    """
+    base = {
+        "setup": setup, "family": family_of(run.dataset), "model": run.model,
+        "dataset": run.dataset, "seq_len": run.seq_len, "pred_len": run.pred_len,
+        "k": "" if run.k is None else run.k, "seed": run.seed or "",
+        "conf": int(run.conf), "fixed_source": run.fixed_source,
+    }
+
+    def one(channel: int, mse, mae, mse_fixed) -> dict:
+        row = {**base, "channel": channel,
+               "band": names[channel] if names and channel < len(names) else "",
+               "mse": _num(mse), "mae": _num(mae), "mse_fixed": _num(mse_fixed),
+               "lookback_mse": (_num(float(lookback[channel]))
+                                if lookback is not None and channel < len(lookback)
+                                else "")}
+        return {f: row[f] for f in BAND_FIELDS}
+
+    if run.channel is not None:
+        return [one(run.channel, run.mse, run.mae, None)]
+    per = run.mse_per_channel or []
+    if names and per and len(per) != len(names):
+        raise ValueError(f"{run.path}: {len(per)} per-channel MSEs for "
+                         f"{len(names)} bands of {run.dataset}")
+    fixed = run.mse_per_channel_fixed
+    if fixed is not None and len(fixed) != len(per):
+        raise ValueError(f"{run.path}: {len(fixed)} fixed per-channel MSEs "
+                         f"for {len(per)} batch ones")
+    return [one(i, v, None, fixed[i] if fixed is not None else None)
+            for i, v in enumerate(per)]
+
+
+def build_bands(loaded: list[tuple[str, Run]]) -> list[dict]:
+    """One row per (run, band) over the joint-channel corpora (BAND_FIELDS).
+
+    Only datasets with named bands take part (baselines.band_names): the
+    series tree's det/ptv/ptv2 are single aggregate series.
+    """
+    from .baselines import band_names, lookback_mean_mse
+
+    rows = []
+    for setup, run in loaded:
+        names = band_names(run.dataset)
+        if names is None:
+            continue
+        lookback = None
+        if run.train_split is not None and run.val_split is not None:
+            lookback = lookback_mean_mse(run.dataset, run.seq_len, run.pred_len,
+                                         run.train_split, run.val_split)
+        rows += band_rows(setup, run, names, lookback)
+    rows.sort(key=lambda r: (r["setup"], r["model"], r["dataset"], r["seq_len"],
+                             r["pred_len"], -1 if r["k"] == "" else r["k"],
+                             r["seed"], r["channel"]))
+    return rows
+
+
+def build_timing(runs: list[dict], solo: Optional[dict]) -> list[dict]:
+    """TIMING_FIELDS rows: the uncontended cost of each complete per-channel seed.
+
+    ``solo`` is specs/timing.yaml's ``solo_pass`` block. Only cells it
+    measured get rows, at its window, and only seeds that have every band of
+    the cell and an epoch count on each (the rule of _seed_band_means).
+    """
+    if not solo or not solo.get("bands"):
+        return []
+    seq_len, pred_len = int(solo["seq_len"]), int(solo["pred_len"])
+    measured: dict = defaultdict(list)
+    for b in solo["bands"]:
+        measured[(str(b["model"]), str(b["dataset"]))].append(b)
+
+    pc: dict = defaultdict(lambda: defaultdict(list))
+    mv: dict = {}
+    for r in runs:
+        if int(r["seq_len"]) != seq_len or int(r["pred_len"]) != pred_len:
+            continue
+        if r["setup"] == "perchannel" and r["seed"]:
+            pc[(r["model"], r["dataset"])][r["seed"]].append(r)
+        elif r["setup"] == "multivariate" and r["seed"] and r["running_time"]:
+            mv[(r["model"], r["dataset"], r["seed"])] = float(r["running_time"])
+
+    out = []
+    for (model, dataset), bands in sorted(measured.items()):
+        per_epoch = [float(b["seconds"]) / int(b["epochs"]) for b in bands]
+        pooled = (sum(float(b["seconds"]) for b in bands)
+                  / sum(int(b["epochs"]) for b in bands))
+        contention = statistics.mean(
+            (float(b["twin_seconds"]) / int(b["twin_epochs"])) / pe
+            for b, pe in zip(bands, per_epoch))
+        by_seed = pc.get((model, dataset), {})
+        union = set().union(*({r["channel"] for r in rs} for rs in by_seed.values())) \
+            if by_seed else set()
+        for seed, rs in sorted(by_seed.items()):
+            if ({r["channel"] for r in rs} != union or len(rs) != len(union)
+                    or any(not r.get("epochs") for r in rs)):
+                continue
+            epochs = sum(int(r["epochs"]) for r in rs)
+            times = [_f(r["running_time"]) for r in rs]
+            contended = sum(times) if all(t is not None for t in times) else None
+            mv_t = mv.get((model, dataset, seed))
+            total = epochs * pooled
+            out.append({
+                "family": family_of(dataset), "model": model, "dataset": dataset,
+                "seq_len": seq_len, "pred_len": pred_len, "seed": seed,
+                "n_bands": len(rs), "epochs": epochs, "solo_bands": len(bands),
+                "solo_per_epoch": _num(pooled), "solo_total": _num(total),
+                "solo_lo": _num(epochs * min(per_epoch)),
+                "solo_hi": _num(epochs * max(per_epoch)),
+                "contention_mean": _num(contention),
+                "contended_total": _num(contended),
+                # "?" for bands logged before concurrency was stamped.
+                "concurrency": ";".join(sorted({str(r["concurrency"]) or "?" for r in rs})),
+                "mv_running_time": _num(mv_t),
+                "solo_x_mv": _num(total / mv_t if mv_t else None),
+                "contended_x_mv": _num(contended / mv_t
+                                       if mv_t and contended is not None else None),
+            })
     return out
 
 

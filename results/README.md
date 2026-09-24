@@ -35,8 +35,8 @@ so extracting mid-sweep never publishes half a run.
 | Path | What lives here | Tracked |
 | :--- | :--- | :--- |
 | `emfres/` | All the code. One flat package. | yes |
-| `specs/` | Declared run exclusions and provenance rules, with the reason for each | yes |
-| `frames/` | `runs.csv`, `cells.csv`, `MANIFEST.json` — the numeric API | yes |
+| `specs/` | Declared run exclusions and provenance rules, with the reason for each; the solo timing pass | yes |
+| `frames/` | `runs.csv`, `cells.csv`, `bands.csv`, `timing.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
 | `figures/` | Every figure. 100% derived. | **no** |
@@ -170,6 +170,19 @@ reported as a `NOTE`; only a changed value is fatal.
   against a seed sd of 1.3e-4); that spread is kept as `mse_band_seed_sd` /
   `mae_band_seed_sd`. The per-channel CSV twins in `tables/csv/` publish the
   column, so they change meaning with it; no rendered table used it.
+- **`bands.csv`**: one row per run and band, over the joint-channel corpora —
+  a multivariate or cluster run's `sl_test/mse_per_channel` (and its fixed
+  twin), a per-channel run's own band. `channel` is the loader's column index,
+  the same in every paradigm; `band` is that column's header (the frequency in
+  MHz, or the VoIP signal name). Joint runs log no per-band MAE, so it is blank
+  there. `lookback_mse` is the band's lookback-mean baseline.
+- **`timing.csv`**: the uncontended cost of each complete per-channel seed at
+  L336/O96: every band's epochs (`runs.csv` now carries `epochs`) times the
+  seconds per epoch the solo timing pass of 2026-09-22 measured on three bands
+  trained alone (`specs/timing.yaml`, copied from the git-ignored
+  `.personal/timing/`), with the fastest and slowest measured band as the
+  bracket, beside the logged contended sum and the multivariate run of the same
+  seed. EMF only: VoIP had no solo pass and shows no measurable contention.
 
 ## Which runs count
 

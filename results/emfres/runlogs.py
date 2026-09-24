@@ -92,6 +92,9 @@ class Run:
     # test split (e.g. a cluster count) has to be made from. None for the
     # fit-once models, which have no epoch loop.
     val_loss: Optional[float] = None
+    # Training epochs actually run (len(sl_train/loss)); None for the fit-once
+    # models.
+    epochs: Optional[int] = None
     # sl_test/mse_per_channel: the test MSE of every channel, in the loader's
     # channel order. A per-channel run logs its one band here.
     mse_per_channel: Optional[list] = None
@@ -426,7 +429,7 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                          git_dirty=git_dirty, code_commit=code_commit,
                          train_split=d.get("parameters/data/train_split"),
                          val_split=d.get("parameters/data/val_split"),
-                         mse_per_channel=mse_per_channel,
+                         epochs=epochs, mse_per_channel=mse_per_channel,
                          fixed_source=fixed_source, **fixed))
     if incomplete:
         print(f"NOTE: skipped {len(incomplete)} unfinished run(s) under {logs_root} "
