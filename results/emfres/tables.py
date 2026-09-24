@@ -203,29 +203,34 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
         if md:
             out.append(("mv-vs-univariate", er.COMPARISON_TITLE, md))
 
+    # Both cross tables lead with the cluster tree's fixed-protocol cells, its
+    # logged batch ones their labelled sensitivity (extract_results.protocol_cells).
     cl = cells.get(er.CLUSTER_TITLE)
+    cluster_runs = by_setup.get("cluster", [])
+    pipe_cells, batch = dict(cells), None
+    if cl:
+        pipe_cells[er.CLUSTER_TITLE], batch = er.protocol_cells(cluster_runs, cl)
     if mv and cl:
-        cluster_runs = by_setup.get("cluster", [])
-        # The fixed protocol leads, the logged batch one is its sensitivity,
-        # and + CCM's k is the paradigm comparison's own validation choice
-        # under each, so no two tables name different k's for one cell.
-        primary, batch = er.protocol_cells(cluster_runs, cl)
+        # + CCM's k is the paradigm comparison's own validation choice under
+        # each protocol, so no two tables name different k's for one cell.
         choices = (validation_choices(runs_csv, family, er) if family is not None
                    else {})
         md = er.render_ccm_vs_base(
-            er.CCM_TITLE, er.canonical_cells(primary), er.canonical_cells(mv), cluster_runs,
+            er.CCM_TITLE, er.canonical_cells(pipe_cells[er.CLUSTER_TITLE]),
+            er.canonical_cells(mv), cluster_runs,
             targets=targets, choices=choices.get("fixed" if batch else "batch"),
             batch=er.canonical_cells(batch) if batch else None,
             batch_choices=choices.get("batch") if batch else None)
         if md:
             out.append(("ccm-vs-base", er.CCM_TITLE, md))
 
-    pipelines = er.build_pipelines(cells)
+    pipelines = er.build_pipelines(pipe_cells)
     if pipelines:
         pc_runs = by_setup.get("perchannel", [])
         md = er.render_ultimate(er.ULTIMATE_TITLE, pipelines,
                                 er.concurrency_text(pc_runs) if pc_runs else None,
-                                targets=targets)
+                                targets=targets,
+                                batch=er.cluster_pipelines(batch) if batch else None)
         if md:
             out.append(("pipelines", er.ULTIMATE_TITLE, md))
     return out

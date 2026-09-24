@@ -875,9 +875,16 @@ def channel_counts(pipelines, datasets, sl, pl, conf) -> str:
 
 def render_ultimate(title: str, pipelines: list[Pipeline],
                     pc_concurrency: Optional[str] = None,
-                    targets: Optional[dict] = None) -> str:
+                    targets: Optional[dict] = None,
+                    batch: Optional[list[Pipeline]] = None) -> str:
     """``pc_concurrency`` is concurrency_text of the per-channel runs;
-    ``targets`` is seed_targets over every tree (default: the pipelines')."""
+    ``targets`` is seed_targets over every tree (default: the pipelines').
+
+    ``batch`` is for cluster pipelines built from fixed_view's cells, the
+    primary protocol: the same k's under the logged batch protocol
+    (cluster_pipelines of the logged cells), printed after the time table as
+    a labelled sensitivity. Without it, the cluster rows are whatever cells
+    they were built from, and the section says they are the batch protocol."""
     sl, pl = ULTIMATE_SETTING
     axes = [(conf,) + ultimate_axes(pipelines, sl, pl, conf) for conf in (False, True)]
     axes = [a for a in axes if a[1]]
@@ -905,12 +912,22 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
                        f"cluster assigner's parameters, which is why its weight count "
                        f"exceeds `{short_label(MULTIVARIATE_TITLE)}`'s. The two agree "
                        f"within seed noise, not bit for bit (the per-seed gaps are in "
-                       f"`Channel Clustering (CCM) vs. plain`). Cluster rows are the "
-                       f"logged batch protocol; the fixed-membership numbers, the "
-                       f"primary protocol, are in `Paradigm Comparison`."
+                       f"`Channel Clustering (CCM) vs. plain`)."
                        + (" Runs made before 2026-08-25 by the upstream wrappers are in "
                           "logs/_archive and are not in these tables."
                           if any(family_of(d) == "emf" for d in axes[0][2]) else "")))
+    if any(p.k is not None for p in pipelines):
+        items.append(
+            ("Cluster protocol",
+             "the fixed train-mean membership (`sl_test_fixed/*`), the primary one: every "
+             "channel keeps the cluster weights computed once from the training split. The "
+             "cluster rows under the logged batch protocol (`sl_test/*`), which averages "
+             "the membership over each evaluation batch, follow the time table, a "
+             "sensitivity. The k chosen on validation is in `CCM vs Base (No "
+             "Clustering)`, `Channel Clustering (CCM) vs. plain` and `Paradigm Comparison`"
+             if batch else
+             "the logged batch protocol (`sl_test/*`); the fixed-membership numbers, the "
+             "primary protocol, are in `Paradigm Comparison`"))
     items.append(
         ("Conformal prediction",
          "on for every run" if [a[0] for a in axes] == [True] else
@@ -931,12 +948,14 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
                  f"(ARIMA and Persistence never are: they fit one model per band, so "
                  f"there is nothing to cluster)." + (f" {SHORT_NOTE}" if short else ""))
 
-        for name, log_key, attr, fmt in [("MSE", "sl_test/loss", "mse", num_fmt(4)),
-                                         ("MAE", "sl_test/mae", "mae", num_fmt(4))]:
+        accuracy = [("MSE", "loss", "mse", num_fmt(4)), ("MAE", "mae", "mae", num_fmt(4))]
+        for name, key, attr, fmt in accuracy:
             table = ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt,
                                    targets)
             if table:
-                doc.table(f"{name} (`{log_key}`)", table)
+                doc.table(f"{name} (`sl_test/{key}`"
+                          + (f"; cluster rows `sl_test_fixed/{key}`" if batch else "") + ")",
+                          table)
 
         table = ultimate_table(pipelines, models, datasets, sl, pl, conf,
                                "running_time", format_seconds, targets)
@@ -952,6 +971,17 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
                               f"({pc_concurrency}), every other row alone, so the "
                               f"per-channel row is a contended time."
                               if pc_concurrency else ""))
+
+        for name, key, attr, fmt in accuracy if batch else []:
+            table = ultimate_table(batch, models, datasets, sl, pl, conf, attr, fmt, targets)
+            if table:
+                doc.table(f"Batch protocol (sensitivity): {name} of the cluster rows "
+                          f"(`sl_test/{key}`)", table,
+                          note="The cluster rows above under the logged batch protocol: "
+                               "upstream's assigner averages the membership over each "
+                               "evaluation batch, so a k > 1 forecast depends on the other "
+                               "windows of its batch. Marked across the row, as above; at "
+                               "k = 1 the two protocols give the same forecast.")
 
     return doc.render()
 
@@ -1339,12 +1369,17 @@ def build_pipelines(by_title: dict[str, dict[tuple, Cell]]) -> list[Pipeline]:
         pipelines.append(Pipeline("Per-channel", canonical_cells(by_title[PER_CHANNEL_TITLE]),
                                   per_channel=True))
     if CLUSTER_TITLE in by_title:
-        cluster = canonical_cells(by_title[CLUSTER_TITLE])
-        for k in sorted({key[5] for key in cluster if key[5] is not None}):
-            pipelines.append(Pipeline(f"Cluster (k={k})", cluster, k=k))
+        pipelines += cluster_pipelines(by_title[CLUSTER_TITLE])
     if MULTIVARIATE_TITLE in by_title:
         pipelines.append(Pipeline("Multivariate", canonical_cells(by_title[MULTIVARIATE_TITLE])))
     return pipelines
+
+
+def cluster_pipelines(cells: dict[tuple, Cell]) -> list[Pipeline]:
+    """One Pipeline per k of a cluster tree's cells (raw keys), in k order."""
+    cluster = canonical_cells(cells)
+    return [Pipeline(f"Cluster (k={k})", cluster, k=k)
+            for k in sorted({key[5] for key in cluster if key[5] is not None})]
 
 
 def derive_heading(logs_root: Path) -> str:
@@ -1475,22 +1510,27 @@ def main() -> None:
             print("WARNING: no (dataset, L, O, model) cells shared between the multivariate and "
                   "univariate trees; skipping the comparison section", file=sys.stderr)
 
+    # The cross tables lead with the cluster tree's fixed-protocol cells, its
+    # logged batch ones their labelled sensitivity (protocol_cells).
     cl_cells = by_title.get(CLUSTER_TITLE)
-    if mv_cells and cl_cells:
+    pipe_cells, batch = dict(by_title), None
+    if cl_cells:
         cluster_runs = next((r for t, r, _ in loaded if t == CLUSTER_TITLE), [])
-        primary, batch = protocol_cells(cluster_runs, cl_cells)
-        ccm_section = render_ccm_vs_base(CCM_TITLE, canonical_cells(primary),
+        pipe_cells[CLUSTER_TITLE], batch = protocol_cells(cluster_runs, cl_cells)
+    if mv_cells and cl_cells:
+        ccm_section = render_ccm_vs_base(CCM_TITLE, canonical_cells(pipe_cells[CLUSTER_TITLE]),
                                          canonical_cells(mv_cells), cluster_runs,
                                          targets=targets,
                                          batch=canonical_cells(batch) if batch else None)
         if ccm_section:
             updates.append((CCM_TITLE, ccm_section))
 
-    pipelines = build_pipelines(by_title)
+    pipelines = build_pipelines(pipe_cells)
     pc_runs = next((r for t, r, _ in loaded if t == PER_CHANNEL_TITLE), [])
     ultimate = (render_ultimate(ULTIMATE_TITLE, pipelines,
                                 concurrency_text(pc_runs) if pc_runs else None,
-                                targets=targets)
+                                targets=targets,
+                                batch=cluster_pipelines(batch) if batch else None)
                 if pipelines else "")
     if ultimate:
         updates.append((ULTIMATE_TITLE, ultimate))

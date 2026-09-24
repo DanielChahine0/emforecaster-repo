@@ -305,6 +305,29 @@ def test_the_ultimate_table_does_not_rank_a_cell_still_training():
     assert "| **0.5020** | 0.3000 (n=1) |" in row
 
 
+def test_the_ultimate_tables_cluster_rows_are_fixed_the_batch_ones_after_the_time():
+    er, mv, cl = _ccm_trees()
+    cells = {er.MULTIVARIATE_TITLE: er.aggregate(mv)}
+    cells[er.CLUSTER_TITLE], batch = er.protocol_cells(cl, er.aggregate(cl))
+    md = er.render_ultimate(er.ULTIMATE_TITLE, er.build_pipelines(cells),
+                            batch=er.cluster_pipelines(batch))
+    headings = [line for line in md.splitlines() if line.startswith("### ")]
+    # 1.3 stays the time table (.personal/RESULTS.md includes pipelines.md#1.3).
+    assert [h.split(" · ", 1)[0] for h in headings] == ["### 1.1", "### 1.2", "### 1.3",
+                                                         "### 1.4", "### 1.5"]
+    assert "Total training time" in headings[2] and "Batch protocol" in headings[3]
+    t = _section_tables(md)
+    fixed = t["MSE (`sl_test/loss`; cluster rows `sl_test_fixed/loss`)"]
+    row = next(r for r in fixed if r[1] == "Cluster (k=3)")
+    assert row[2] == "**0.4520**"                                # DLinear's fixed k=3
+    assert next(r for r in fixed if r[1] == "Multivariate")[2] == "**0.5020**"
+    batch_rows = t["Batch protocol (sensitivity): MSE of the cluster rows (`sl_test/loss`)"]
+    assert [r[1] for r in batch_rows[1:]] == ["Cluster (k=1)", "Cluster (k=2)",
+                                              "Cluster (k=3)"]      # [0] is the header
+    assert next(r for r in batch_rows if r[1] == "Cluster (k=3)")[2] == "**0.4820**"
+    assert "- Cluster protocol: the fixed train-mean membership" in md
+
+
 def test_the_mv_vs_univariate_scoreboard_counts_a_short_pair_as_pending():
     import extract_results as er
     mv = [_er_run(m, s, 0.5) for s in SEEDS for m in ("DLinear", "TSMixer")]
