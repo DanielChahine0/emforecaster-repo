@@ -65,15 +65,19 @@ def test_grid_model_ids_match_job_configs():
 # All three grids run the same seven models (EMForecaster, DLinear, PatchTST,
 # TSMixer, Transformer, LSTM, ARIMA) over 3 datasets x 4 windows since
 # 2026-08-03, when PatchTST went back into the joint sweep and LSTM + ARIMA were
-# backported into the univariate package. Spelled out rather than derived from
-# len(models), so a model silently dropped from a grid fails here.
-EXPECTED_CELLS = {"multivariate": 84, "univariate": 84, "univariate_series": 84}
+# backported into the univariate package. The EMF cluster grid is the six
+# gradient-trained ones over the same 3 x 4, times its five k. Spelled out
+# rather than derived from len(models), so a model silently dropped from a grid
+# fails here. (The VoIP grids are pinned in test_voip.py.)
+EXPECTED_CELLS = {"multivariate": 84, "univariate": 84, "univariate_series": 84,
+                  "cluster": 360}
 
 
 def test_grid_cell_counts():
     for setup, expected in EXPECTED_CELLS.items():
         g = grids.GRIDS[setup]
-        n = len(g["models"]) * len(g["datasets"]) * len(g["windows"])
+        n = (len(g["models"]) * len(g["datasets"]) * len(g["windows"])
+             * len(g.get("k_values") or [None]))
         assert n == expected, f"{setup} has {n} cells, expected {expected}"
 
 

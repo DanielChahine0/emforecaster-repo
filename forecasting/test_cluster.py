@@ -1269,12 +1269,37 @@ def test_kmeans_cluster_fields_are_gone():
 
 
 def test_cluster_models_all_have_a_ccm_adaptation():
-    # get_model can build a cluster cell for more models than the grid sweeps
-    # yet; the reverse would be a grid cell that fails at build.
+    # A grid model without one would be a cell that fails at build, and an
+    # adapted model outside the grid would never be run.
     ids = {model_id for _, model_id, _ in grids.CLUSTER_MODELS}
-    assert ids <= set(CCM_MODELS)
+    assert ids == set(CCM_MODELS)
     # And the sweep itself, so a model joins or leaves it only on purpose.
-    assert ids == {"DLinear", "PatchTST", "TSMixer"}
+    assert ids == {"DLinear", "PatchTST", "TSMixer", "RF_EMF_Transformer",
+                   "EMForecaster", "LSTM"}
+
+
+# Each cluster grid beside the joint grid it is compared against.
+CLUSTER_GRIDS = [("cluster", "multivariate"), ("voip_cluster", "voip")]
+
+
+@pytest.mark.parametrize("setup, joint", CLUSTER_GRIDS)
+def test_cluster_grids_leave_out_only_the_models_ccm_cannot_build(setup, joint):
+    # Both grids carry every model of their joint grid that has a gradient
+    # path, in its order and under its job; the per-band models without one
+    # are left out because get_model refuses them, not by choice.
+    cluster = grids.GRIDS[setup]["models"]
+    models = grids.GRIDS[joint]["models"]
+    assert cluster == [m for m in models if m[1] in CCM_MODELS]
+    left_out = [model_id for _, model_id, _ in models
+                if model_id not in CCM_MODELS]
+    assert left_out == (["ARIMA"] if setup == "cluster"
+                        else ["ARIMA", "Persistence"])
+    # What --model says for one of them comes from this list.
+    assert set(left_out) <= set(grids.GRIDS[setup]["refused"])
+    assert not set(grids.CLUSTER_REFUSED) & CCM_MODELS
+    for model_id in left_out:
+        with pytest.raises(ValueError, match="no CCM adaptation"):
+            get_model(make_args(model_id))
 
 
 def test_cluster_models_all_have_multivariate_baselines():
@@ -1317,9 +1342,91 @@ def test_run_grid_dry_run_lists_all_cluster_cells(tmp_path):
     assert failed == []
 
 
+@pytest.mark.parametrize("setup, joint", CLUSTER_GRIDS)
+def test_cluster_cells_are_their_joint_twins_plus_the_cluster_switch(setup, joint):
+    # A cluster cell trains under its joint twin's settings -- batch size,
+    # EMForecaster's 128 x 4 accumulation, the grid overrides, compile off --
+    # and differs only in the switch, k and the tag that keeps each k's runs
+    # apart.
+    cluster, twin_grid = grids.GRIDS[setup], grids.GRIDS[joint]
+    for _, model_id, _ in cluster["models"]:
+        for dataset in cluster["datasets"]:
+            for seq_len, pred_len in cluster["windows"]:
+                twin = grid.cell_ablation(
+                    model_id, dataset, seq_len, pred_len, twin_grid["alpha"],
+                    grid.SEED, overrides=twin_grid.get("overrides"))
+                for k in cluster["k_values"]:
+                    cell = grid.cell_ablation(
+                        model_id, dataset, seq_len, pred_len, cluster["alpha"],
+                        grid.SEED, k=k, run_tag=f"k{k}",
+                        overrides=cluster.get("overrides"))
+                    assert cell == {**twin, "global.exp.id": f"k{k}",
+                                    "global.cluster.enabled": True,
+                                    "global.cluster.k_clusters": k}
+                    assert cell["global.exp.compile"] is False
+
+
+@pytest.mark.parametrize("backend", ["cpu", "cuda"])
+@pytest.mark.parametrize("setup", [setup for setup, _ in CLUSTER_GRIDS])
+def test_run_grid_in_process_cluster_cells_match_their_subprocess_ablation(
+        setup, backend, tmp_path, monkeypatch):
+    # run_grid's default jobs=1 path sets each cell up by hand; it has to agree
+    # with cell_ablation, what a jobs>1 subprocess gets, field for field on
+    # every cell of the sweep, or a cell's result would depend on how many
+    # jobs the sweep ran with. Under the CUDA profile too, which turns compile
+    # on for PatchTST and the Transformer: only the profile is simulated, as
+    # nothing here touches a device.
+    monkeypatch.setattr(grid.hardware, "resolve_backend", lambda: backend)
+    cluster = grids.GRIDS[setup]
+    load_config, _ = grid.setup_modules(setup)
+    seen = []
+
+    class RecordingExperiment:  # takes each cell's args, trains nothing
+        def __init__(self, args):
+            seen.append(args)
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(grid, "setup_modules",
+                        lambda s: (load_config, RecordingExperiment))
+    # Per-cell hygiene (gc, a dynamo reset) that sets no config field and would
+    # cost a minute over 360 cells.
+    monkeypatch.setattr(grid, "_cleanup", lambda: None)
+    assert grid.run_grid(setup, dry_run=False, logs_dir=str(tmp_path)) == []
+    cells = [(model_id, dataset, seq_len, pred_len, k)
+             for _, model_id, _ in cluster["models"]
+             for dataset in cluster["datasets"]
+             for seq_len, pred_len in cluster["windows"]
+             for k in cluster["k_values"]]
+    assert len(seen) == len(cells)
+    for (model_id, dataset, seq_len, pred_len, k), args in zip(cells, seen):
+        assert (args.exp.model_id, args.data.dataset, args.data.seq_len,
+                args.data.pred_len) == (model_id, dataset, seq_len, pred_len)
+        ablation = grid.cell_ablation(
+            model_id, dataset, seq_len, pred_len, cluster["alpha"], grid.SEED,
+            k=k, run_tag=f"k{k}", overrides=cluster.get("overrides"))
+        for dotted, value in ablation.items():
+            _, group, field = dotted.split(".")
+            assert getattr(getattr(args, group), field) == value, (
+                model_id, dataset, seq_len, k, dotted)
+    # EMForecaster's 128 x 4 reaches exactly the EMF cells its multivariate
+    # twins run at -- L336, and every window of emf2023 -- and no VoIP cell.
+    profiled = {(a.data.dataset, a.data.seq_len) for a in seen
+                if a.exp.model_id == "EMForecaster"
+                and (a.sl.batch_size, a.sl.accum_steps) == (128, 4)}
+    assert profiled == {(d, s) for d in cluster["datasets"]
+                        for s, _ in cluster["windows"]
+                        if setup == "cluster"
+                        and (s >= 336 or d == "EMF_2023_university_5_with_PTV")}
+
+
 def test_select_k_values_defaults_to_the_grid(tmp_path):
-    assert grids.select_k_values(None, grids.GRIDS["cluster"]["k_values"]) == [2, 3, 5, 9]
-    assert grids.select_k_values("", grids.GRIDS["cluster"]["k_values"]) == [2, 3, 5, 9]
+    # k=1, the controlled baseline, is part of both sweeps, and VoIP's runs up
+    # to one cluster per signal.
+    assert grids.select_k_values(None, grids.GRIDS["cluster"]["k_values"]) == [1, 2, 3, 5, 9]
+    assert grids.select_k_values("", grids.GRIDS["cluster"]["k_values"]) == [1, 2, 3, 5, 9]
+    assert grids.select_k_values(None, grids.GRIDS["voip_cluster"]["k_values"]) == [1, 2, 3, 6]
     # A grid with no k dimension stays k-less, which is what tells run_grid to
     # leave k out of its cells entirely.
     assert grids.select_k_values(None, grids.GRIDS["multivariate"].get("k_values")) is None
@@ -1333,10 +1440,10 @@ def test_select_k_values_parses_single_and_list():
 
 
 def test_select_k_values_allows_off_grid_k():
-    # k=1 is deliberately not in the sweep; --k 1 must still reach it, since that
-    # is the whole point of being able to run the endpoints as one-offs.
-    assert 1 not in grids.GRIDS["cluster"]["k_values"]
-    assert grids.select_k_values("1", grids.GRIDS["cluster"]["k_values"]) == [1]
+    # One cluster per ED2022 band is not in the sweep; --k 27 must still reach
+    # it as a one-off.
+    assert 27 not in grids.GRIDS["cluster"]["k_values"]
+    assert grids.select_k_values("27", grids.GRIDS["cluster"]["k_values"]) == [27]
 
 
 def test_select_k_values_rejects_bad_values():
@@ -1353,14 +1460,15 @@ def test_select_k_values_rejects_k_on_a_grid_without_one():
 
 def test_run_grid_k_values_override_restricts_the_cells(tmp_path, capsys):
     grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
-                  windows=[(336, 96)], k_values=[1])
+                  windows=[(336, 96)], k_values=[3])
     out = capsys.readouterr().out
-    assert "k=1" in out
+    assert "k=3" in out
     for k in grids.GRIDS["cluster"]["k_values"]:
-        assert f"k={k}" not in out
-    # one cell per model x default dataset, and no k dimension left over
+        if k != 3:
+            assert f"k={k}" not in out
+    # one cell per model x dataset, and no k dimension left over
     assert out.count("[DRY ]") == (len(grids.CLUSTER_MODELS)
-                                   * len(grids.GRIDS["cluster"]["default_datasets"]))
+                                   * len(grids.GRIDS["cluster"]["datasets"]))
 
 
 def test_run_grid_without_k_values_runs_the_whole_sweep(tmp_path, capsys):
@@ -1368,19 +1476,24 @@ def test_run_grid_without_k_values_runs_the_whole_sweep(tmp_path, capsys):
                   windows=[(336, 96)], k_values=None)
     out = capsys.readouterr().out
     assert out.count("[DRY ]") == (len(grids.CLUSTER_MODELS)
-                                   * len(grids.GRIDS["cluster"]["default_datasets"])
+                                   * len(grids.GRIDS["cluster"]["datasets"])
                                    * len(grids.GRIDS["cluster"]["k_values"]))
 
 
-def test_cluster_grid_defaults_to_ed2022_but_keeps_the_rest_reachable(tmp_path, capsys):
-    # The clustering study runs on ED2022, so a bare sweep covers only it ...
+def test_cluster_grid_sweeps_every_emf_dataset_by_default(tmp_path, capsys,
+                                                          monkeypatch):
+    # Like every other grid, a bare sweep covers every dataset the grid lists:
+    # the three EMF datasets of the multivariate grid, not ED2022 alone.
+    assert grids.GRIDS["cluster"]["datasets"] == grids.MV_DATASETS
+    assert "default_datasets" not in grids.GRIDS["cluster"]
+    # rich wraps a log line at the console width, which it reads from COLUMNS;
+    # a narrow terminal would split the long emf2023 name and lose the count.
+    monkeypatch.setenv("COLUMNS", "400")
     grid.run_grid("cluster", dry_run=True, logs_dir=str(tmp_path),
-                  windows=[(336, 96)])
+                  windows=[(336, 96)], k_values=[1])
     out = capsys.readouterr().out
-    assert "ED2022" in out
-    assert "UH2022" not in out and "emf2023" not in out.lower()
-    # ... while --dataset still reaches the full multivariate dataset list.
-    assert grids.select_datasets("uh2022", grids.GRIDS["cluster"]["datasets"]) == ["UH2022"]
+    for dataset in grids.MV_DATASETS:
+        assert out.count(f"dataset={dataset}") == len(grids.CLUSTER_MODELS), dataset
 
 
 def test_select_models_matches_label_or_model_id():
@@ -1395,10 +1508,22 @@ def test_select_models_matches_label_or_model_id():
 
 
 def test_select_models_rejects_a_model_from_another_grid():
-    # EMForecaster is in the multivariate grid but not the cluster grid; asking
-    # for it there has to fail rather than sweep nothing.
+    # ARIMA is in the multivariate grid but not the cluster grid, and
+    # Persistence in the VoIP grid but not its cluster grid; asking for either
+    # there has to fail rather than sweep nothing, and say why rather than read
+    # like a typo.
+    for setup, name in (("cluster", "ARIMA"), ("voip_cluster", "Persistence"),
+                        ("voip_cluster", "arima")):
+        g = grids.GRIDS[setup]
+        with pytest.raises(ValueError, match="no CCM adaptation"):
+            grids.select_models(name, g["models"], g["refused"])
+    # A name no grid refuses is still just not in this one.
+    for name in ("DLinaer", "TimesNet", "RecurrentModel"):
+        with pytest.raises(ValueError, match="not in this grid"):
+            grids.select_models(name, grids.CLUSTER_MODELS, grids.CLUSTER_REFUSED)
+    # And without the refusals, as on every other grid, ARIMA is only missing.
     with pytest.raises(ValueError, match="not in this grid"):
-        grids.select_models("EMForecaster", grids.GRIDS["cluster"]["models"])
+        grids.select_models("ARIMA", grids.GRIDS["cluster"]["models"])
 
 
 def test_select_datasets_matches_name_or_logs_slug():

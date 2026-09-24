@@ -200,16 +200,19 @@ def test_voip_grid_model_ids_match_job_configs(setup):
 
 
 def test_voip_grid_shapes():
-    # 8 models x 2 datasets x 2 windows; the cluster grid is the three
-    # clusterable backbones x 2 x 2 x 2 k.
+    # 8 models x 2 datasets x 2 windows; the cluster grid is the six
+    # gradient-trained models, the Transformer included, x 2 x 2 x 4 k.
     voip = grids.GRIDS["voip"]
     assert len(voip["models"]) == 8
     assert len(voip["models"]) * len(voip["datasets"]) * len(voip["windows"]) == 32
     cl = grids.GRIDS["voip_cluster"]
-    assert [m[1] for m in cl["models"]] == ["DLinear", "PatchTST", "TSMixer"]
-    assert cl["k_values"] == [2, 3]
-    # The degenerate ends stay outside the sweep, reachable with --k.
-    assert grids.select_k_values("1,2,3,6", cl["k_values"]) == [1, 2, 3, 6]
+    assert [m[1] for m in cl["models"]] == [
+        "DLinear", "PatchTST", "TSMixer", "RF_EMF_Transformer", "EMForecaster",
+        "LSTM"]
+    # From the k=1 baseline to one cluster per channel (k=6), both in the sweep.
+    assert cl["k_values"] == [1, 2, 3, 6]
+    assert (len(cl["models"]) * len(cl["datasets"]) * len(cl["windows"])
+            * len(cl["k_values"])) == 96
 
 
 def test_voip_perchannel_mirrors_the_joint_grid():

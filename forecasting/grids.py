@@ -17,10 +17,10 @@ Four grids share the same WINDOWS so their cells line up one-to-one:
 - "cluster"           The multivariate sweep with CCM's learned soft channel
                       clustering (Channel Clustering Module, NeurIPS 2024)
                       threaded through this repo's own models: the multivariate
-                      cell's exact network with its per-channel temporal linears
-                      swapped for cluster-wise ones. Adds a k dimension
-                      (k_values) to every cell. See CLUSTER_MODELS below and
-                      forecasting/multivariate/models/ccm.py.
+                      cell's exact network with a linear map it applies to each
+                      channel on its own swapped for k cluster-wise copies. Adds
+                      a k dimension (k_values) to every cell. See CLUSTER_MODELS
+                      below and forecasting/multivariate/models/ccm.py.
 
 The first three carry the same seven models since 2026-08-03 -- EMForecaster, DLinear,
 PatchTST, TSMixer, Transformer, LSTM, ARIMA -- so a model's column exists in
@@ -77,42 +77,68 @@ MV_DATASETS = ["ED2022", "UH2022", "EMF_2023_university_5_with_PTV"]
 # comparable one-to-one.
 UNIVARIATE_MODELS = MV_MODELS
 
-# The CCM cluster grid (forecasting/multivariate/models/ccm.py). CCM assigns
-# channels to k clusters with a learned, soft, sinkhorn-normalized assignment and
-# mixes k parallel per-cluster layers by it, rather than partitioning channels up
-# front. The clustering modules are upstream's own code, imported verbatim from
-# the vendored TimeSeriesCCM-main/ tree (utils/ccm_upstream.py); since
-# 2026-08-25 they are threaded through THIS REPO'S OWN model implementations --
-# a cluster cell is the multivariate cell's exact network, same job config and
-# init, with its per-channel temporal linears swapped for upstream's
-# Cluster_wise_linear -- so a model can be in this grid only if get_model can
-# build it that way (ccm.CCM_MODELS). This sweep runs three of them, each with a
-# per-channel temporal linear for CCM to route, and all three are in MV_MODELS,
-# so every cluster cell has same-window multivariate and per-channel baselines
-# beside it.
+# The CCM cluster grids (forecasting/multivariate/models/ccm.py), EMF and VoIP.
+# CCM assigns channels to k clusters with a learned, soft, sinkhorn-normalized
+# assignment and mixes k parallel copies of a layer by it, rather than
+# partitioning channels up front. The clustering modules are upstream's own
+# code, imported verbatim from the vendored TimeSeriesCCM-main/ tree
+# (utils/ccm_upstream.py), threaded through THIS REPO'S OWN models: a cluster
+# cell is the multivariate cell's exact network, same job config and init, with
+# one linear map it applies to each channel on its own swapped for upstream's
+# Cluster_wise_linear. Which map, per model:
 #
-# EMForecaster, the Transformer and LSTM can be built as cluster cells as well
-# -- CCM on the read-out their channels share (models/ccm.py) -- but are not in
-# this sweep yet. ARIMA is out; get_model raises on it instead of silently
-# building something else.
+#   DLinear       the seasonal and trend linears (the whole model)
+#   PatchTST      the flatten head; the attention encoder is untouched
+#   TSMixer       the temporal MLP linears in every ResBlock, and the head
+#   Transformer   the fc2 read-out to the horizon; the encoder and convs are
+#                 untouched
+#   EMForecaster  the Linear read-out (base_model) from the flattened patch
+#                 embedding; the patch embedding is untouched
+#   LSTM          the linear head on the averaged LSTM state; the patch
+#                 projection and the LSTM are untouched
+#
+# The first three are where upstream's own wrappers put Cluster_wise_linear.
+# Upstream has no version of the last three; they follow its PatchTST
+# precedent of clustering the one read-out every channel shares.
+#
+# These are MV_MODELS' six gradient-trained models, so every cluster cell has
+# same-window multivariate and per-channel baselines beside it, and both
+# cluster grids carry all six. That includes the Transformer on VoIP, whose
+# multivariate cells never beat the lookback mean there: every model is run,
+# and one that does not train is reported as such rather than dropped.
+#
+# ARIMA, and Persistence on VoIP, are out, and get_model raises on them rather
+# than build something else under their name: neither has a gradient path for
+# the assignment to be learned through, and both forecast each band on its
+# own, which is already k = num_channels.
 #
 # History, for reading old results: until 2026-08-25 this grid ran the paper's
 # whole released networks (DLinearC, PatchTSTC, ...) -- a different
 # implementation from the multivariate cells (different init, RevIN,
 # decomposition kernel). Runs made by those wrappers are NOT comparable to runs
-# made by this code and must not share a logs tree with them: the L-ladder
-# cluster rungs were retired to logs/_archive/ on 2026-08-25, and any
-# upstream-era cell still under logs/cluster/ (the L336_O96 benchmark tree)
-# needs the same treatment before its rerun lands. TimesNet was in that version
-# of the grid (upstream ships a wrapper for it); our TimesNet embeds all
-# channels jointly from the first layer, has nothing per-channel to route, and
-# never had an MV baseline, so it left with the wrappers. Before 2026-08-06 the
-# grid was a static KMeans-partition head; those config fields are gone too.
+# of the native implementation that replaced them and must not share a logs
+# tree with them; they sit under logs/_archive/, and logs/cluster/ holds only
+# runs of the native (post-2026-08-25) implementation. TimesNet was
+# in that version of the grid (upstream ships a wrapper for it); our TimesNet
+# embeds all channels jointly from the first layer, has nothing per-channel to
+# route, and never had an MV baseline, so it left with the wrappers. Before
+# 2026-08-06 the grid was a static KMeans-partition head; those config fields
+# are gone too.
 CLUSTER_MODELS = [
     ("DLinear", "DLinear", "rf_emf_mv/dlinear"),
     ("PatchTST", "PatchTST", "rf_emf_mv/patchtst"),
     ("TSMixer", "TSMixer", "rf_emf_mv/tsmixer"),
+    ("Transformer", "RF_EMF_Transformer", "rf_emf_mv/transformer"),
+    ("EMForecaster", "EMForecaster", "rf_emf_mv/emforecaster"),
+    # The LSTM-backboned RecurrentModel, as in MV_MODELS; its cluster build
+    # refuses any other backbone.
+    ("LSTM", "LSTM", "rf_emf_mv/lstm"),
 ]
+
+# The joint grids' models the cluster grids leave out, as above. A cluster grid
+# asked for one by name raises get_model's reason (select_models), not only
+# "not in this grid", which reads like a typo.
+CLUSTER_REFUSED = ("ARIMA", "Persistence")
 
 # The single-series counterpart list. Job names here are "rf_emf/*", NOT
 # "rf_emf_mv/*": this grid is the only one that runs the forecasting.univariate
@@ -213,27 +239,27 @@ GRIDS = {
         "models": VOIP_MODELS, "datasets": VOIP_DATASETS, "windows": VOIP_WINDOWS,
         "alpha": 0.1, "per_channel": True, "overrides": VOIP_OVERRIDES,
     },
-    # k = 1 (one cluster for every channel) and k = 6 (one per channel) are the
-    # degenerate ends of the soft assignment and sit outside the sweep for the
-    # same reason they do on the EMF cluster grid; --k reaches them for the
-    # controlled baseline and the sanity check.
+    # k runs from the controlled baseline, k = 1 (see the EMF cluster grid
+    # below), to num_channels: at k = 6 there is one cluster-wise copy per
+    # signal, though the soft assignment need not give each signal its own,
+    # and the rest of the network stays shared across the six.
     "voip_cluster": {
         "models": CLUSTER_MODELS, "datasets": VOIP_DATASETS,
-        "windows": VOIP_WINDOWS, "alpha": 0.1, "k_values": [2, 3],
-        "overrides": VOIP_OVERRIDES,
+        "windows": VOIP_WINDOWS, "alpha": 0.1, "k_values": [1, 2, 3, 6],
+        "overrides": VOIP_OVERRIDES, "refused": CLUSTER_REFUSED,
     },
-    # CCM channel clustering. Same datasets/windows as "multivariate", plus a
-    # k_values sweep dimension. k=1 (every channel in one cluster) and
-    # k=num_channels (one cluster per channel) are deliberately outside the
-    # sweep: they are the degenerate ends of the soft assignment rather than
-    # interesting cluster counts, and --k reaches them for a one-off sanity
-    # check without editing this list. The clustering study runs on ED2022, so
-    # a bare sweep defaults to it; UH2022 and emf2023 stay in the grid and are
-    # reachable with an explicit --dataset.
+    # CCM channel clustering: the multivariate grid's datasets and windows, plus
+    # a k dimension. k = 1 is the controlled baseline and part of the sweep: a
+    # single cluster holding every channel reduces each cluster-wise layer to
+    # the multivariate cell's one shared map, so k > 1 against k = 1 isolates
+    # what the clustering itself does. The other end, k = num_channels (27, or
+    # 29 on emf2023: one copy per band), is not swept; --k reaches it, or any
+    # other count, as a one-off without editing this list. Like the
+    # multivariate grid's, a bare sweep covers all four WINDOWS; the L336_O96
+    # benchmark alone is --window 336x96.
     "cluster": {
-        "models": CLUSTER_MODELS, "datasets": MV_DATASETS,
-        "default_datasets": ["ED2022"], "windows": WINDOWS,
-        "alpha": 0.1, "k_values": [2, 3, 5, 9],
+        "models": CLUSTER_MODELS, "datasets": MV_DATASETS, "windows": WINDOWS,
+        "alpha": 0.1, "k_values": [1, 2, 3, 5, 9], "refused": CLUSTER_REFUSED,
     },
 }
 
@@ -332,7 +358,7 @@ def select_seeds(spec):
     return [SEED + i for i in range(count)]
 
 
-def select_models(spec, available):
+def select_models(spec, available, refused=()):
     """The models from `available` selected by `spec`, in grid order.
 
     `spec` None/empty -> all of them. Otherwise a comma-separated list of either
@@ -344,7 +370,8 @@ def select_models(spec, available):
 
     Raises ValueError on a name not in this grid, so a typo (or a model that
     belongs to a different grid) is a clean error rather than a silently empty
-    sweep.
+    sweep. `refused` is a cluster grid's CLUSTER_REFUSED: a model_id in it gets
+    get_model's reason for leaving the model out instead.
     """
     if not spec:
         return list(available)
@@ -359,6 +386,11 @@ def select_models(spec, available):
         else:
             missing.append(name)
     if missing:
+        why = [m for m in refused if m.lower() in missing]
+        if why:
+            # Imported here: ccm pulls in torch, which grid startup avoids.
+            from forecasting.multivariate.models.ccm import no_adaptation_error
+            raise no_adaptation_error(why[0])
         have = ", ".join(sorted({m[1] for m in available}))
         raise ValueError(
             f"model(s) {', '.join(missing)} not in this grid (has: {have})"
@@ -408,11 +440,11 @@ def select_k_values(spec, available):
     Otherwise a single count ('5') or a comma-separated list ('1,2') selects
     exactly those, deduped and run in ascending order.
 
-    Unlike select_windows, a requested k need NOT be one of the grid's own
-    k_values: the endpoints k=1 and k=num_channels are deliberately outside the
-    sweep (see GRIDS["cluster"]) precisely so they can be run as one-offs, and
-    '--k 1' has to reach them without editing this file. run_grid logs any such
-    off-grid value so it is visible in the run's own output.
+    Like select_windows, a requested k need NOT be one of the grid's own
+    k_values: k=num_channels on the EMF grid (one cluster per band) is left out
+    of the sweep, and '--k 27' has to reach it, or any other count, as a
+    one-off without editing this file. run_grid logs any such off-grid value so
+    it is visible in the run's own output.
 
     Raises ValueError on a non-positive or malformed k, and on --k against a grid
     that has no k dimension, so a typo is a clean error rather than a sweep that
@@ -422,8 +454,8 @@ def select_k_values(spec, available):
         return list(available) if available else None
     if not available:
         raise ValueError(
-            "--k only applies to a grid with a k dimension (currently just "
-            "'cluster'); this grid has none"
+            "--k only applies to a grid with a k dimension ('cluster' or "
+            "'voip_cluster'); this grid has none"
         )
     ks = []
     for token in str(spec).split(","):

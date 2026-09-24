@@ -300,10 +300,7 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     windows = grid_def["windows"] if windows is None else windows
     seeds = [SEED] if seeds is None else list(seeds)
     models = grid_def["models"] if models is None else list(models)
-    if datasets is None:
-        datasets = grid_def.get("default_datasets", grid_def["datasets"])
-    else:
-        datasets = list(datasets)
+    datasets = grid_def["datasets"] if datasets is None else list(datasets)
     if grid_def.get("per_channel"):
         # A per-band cell is many runs, not one, and needs the process pool in
         # forecasting/perchannel.py. Fail loudly instead of silently training the
@@ -317,10 +314,10 @@ def run_grid(setup, dry_run=False, logs_dir="logs", windows=None, seeds=None,
     passed, skipped, failed = [], [], []
     grid_k = grid_def.get("k_values")
     k_values = grid_k if k_values is None else list(k_values)
-    # --k may ask for a k outside the declared sweep on purpose (k=1 and
-    # k=num_channels are excluded from GRIDS["cluster"] as one-off sanity checks).
-    # Say so, so an off-grid cell is never mistaken for part of the sweep when
-    # the results are read back later.
+    # --k may ask for a k outside the declared sweep on purpose (k=num_channels,
+    # one cluster per band, is left out of GRIDS["cluster"] and run as a
+    # one-off). Say so, so an off-grid cell is never mistaken for part of the
+    # sweep when the results are read back later.
     off_grid = [k for k in (k_values or []) if k not in (grid_k or [])]
     if off_grid:
         console.log(f"[NOTE ] k={', '.join(str(k) for k in off_grid)} outside the "

@@ -802,9 +802,9 @@ class Cluster(BaseModel):
     resumable against the current code:
       - Until 2026-08-25 the cluster grid ran the paper's whole released
         networks (DLinearC, PatchTSTC, ...), a different implementation from
-        the multivariate cells it was compared against; its L-ladder rungs were
-        retired to logs/_archive/, and any upstream-era cell still under
-        logs/cluster/ needs the same treatment before its rerun lands.
+        the multivariate cells it was compared against; the runs of it that
+        were kept, its L-ladder rungs among them, sit under logs/_archive/, and
+        logs/cluster/ holds only runs of the native implementation.
       - Before 2026-08-06 a static KMeans-partition head precomputed a hard
         channel partition from the training split's correlation matrix (k1/k9
         cells of commits 2ebc7f08 and 3d2de887, deleted in f24cf7a2); its

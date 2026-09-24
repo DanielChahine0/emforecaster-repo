@@ -199,12 +199,13 @@ if __name__ == "__main__":
                              "custom lookback as a one-off without editing "
                              "forecasting/grids.py.")
     parser.add_argument("--k", type=str, default=None,
-                        help="Cluster grid only: restrict to specific cluster "
-                             "count(s) instead of every k in the grid. A single "
-                             "value ('5') or a comma-separated list ('1,2'). A k "
-                             "outside the grid's own k_values is allowed, so "
-                             "'--k 1' runs the degenerate one-cluster case "
-                             "without editing forecasting/grids.py.")
+                        help="Cluster grids only ('cluster', 'voip_cluster'): "
+                             "restrict to specific cluster count(s) instead of "
+                             "every k in the grid. A single value ('5') or a "
+                             "comma-separated list ('1,2'). A k outside the "
+                             "grid's own k_values is allowed, so '--k 27' runs "
+                             "one cluster per ED2022 band as a one-off without "
+                             "editing forecasting/grids.py.")
     parser.add_argument("--seeds", type=str, default=None,
                         help="Grid mode only: how many seeds to train each cell "
                              "on (default 1). A count counts up from 69421, so "
@@ -233,14 +234,9 @@ if __name__ == "__main__":
             windows = select_windows(args.window, GRIDS[setup]["windows"])
             seeds = select_seeds(args.seeds)
             k_values = select_k_values(args.k, GRIDS[setup].get("k_values"))
-            models = select_models(args.model, GRIDS[setup]["models"])
-            # No --dataset: a grid may declare a narrower default sweep (the
-            # cluster grid defaults to ED2022) while --dataset still reaches
-            # everything in its "datasets" list.
-            datasets = (select_datasets(args.dataset, GRIDS[setup]["datasets"])
-                        if args.dataset
-                        else GRIDS[setup].get("default_datasets",
-                                              GRIDS[setup]["datasets"]))
+            models = select_models(args.model, GRIDS[setup]["models"],
+                                   GRIDS[setup].get("refused", ()))
+            datasets = select_datasets(args.dataset, GRIDS[setup]["datasets"])
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(2)
