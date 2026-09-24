@@ -283,6 +283,7 @@ class Board:
     grid: tuple                       # the family's k values at this window
     protocol: str
     clusterable: frozenset = field(default_factory=frozenset)  # models with cluster runs
+    sweeps: dict = field(default_factory=dict)  # {(dataset, model): {k: {seed: metrics}}}
 
     def complete(self, cell, pipe) -> bool:
         """Every seed of the family, and for the best k a finished sweep."""
@@ -331,7 +332,7 @@ def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None) ->
             cells[cell][BEST] = ks[choice.k]
     clusterable = frozenset(key[2] for key in values if isinstance(key[0], tuple))
     return Board(dict(cells), choices, tuple(sorted(family_seeds)), grid, protocol,
-                 clusterable)
+                 clusterable, dict(by_cell_k))
 
 
 def pipelines(values: dict, protocol: str = "fixed") -> tuple:
@@ -503,7 +504,7 @@ def variant(board: Board, fn: Callable) -> Board:
                 new[pipe] = v
         cells[cell] = new
     return Board(cells, board.choices, board.seeds, board.grid, board.protocol,
-                 board.clusterable)
+                 board.clusterable, board.sweeps)
 
 
 def skill_variant(board: Board) -> Board:
@@ -779,7 +780,7 @@ def render(runs_csv: Path, family: str, setting: tuple,
                 choice = b.choices.get(c)
                 row.append(choice.tag() if choice else "-")
                 for metric, _ in METRICS:
-                    row.append(_delta(b, c, K1, BEST, metric))
+                    row.append(marked_delta(b, c, K1, BEST, metric))
             out.append("| " + " | ".join(row) + " |")
 
     # --------------------------------------------------- band sensitivity per cell
@@ -807,9 +808,10 @@ def render(runs_csv: Path, family: str, setting: tuple,
                     f"| {dataset_label(c[0])} | {model_label(c[1])} | "
                     f"{', '.join(_band_label(names, c[0], ch) for ch in drop)} ({kind}) | "
                     f"{'-' if share is None else f'{share * 100:.1f}%'} | "
-                    f"{_delta(everything, c, MV, PC, 'mse')} | {_delta(cut, c, MV, PC, 'mse')} | "
-                    f"{_delta(everything, c, K1, BEST, 'mse') if cluster else '-'} | "
-                    f"{_delta(cut, c, K1, BEST, 'mse') if cluster else '-'} |")
+                    f"{marked_delta(everything, c, MV, PC, 'mse')} | "
+                    f"{marked_delta(cut, c, MV, PC, 'mse')} | "
+                    f"{marked_delta(everything, c, K1, BEST, 'mse') if cluster else '-'} | "
+                    f"{marked_delta(cut, c, K1, BEST, 'mse') if cluster else '-'} |")
 
     out += ["", f"*n = seeds for multivariate / per-channel / cluster k=1 / cluster best "
                 f"k, of the family's {n_family}. Trains = the seeds that train, same order "
@@ -831,9 +833,10 @@ def _share(bands: dict, cell: tuple, drop: tuple) -> Optional[float]:
     return kept / total if total else None
 
 
-def _delta(board: Board, cell: tuple, base: str, chal: str, metric: str,
-           marks: bool = True) -> str:
-    """Δ of chal against base, marked only when both sides are complete."""
+def marked_delta(board: Board, cell: tuple, base: str, chal: str, metric: str,
+                 marks: bool = True) -> str:
+    """Δ of chal against base: **bold** when chal is better beyond the tie band,
+    ≈ inside it, unmarked (with the matched n) when a side is incomplete."""
     p = board.cells.get(cell, {})
     if base not in p or chal not in p:
         return "-"
@@ -875,9 +878,9 @@ def _cell_row(board: Board, c: tuple, metric: str, dataset_label, model_label,
         pc_delta = "identical" if MV in p and PC in p else "-"
         ns = "/".join("1" if pipe in p else "-" for pipe in (MV, PC)) + "/n/a/n/a"
     else:
-        pc_delta = _delta(board, c, MV, PC, metric, marks=not descriptive)
+        pc_delta = marked_delta(board, c, MV, PC, metric, marks=not descriptive)
         ns = "/".join(str(len(p[x])) if x in p else "-" for x in PIPES)
-    k1_delta = "n/a" if det else _delta(board, c, K1, BEST, metric, marks=not descriptive)
+    k1_delta = "n/a" if det else marked_delta(board, c, K1, BEST, metric, marks=not descriptive)
     label = model_label(c[1])
     if descriptive:
         label += f", seed {', '.join(board.seeds)} only (descriptive)"

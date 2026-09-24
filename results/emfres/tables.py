@@ -187,153 +187,146 @@ def cells_csv_twins(cells_csv: Path, outdir: Path,
 
 MISSING = "-"
 
+SWEEP_TITLE = "Channel Clustering (CCM) vs. plain"
 
-def _cell_cols(row, metric):
-    """(mean, spread, n_seeds) for one cells.csv row and metric."""
-    return _f(row[metric]), _f(row.get(f"{metric}_std", "")), _i(row.get("n_seeds", ""))
+# Why a model's k = 1 run sits further from its plain twin than training drift
+# explains, by (family, model). The multivariate Transformer's ED2022 seed-69421
+# log does not reproduce: rerun, the cell gives MSE 0.4950 over 79 epochs at
+# f84e58dae (the logging code plus a provenance-only change) and at the code the
+# CCM sweep trains (bb6be0a379d9) alike, against the logged 0.5060 over 99 (the
+# 2026-09-24 GPU gate, .personal/ccm_check_k1.py).
+K1_CAVEATS = {
+    ("emf", "RF_EMF_Transformer"): (
+        "the Transformer's is its plain log's: rerun, the multivariate ED2022 seed-69421 "
+        "cell gives MSE 0.4950 (79 epochs) at the old code and at today's alike, not "
+        "the logged 0.5060 (99 epochs), and its k = 1 run (0.4979) sits 0.6% from the "
+        "rerun"),
+}
 
 
-def _fmt_value(cell) -> str:
-    if cell is None or cell[0] is None:
-        return MISSING
-    mean, spread, _ = cell
-    return f"{mean:.4f}" if spread is None else f"{mean:.4f} ±{spread:.4f}"
+def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
+                     dataset_label=str, model_label=str,
+                     dataset_rank=lambda d: d, model_rank=lambda m: m) -> str:
+    """Every cluster sweep of a family: each model at every k beside its plain run.
 
-
-def render_ccm_sweep(cells_csv: Path, *, dataset="ed2022", seq_len=336, pred_len=96,
-                     models=("DLinear", "PatchTST", "TSMixer"), metric="mae") -> str:
-    """CCM at each k against the same model without it, with the seed spread.
-
-    Ported from results/clustering/make_tables.py, which was a fork of the
-    extractor's loader and the only renderer in the repo that showed variance.
-    That matters more now that cluster is a five-seed setup: a best-k margin is
-    only interesting next to the seed noise it sits in, which is what the
-    closing paragraph reports.
+    One table per metric, window and dataset, one row per clustered model:
+    the plain multivariate cell, the cell at every k, the k chosen on
+    validation and its gap to k = 1 and to plain, and the k the test split
+    itself would have picked -- the oracle, shown so the distance between
+    the two is visible, never used. Values are the fixed-membership protocol
+    and the choice is paradigms.choose_k's, so this table and the paradigm
+    comparison cannot name different best k's. ``settings`` lists the
+    (L, O) windows to render, the benchmark first.
     """
     import statistics
 
-    plain, ccm, n_runs = {}, {}, 0
-    with open(cells_csv) as f:
-        for row in csv.DictReader(f):
-            if (row["dataset"] != dataset or int(row["seq_len"]) != seq_len
-                    or int(row["pred_len"]) != pred_len or row["model"] not in models):
-                continue
-            if row["setup"] == "multivariate" and row["k"] == "":
-                plain[row["model"]] = _cell_cols(row, metric)
-                n_runs += int(row["n_runs"])
-            elif row["setup"] == "cluster" and row["k"] != "":
-                ccm[(row["model"], int(row["k"]))] = _cell_cols(row, metric)
-                n_runs += int(row["n_runs"])
+    from . import paradigms as PG
 
-    if not ccm:
+    blocks = []
+    for seq_len, pred_len in settings:
+        values = PG.seed_values(runs_csv, family, seq_len, pred_len)
+        board = PG.build(values, "fixed")
+        batch = PG.build(values, "batch")
+        if board.sweeps:
+            blocks.append(((seq_len, pred_len), board, batch))
+    if not blocks:
         return ""
 
-    models = [m for m in models if any(mm == m for mm, _ in ccm)]
-    ks = sorted({k for _, k in ccm})
-    name = metric.upper()
-    ds_label = dataset.upper()
+    def cell_txt(seeds, metric, n_family):
+        if not seeds:
+            return MISSING
+        xs = [v[metric] for v in seeds.values()]
+        txt = (f"{statistics.fmean(xs):.4f}" if len(xs) < 2
+               else f"{statistics.fmean(xs):.4f} ±{statistics.stdev(xs):.4f}")
+        return txt if len(xs) >= n_family else f"{txt} (n={len(xs)})"
 
-    def seeds_of(source, model):
-        counts = sorted({c[2] for key, c in source.items()
-                         if (key[0] if isinstance(key, tuple) else key) == model
-                         and c[2] is not None})
-        return "/".join(str(n) for n in counts) if counts else MISSING
+    windows = ", ".join(f"L{sl}/O{pl}" for (sl, pl), _, _ in blocks)
+    grids = sorted({b.grid for _, b, _ in blocks})
+    models = sorted({m for _, b, _ in blocks for _, m in b.sweeps}, key=model_rank)
+    out = [f"# {SWEEP_TITLE}", "",
+           f"- Family `{family}`, {windows}; every dataset with cluster runs",
+           "- k swept: " + "; ".join(", ".join(map(str, g)) for g in grids)
+           + (" (k = C is one cluster per channel)" if family == "voip" else ""),
+           "- Models: " + ", ".join(model_label(m) for m in models)
+           + f"; {' and '.join(PG.DETERMINISTIC)} are n/a (per-band by construction: "
+             "one model per band, no gradient path to cluster)",
+           "- Values: the fixed train-mean membership protocol (`sl_test_fixed/*`), mean "
+           "over seeds ± their sample standard deviation; (n=…) marks a cell with fewer "
+           "seeds than the family's, still training",
+           "- Val k: the k with the lowest seed-mean `sl_val_fixed/loss`, ranked over the "
+           "k values that have every seed of the sweep (paradigms.choose_k, the same "
+           "choice as the Paradigm Comparison); its cell is <u>underlined</u>",
+           "- Oracle k: the k with the lowest test value. It is chosen on the test split, "
+           "so it is an upper bound, reported only to show how far validation lands from "
+           "it; nothing here is selected on it",
+           "- Δ: the val-k cell against k = 1 and against plain, **bold** when better "
+           "beyond the pooled seed standard deviation, ≈ inside it, unmarked when a side "
+           "is incomplete",
+           ""]
 
-    out = [f"# Channel Clustering (CCM) vs. plain · {ds_label} · {name}", "",
-           f"- Dataset: {ds_label}, $L$ = {seq_len}, $O$ = {pred_len}",
-           f"- Metric: {name}; `±` is the sample stdev across seeds",
-           f"- Runs: {n_runs} logs. Seed replicates per cell: "
-           + ", ".join(f"{m} {seeds_of(plain, m)} plain / {seeds_of(ccm, m)} + CCM"
-                       for m in models),
-           "",
-           "Each row compares a model against itself with CCM at that $k$; **bold** = the "
-           "lower of the pair, <u>underline</u> = that model's best $k$. The plain columns "
-           "have no $k$, so their single value repeats down the column as the fixed "
-           "reference.", ""]
+    group = 0
+    for metric, name in PG.METRICS:
+        group += 1
+        out += [f"## {group} · {name}", ""]
+        table = 0
+        for (seq_len, pred_len), board, batch in blocks:
+            n_family = len(board.seeds)
+            for dataset in sorted({d for d, _ in board.sweeps}, key=dataset_rank):
+                cells = sorted((c for c in board.sweeps if c[0] == dataset),
+                               key=lambda c: model_rank(c[1]))
+                ks = board.grid
+                table += 1
+                out += [f"### {group}.{table} · {dataset_label(dataset)}, "
+                        f"L{seq_len}/O{pred_len}", "",
+                        "| Model | Plain | " + " | ".join(f"k={k}" for k in ks)
+                        + " | Val k | Δ vs k=1 | Δ vs plain | Oracle k |",
+                        "|:---|---:|" + "---:|" * len(ks) + ":---|---:|---:|:---|"]
+                for c in cells:
+                    sweep = board.sweeps[c]
+                    choice = board.choices[c]
+                    row = [model_label(c[1]),
+                           cell_txt(board.cells[c].get(PG.MV), metric, n_family)]
+                    for k in ks:
+                        txt = cell_txt(sweep.get(k), metric, n_family)
+                        row.append(f"<u>{txt}</u>" if k == choice.k else txt)
+                    scored = {k: statistics.fmean(v[metric] for v in s.values())
+                              for k, s in sweep.items()
+                              if set(s) == set(choice.seeds) and s}
+                    oracle = min(scored, key=lambda kk: (scored[kk], kk)) if scored else None
+                    row.append(choice.tag())
+                    row.append(PG.marked_delta(board, c, PG.K1, PG.BEST, metric))
+                    row.append(PG.marked_delta(board, c, PG.MV, PG.BEST, metric))
+                    row.append(MISSING if oracle is None
+                               else ("= val k" if oracle == choice.k else f"{oracle} (oracle)"))
+                    out.append("| " + " | ".join(row) + " |")
+                out.append("")
 
-    best_k = {m: min((k for k in ks if (m, k) in ccm and ccm[(m, k)][0] is not None),
-                     key=lambda k: ccm[(m, k)][0], default=None) for m in models}
-
-    rows = []
-    for k in ks:
-        row = [str(k)]
-        for m in models:
-            base, cell = plain.get(m), ccm.get((m, k))
-            base_txt, cell_txt = _fmt_value(base), _fmt_value(cell)
-            if best_k[m] == k:
-                cell_txt = f"<u>{cell_txt}</u>"
-            if base and cell and base[0] is not None and cell[0] is not None:
-                if cell[0] < base[0]:
-                    cell_txt = f"**{cell_txt}**"
-                else:
-                    base_txt = f"**{base_txt}**"
-            row += [base_txt, cell_txt]
-        rows.append(row)
-
-    header = ["$k$"]
-    for m in models:
-        header += [m, f"{m} + CCM"]
-    align = ["|:---"] + ["|---:"] * (len(header) - 1)
-    out += ["| " + " | ".join(header) + " |", "".join(align) + "|"]
-    out += ["| " + " | ".join(r) + " |" for r in rows]
-    out += ["", "**Best $k$ per model**, against its plain run:", ""]
-
-    for m in models:
-        k = best_k[m]
-        if k is None:
-            out.append(f"- {m}: no CCM cell.")
-            continue
-        cell, base = ccm[(m, k)], plain.get(m)
-        spreads = [c[1] for (mm, _), c in ccm.items() if mm == m and c[1] is not None]
-        noise = (f", mean seed stdev over the sweep {statistics.mean(spreads):.4f}"
-                 if spreads else ", single seed per cell")
-        if base and base[0]:
-            d = cell[0] - base[0]
-            delta = f"{d:+.4f} ({d / base[0] * 100:+.2f}%)"
-        else:
-            delta = MISSING
-        out.append(f"- {m}: best at $k$ = {k}, {name} {cell[0]:.4f} vs. plain "
-                   f"{_fmt_value(base)} ({delta}){noise}.")
-
-    # k = 1 is the same architecture with the clustering switched off (sinkhorn
-    # returns all-ones, the head collapses to one shared linear, the similarity
-    # loss loses its gradient), so it is the baseline that isolates clustering
-    # alone; the plain column additionally differs by the assigner's parameters
-    # and, for PatchTST, by having trained compiled. Reporting both is not
-    # decoration: in the retired upstream-wrapper era the plain column also
-    # carried a different backbone, and DLinear read +6.06% against plain but
-    # -4.64% against k = 1 -- a sign flip caused by the backbone, not the
-    # clustering (notes/ccm-hyperparameters.md §7(d), now superseded).
-    out += ["", "**Best $k$ per model**, against $k$ = 1 -- the same architecture with "
-                "clustering switched off (all-ones sinkhorn assignment, one shared "
-                "cluster-wise linear, no similarity gradient). This is the comparison "
-                "that isolates clustering; the one above also carries the cluster "
-                "assigner's parameters, which at $k$ = 1 change nothing on DLinear "
-                "(its $k$ = 1 cell reproduces the plain cell to four decimals).", ""]
-
-    for m in models:
-        k, one = best_k[m], ccm.get((m, 1))
-        if k is None or k == 1 or not one or one[0] is None:
-            out.append(f"- {m}: no $k$ = 1 cell to compare against."
-                       if k is None or not one or one[0] is None
-                       else f"- {m}: best $k$ is 1 -- clustering never beats not clustering.")
-            continue
-        cell = ccm[(m, k)]
-        d = cell[0] - one[0]
-        beaten = sum(1 for kk in ks if kk != 1 and (m, kk) in ccm
-                     and ccm[(m, kk)][0] is not None and ccm[(m, kk)][0] < one[0])
-        total = sum(1 for kk in ks if kk != 1 and (m, kk) in ccm
-                    and ccm[(m, kk)][0] is not None)
-        out.append(f"- {m}: best at $k$ = {k}, {name} {cell[0]:.4f} vs. $k$ = 1 "
-                   f"{one[0]:.4f} ({d:+.4f} ({d / one[0] * 100:+.2f}%)); "
-                   f"{beaten} of {total} clustered cells beat $k$ = 1.")
-
-    out += ["", "$k$ = 1 is one cluster over all channels: the plain network plus the "
-                "cluster assigner, whose output cannot change a one-cluster forecast. "
-                "Since the 2026-08-25 native rerun the two baselines agree on DLinear "
-                "exactly; where they still differ (PatchTST, TSMixer) the gap is the "
-                "assigner's extra parameters and eager-vs-compiled training of the "
-                "plain cell, not a different backbone. Runs from the retired upstream "
-                "wrappers are in logs/_archive and are not in this table.",
-            ""]
+    # k = 1 against plain, per seed, from the logged numbers: at k = 1 the two
+    # protocols are one forecast, and the logged value is the run's own on the
+    # device it trained on, so no CPU re-score noise enters the gap.
+    gaps: dict = {}
+    for _, _, b in blocks:
+        for c, p in b.cells.items():
+            if PG.K1 not in p or PG.MV not in p:
+                continue
+            for seed in set(p[PG.K1]) & set(p[PG.MV]):
+                mv, k1 = p[PG.MV][seed]["mse"], p[PG.K1][seed]["mse"]
+                if mv:
+                    gaps[c[1]] = max(gaps.get(c[1], 0.0), abs(k1 - mv) / mv)
+    caveats = [K1_CAVEATS[(family, m)] for m in sorted(gaps, key=model_rank)
+               if (family, m) in K1_CAVEATS]
+    out += ["$k$ = 1 is one cluster over all channels: the plain network plus the "
+            "cluster assigner, whose output cannot change a one-cluster forecast. It "
+            "reproduces the plain cell within seed noise, not bit for bit: the assigner "
+            "and the similarity loss draw from the global random stream, which changes "
+            "every random draw training makes after them, the backbone's dropout masks "
+            "among them. Largest per-seed relative MSE gap between $k$ = 1 and plain "
+            "(logged numbers): "
+            + ", ".join(f"{model_label(m)} {g:.1e}"
+                        for m, g in sorted(gaps.items(), key=lambda mg: model_rank(mg[0])))
+            + (f"; {'; '.join(caveats)}" if caveats else "")
+            + ". Every multivariate and cluster run here trained eager, so none of it is "
+            "a compile difference."
+            + (" Runs from the retired upstream wrappers are in logs/_archive and are "
+               "not in this table." if family == "emf" else ""), ""]
     return "\n".join(out)

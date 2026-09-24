@@ -13,6 +13,11 @@ REPO = RESULTS.parent
 LOGS = REPO / "logs"
 FRAMES = RESULTS / "frames"
 SPECS = RESULTS / "specs"
+# The (L, O) windows each family's paradigm comparison and cluster sweep are
+# rendered at, the benchmark first. The EMF grids ran L336/O96 only (the other
+# windows live in logs/_archive); the VoIP grids ran L48/O12 and L24/O6.
+WINDOWS = {"emf": [(336, 96)], "voip": [(48, 12), (24, 6)]}
+
 # The frozen report every published value is gated against (make.py tables /
 # reconcile). Re-frozen when a set of numbers is accepted as published; the
 # previous snapshots stay in archive/ as provenance.
@@ -230,24 +235,22 @@ def cmd_tables(args) -> int:
 
     family = args.family
     # The benchmark window every cross-setup section is built for, per corpus.
-    setting = (48, 12) if family == "voip" else (336, 96)
+    setting = WINDOWS[family][0]
     sections = (T.render_sections(runs_csv, REPO, RESULTS, family)
                 + T.render_cross_sections(runs_csv, REPO, RESULTS, family, setting))
-    # The k-sweep section is per dataset; each family has its own default.
-    sweep_dataset = "voip_mobile" if family == "voip" else "ed2022"
-    sweep_window = setting
-    sweep = T.render_ccm_sweep(FRAMES / "cells.csv", dataset=sweep_dataset,
-                               seq_len=sweep_window[0], pred_len=sweep_window[1])
-    if sweep:
-        sections.append(("ccm-sweep", "Channel Clustering (CCM) vs. plain", sweep))
-    # The seed-aware answer to "which paradigm is best": matched seeds, a tie
-    # band at seed noise, k chosen on validation (see emfres/paradigms.py).
     # extract_results is importable here: render_sections put results/ on the path.
     import extract_results as er
+    labels = dict(dataset_label=er.dataset_label, model_label=er.model_label,
+                  dataset_rank=er.dataset_rank, model_rank=er.model_rank)
+    # Every cluster sweep of the family, at every window it ran, with k chosen
+    # on validation exactly as the paradigm comparison chooses it.
+    sweep = T.render_ccm_sweep(runs_csv, family, WINDOWS[family], **labels)
+    if sweep:
+        sections.append(("ccm-sweep", T.SWEEP_TITLE, sweep))
+    # The seed-aware answer to "which paradigm is best": matched seeds, a tie
+    # band at seed noise, k chosen on validation (see emfres/paradigms.py).
     from . import paradigms as PG
-    paradigm_md = PG.render(runs_csv, family, setting,
-                            dataset_label=er.dataset_label, model_label=er.model_label,
-                            dataset_rank=er.dataset_rank, model_rank=er.model_rank)
+    paradigm_md = PG.render(runs_csv, family, setting, **labels)
     if paradigm_md:
         sections.append(("paradigms", "Paradigm Comparison", paradigm_md))
     if not sections:
