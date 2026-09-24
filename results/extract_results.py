@@ -26,7 +26,7 @@ import re
 import statistics
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -117,6 +117,28 @@ def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
             n_complete_seeds=len(complete_seeds(by_seed)),
         )
     return cells
+
+
+def fixed_view(runs: list[Run]) -> list[Run]:
+    """A cluster tree's runs under the fixed train-mean membership, the primary protocol.
+
+    Each run's mse, mae, val_loss, ic, jc and interval_width are swapped for
+    their fixed-membership twins (runlogs.Run.*_fixed): every channel keeps the
+    cluster weights computed once from the training split, so a forecast
+    depends on its own window only. Time, epochs and size stay the run's own.
+    A run with no fixed metrics (fixed_source "none") is left out rather than
+    averaged in with a batch-protocol number, so its cell prints the seeds it
+    has, with its (n=…). Runs outside a cluster tree (k None) pass unchanged.
+    """
+    out = []
+    for r in runs:
+        if r.k is None:
+            out.append(r)
+        elif r.mse_fixed is not None and r.mae_fixed is not None:
+            out.append(replace(r, mse=r.mse_fixed, mae=r.mae_fixed, val_loss=r.val_loss_fixed,
+                               ic=r.ic_fixed, jc=r.jc_fixed,
+                               interval_width=r.interval_width_fixed))
+    return out
 
 
 def seed_targets(*cell_maps: dict[tuple, Cell]) -> dict[tuple, int]:
@@ -368,6 +390,25 @@ def coverage_summary(runs: list[Run], cells: dict[tuple, Cell]) -> str:
     return f"{len(runs)} logs; each cell averages {span} replicate run(s)"
 
 
+# How a cluster section names its two protocols (render_report). The fixed
+# train-mean membership is the primary one (the owner's decision of
+# 2026-09-24); the logged batch protocol is kept, labelled, as a sensitivity.
+FIXED_PROTOCOL_TEXT = (
+    "the fixed train-mean membership (`sl_test_fixed/*`), the primary cluster protocol: "
+    "every channel keeps the cluster weights computed once from the training split, so a "
+    "forecast depends on its own window only. The logged batch protocol (`sl_test/*`) "
+    "is the last group, a sensitivity; at k = 1 the two are the same forecast. The k "
+    "chosen on validation (`sl_val_fixed/loss`) is in `Channel Clustering (CCM) vs. "
+    "plain` and `Paradigm Comparison`")
+BATCH_GROUP = "Batch protocol (sensitivity)"
+BATCH_PROTOCOL_TEXT = (
+    "The same runs under the logged batch protocol (`sl_test/*`), kept as a sensitivity: "
+    "upstream's assigner averages the cluster membership over each evaluation batch, so a "
+    "k > 1 forecast depends on the other windows of its batch, and on a batch size that "
+    "differs by model. At k = 1 the membership is all ones either way, so the two "
+    "protocols give the same forecast.")
+
+
 # What the single-series tree is and is not (.personal/AUDIT_2026-09-24.md
 # S1, S2, S3/E8, S7), printed at the top of its section: it is a different
 # dataset family, trained before the comparability contract, and one of its
@@ -422,21 +463,31 @@ def per_band_note(runs: list[Run]) -> str:
 
 def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
                   extra: Optional[list[tuple]] = None,
-                  targets: Optional[dict] = None) -> str:
+                  targets: Optional[dict] = None,
+                  batch: Optional[dict[tuple, Cell]] = None) -> str:
     """One setup's section. ``extra`` appends (group, table title, lines, note)
     groups after the model-size table -- what only the frames path knows.
     ``targets`` (seed_targets over every tree loaded; default: this tree's
-    cells alone) is the seed count a complete cell has."""
+    cells alone) is the seed count a complete cell has.
+
+    ``batch`` is for a cluster tree whose ``runs`` and ``cells`` are its
+    fixed_view, the primary protocol: the same runs' logged batch-protocol
+    cells, printed as the section's last group, a labelled sensitivity. A
+    cluster tree rendered without it is the batch protocol, and says so."""
     if targets is None:
-        targets = seed_targets(cells)
+        targets = seed_targets(cells, *([batch] if batch else []))
     short = any(shortfall(c, key, targets) for key, c in cells.items())
     legend = f" {SHORT_NOTE}" if short else ""
-    models = sort_models({k[0] for k in cells})
+    models = sort_models({k[0] for k in cells} | {k[0] for k in batch or {}})
     confs = [c for c in (False, True) if row_keys_for(cells, c)]
     settings = sorted({(r.seq_len, r.pred_len) for r in runs})
     datasets = sorted({r.dataset for r in runs}, key=dataset_rank)
 
     ks = sorted({r.k for r in runs if r.k is not None})
+    # The primary numbers' log keys: sl_test_fixed/* for a cluster tree
+    # rendered from its fixed view, sl_test/* for every other tree.
+    fixed = bool(ks) and batch is not None
+    test_key = "sl_test_fixed" if fixed else "sl_test"
 
     doc = Doc(title)
     items = [
@@ -448,7 +499,7 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
         items.append(("Channel clusters",
                       f"k = {', '.join(str(k) for k in ks)} "
                       f"(each k is its own cell, never averaged together)"))
-        items.append(("Protocol",
+        items.append(("Protocol", FIXED_PROTOCOL_TEXT if fixed else
                       "the logged batch protocol (`sl_test/*`): the cluster membership is "
                       "averaged over each evaluation batch, so a k > 1 forecast depends on "
                       "its neighbouring windows. The primary fixed train-mean membership "
@@ -473,11 +524,11 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
         doc.group("Forecast accuracy" + suffix)
         doc.para(f"**Bold** = best (lowest) in the row, <u>underline</u> = runner-up. "
                  f"`{MISSING}` = not logged." + legend)
-        doc.table("MSE (`sl_test/loss`)",
+        doc.table(f"MSE (`{test_key}/loss`)",
                   metric_table(cells, models, row_keys, conf, "mse", num_fmt(4),
                                targets=targets))
         if has_metric(cells, models, row_keys, conf, "mae"):
-            doc.table("MAE (`sl_test/mae`)",
+            doc.table(f"MAE (`{test_key}/mae`)",
                       metric_table(cells, models, row_keys, conf, "mae", num_fmt(4),
                                    targets=targets))
 
@@ -498,18 +549,7 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
             doc.group("Conformal prediction")
             doc.para('Not marked -- "best" coverage means closest to the target, not highest, and '
                      "a narrower interval only counts if that target is met." + legend)
-            if has_metric(cells, models, row_keys, True, "ic"):
-                doc.table("Marginal coverage % (`sl_test/ic`)",
-                          metric_table(cells, models, row_keys, True, "ic", num_fmt(2),
-                                       mark_best=False, targets=targets))
-            if has_metric(cells, models, row_keys, True, "jc"):
-                doc.table("Joint coverage % (`sl_test/jc`)",
-                          metric_table(cells, models, row_keys, True, "jc", num_fmt(2),
-                                       mark_best=False, targets=targets))
-            if has_metric(cells, models, row_keys, True, "interval_width"):
-                doc.table("Mean interval width (`sl_test/interval_width_mean`)",
-                          metric_table(cells, models, row_keys, True, "interval_width",
-                                       num_fmt(3), mark_best=False, targets=targets))
+            conformal_tables(doc, cells, models, row_keys, test_key, targets)
 
     sizes = model_size_table(cells, models)
     if sizes:
@@ -523,7 +563,71 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
         doc.group(group)
         doc.table(table_title, lines, note=note)
 
+    if fixed:
+        doc.group(BATCH_GROUP)
+        short = any(shortfall(c, key, targets) for key, c in batch.items())
+        doc.para(BATCH_PROTOCOL_TEXT + " **Bold** = best (lowest) in the row, <u>underline</u> "
+                 "= runner-up; coverage and width are not marked."
+                 + (f" {SHORT_NOTE}" if short else ""))
+        batch_confs = [c for c in (False, True) if row_keys_for(batch, c)]
+        for conf in batch_confs:
+            suffix = ""
+            if len(batch_confs) > 1:
+                suffix = (", with conformal prediction" if conf
+                          else ", without conformal prediction")
+            row_keys = row_keys_for(batch, conf)
+            doc.table(f"MSE (`sl_test/loss`){suffix}",
+                      metric_table(batch, models, row_keys, conf, "mse", num_fmt(4),
+                                   targets=targets))
+            if has_metric(batch, models, row_keys, conf, "mae"):
+                doc.table(f"MAE (`sl_test/mae`){suffix}",
+                          metric_table(batch, models, row_keys, conf, "mae", num_fmt(4),
+                                       targets=targets))
+            if conf:
+                conformal_tables(doc, batch, models, row_keys, "sl_test", targets)
+
     return doc.render()
+
+
+def conformal_tables(doc: Doc, cells, models, row_keys, test_key: str,
+                     targets: Optional[dict]) -> None:
+    """The three conformal tables of one section, unmarked, from ``test_key``'s logs."""
+    for name, attr, key, decimals in (
+            ("Marginal coverage %", "ic", "ic", 2),
+            ("Joint coverage %", "jc", "jc", 2),
+            ("Mean interval width", "interval_width", "interval_width_mean", 3)):
+        if has_metric(cells, models, row_keys, True, attr):
+            doc.table(f"{name} (`{test_key}/{key}`)",
+                      metric_table(cells, models, row_keys, True, attr, num_fmt(decimals),
+                                   mark_best=False, targets=targets))
+
+
+def render_setup(title: str, runs: list[Run], cells: dict[tuple, Cell],
+                 targets: Optional[dict] = None,
+                 extra: Optional[list[tuple]] = None) -> str:
+    """render_report for any tree; a cluster tree leads with its fixed-protocol view.
+
+    ``cells`` is aggregate(runs). A cluster tree's section prints fixed_view's
+    numbers as its primary tables and ``cells``, the logged batch protocol, as
+    its last group. A cluster tree none of whose runs has fixed metrics (frames
+    written before those columns existed) is rendered under the batch protocol,
+    labelled as such, with a warning.
+    """
+    if not any(r.k is not None for r in runs):
+        return render_report(title, runs, cells, extra=extra, targets=targets)
+    fixed = fixed_view(runs)
+    if not any(r.k is not None for r in fixed):
+        print(f"WARNING: no run of '{title}' has fixed-membership metrics: rendered under "
+              f"the logged batch protocol, labelled as such. Re-extract the frames "
+              f"(make.py extract) for the primary protocol.", file=sys.stderr)
+        return render_report(title, runs, cells, extra=extra, targets=targets)
+    missing = len(runs) - len(fixed)
+    if missing:
+        print(f"WARNING: {missing} runs of '{title}' have no fixed-membership metrics "
+              f"(fixed_source none): left out of its fixed-protocol cells, which print "
+              f"the seeds they have; the batch-protocol group keeps them.", file=sys.stderr)
+    return render_report(title, fixed, aggregate(fixed), extra=extra, targets=targets,
+                         batch=cells)
 
 
 def canonical_cells(cells: dict[tuple, Cell]) -> dict[tuple, Cell]:
@@ -1223,14 +1327,14 @@ def main() -> None:
     if args.output is not None:
         title, runs, cells = loaded[0]
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(render_report(title, runs, cells))
+        args.output.write_text(render_setup(title, runs, cells))
         print(f"Wrote {args.output} ({len(runs)} runs, {len(cells)} aggregated cells).", file=sys.stderr)
         return
 
     # A complete cell has the seeds every tree's cells of its dataset and window
     # have: a sweep still training is judged against the finished trees.
     targets = seed_targets(*(cells for _, _, cells in loaded))
-    updates = [(title, render_report(title, runs, cells, targets=targets))
+    updates = [(title, render_setup(title, runs, cells, targets=targets))
                for title, runs, cells in loaded]
 
     by_title = {title: cells for title, _, cells in loaded}

@@ -455,6 +455,50 @@ def test_a_dash_that_now_has_a_value_is_new_not_a_change(tmp_path):
         "its tables other than MSE/MAE are text only")
 
 
+def _cluster_gate(tmp_path, *, batch_key="sl_test/loss", mse="0.5350", mse_fixed="0.5352",
+                  rules=()):
+    """A snapshot publishing one cluster k=2 MSE of 0.5350 under ``batch_key``."""
+    snapshot = "\n".join([
+        "# Cluster (k-Grouped Channels)", "", f"### 1.1 · MSE (`{batch_key}`)", "",
+        "| Dataset | $L$ | $O$ | $k$ | DLinear (2023) |",
+        "|:---|---:|---:|---:|---:|",
+        "| ED2022 | 336 | 96 | 2 | 0.5350 |", ""])
+    published = tmp_path / "2026-01-01_tables.md"
+    published.write_text(snapshot)
+    cells = tmp_path / "cells.csv"
+    base = {f: "" for f in frames.CELL_FIELDS}
+    frames.write_csv(cells, [dict(base, setup="cluster", model="DLinear", dataset="ed2022",
+                                  seq_len=336, pred_len=96, k="2", conf=1, mse=mse,
+                                  mae="0.3", mse_fixed=mse_fixed, mae_fixed="0.3")],
+                     frames.CELL_FIELDS)
+    import yaml
+    spec = tmp_path / "gate.yaml"
+    spec.write_text(yaml.safe_dump({"snapshot": published.name, "expected": list(rules)}))
+    return R.gate(published, cells, [], runs_spec=tmp_path / "none.yaml", gate_spec=spec,
+                  out=io.StringIO())
+
+
+def test_a_cluster_cell_is_held_against_its_fixed_mean_and_the_batch_one(tmp_path):
+    rule = {"kind": "cells", "setup": "cluster", "k_min": 2, "reason": "fixed protocol.",
+            "now": [{"model": "DLinear", "value": "0.5352"}]}
+    # Printed under the batch protocol: today's primary is the fixed mean.
+    g = _cluster_gate(tmp_path)
+    assert not g.ok and [(c.current, c.via) for c in g.unexpected] == [("0.5352", "")]
+    assert "held against today's fixed-protocol cells" in " ".join(g.held["cells"].notes)
+    g = _cluster_gate(tmp_path, rules=[rule])
+    assert g.ok and g.n_expected == 1
+    # The batch mean it was published from still has to reproduce, and no
+    # rule forgives it there -- not even one pinning the value it moved to.
+    g = _cluster_gate(tmp_path, mse="0.5352", rules=[rule])
+    assert not g.ok and [c.via for c in g.unexpected] == [R.BATCH_VIA]
+    assert g.n_expected == 1
+    # A snapshot that printed the fixed protocol is held against it alone.
+    g = _cluster_gate(tmp_path, batch_key="sl_test_fixed/loss", mse="0.9",
+                      mse_fixed="0.5350")
+    assert g.ok and g.held["cells"].published == 1
+    assert R.cluster_printed_batch(SNAPSHOT.read_text())
+
+
 # --------------------------------------------------------------------- the spec
 
 def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
@@ -480,8 +524,12 @@ def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
                                     column="Median gap"), "-0.73%", "-1.67%"),
         R.Change("sweep", dict(sweep, column="k", k="1"), "0.3771", "0.3772"),
         R.Change("sweep", dict(sweep, column="plain", k=""), "0.3771", "0.3772"),
-        # The Cluster section still prints the batch protocol: its runs did not change.
-        R.Change("cells", dict(cells, k="2"), "0.5350", "0.5352"),
+        # The Cluster section's k >= 2 cells moved to their fixed means, each
+        # to the one it is pinned to; no k = 1 cell moved, and none moved in
+        # the batch protocol the snapshot printed it under.
+        R.Change("cells", dict(cells, k="2"), "0.5350", "0.5351"),
+        R.Change("cells", dict(cells, k="1"), "0.5353", "0.5354"),
+        R.Change("cells", dict(cells, k="2"), "0.5350", "0.5352", R.BATCH_VIA),
         R.Change("cells", dict(cells, setup="multivariate", k=""), "0.5353", "0.5354"),
         R.Change("scoreboard", dict(section="Paradigm Comparison", table="scoreboard",
                                     comparison="Per-channel vs Multivariate", variant="",
@@ -537,6 +585,10 @@ def test_each_declared_change_is_pinned_to_a_value_the_snapshot_published(tmp_pa
                                window="L336/O96", k="", metric="MSE"), "0.8316", "0.8320"),
         R.Change("cells", dict(setup="perchannel", model="EMForecaster", dataset="ED2022",
                                window="L336/O96", k="", metric="MSE"), "0.4879", "0.4890"),
+        R.Change("cells", dict(setup="cluster", model="TSMixer", dataset="UH2022",
+                               window="L336/O96", k="9", metric="MSE"), "1.2268", "1.1588"),
+        R.Change("cells", dict(setup="cluster", model="DLinear", dataset="EMF2023",
+                               window="L336/O96", k="2", metric="MAE"), "0.5030", "0.5031"),
     ]
     for change in others:
         assert not any(R.matches(rule, change) for rule in rules), change.label()

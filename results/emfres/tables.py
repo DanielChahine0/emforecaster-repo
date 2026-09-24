@@ -81,6 +81,18 @@ def runs_from_csv(path: Path, repo: Path, family: Optional[str] = None):
                 seed=row["seed"] or None,
                 path=repo / row["path"],
                 concurrency=_i(row.get("concurrency", "")),
+                # A cluster run's fixed-membership twins (the primary cluster
+                # protocol, extract_results.fixed_view) and the validation
+                # losses a k is chosen on. .get: frames written before a
+                # column existed leave it None.
+                val_loss=_f(row.get("val_loss", "")),
+                mse_fixed=_f(row.get("mse_fixed", "")),
+                mae_fixed=_f(row.get("mae_fixed", "")),
+                val_loss_fixed=_f(row.get("val_loss_fixed", "")),
+                ic_fixed=_f(row.get("ic_fixed", "")),
+                jc_fixed=_f(row.get("jc_fixed", "")),
+                interval_width_fixed=_f(row.get("interval_width_fixed", "")),
+                fixed_source=row.get("fixed_source", "") or "",
             ))
     return by_setup
 
@@ -104,8 +116,10 @@ def render_sections(runs_csv: Path, repo: Path, results: Path,
             continue
         title = SETUP_TITLES.get(setup, setup.title())
         extra = trivial_forecasts(runs_csv, setup, family, er) if setup == "series" else None
-        out.append((setup, title, er.render_report(title, runs, cells[setup],
-                                                   extra=extra or None, targets=targets)))
+        # render_setup: a cluster tree leads with its fixed-protocol view, the
+        # logged batch protocol its last group.
+        out.append((setup, title, er.render_setup(title, runs, cells[setup],
+                                                  targets=targets, extra=extra or None)))
     return out
 
 

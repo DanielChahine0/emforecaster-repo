@@ -149,6 +149,77 @@ def test_a_cell_short_of_its_seeds_shows_n_and_is_never_ranked():
     assert "(n=" not in plain and "Protocol" not in plain
 
 
+def _fixed(run, mse_fixed, *, source="sidecar"):
+    """A cluster run with fixed-membership metrics (MAE at the same 0.7 ratio)."""
+    from dataclasses import replace
+    return replace(run, mse_fixed=mse_fixed, mae_fixed=mse_fixed * 0.7,
+                   val_loss_fixed=mse_fixed, ic_fixed=90.0, jc_fixed=50.0,
+                   interval_width_fixed=1.0, fixed_source=source, ic=80.0, jc=40.0,
+                   interval_width=2.0)
+
+
+def _section_tables(md):
+    """{table heading: [rows]} of a rendered section, rows as lists of cells."""
+    out, cur = {}, None
+    for line in md.splitlines():
+        if line.startswith("### "):
+            cur = line.split(" · ", 1)[1]
+            out[cur] = []
+        elif line.startswith("## "):
+            cur = None
+        elif cur and line.startswith("|") and not line.startswith("|:"):
+            out[cur].append([c.strip() for c in line.strip("|").split("|")])
+    return out
+
+
+def test_a_cluster_section_leads_with_the_fixed_protocol_the_batch_one_last():
+    import extract_results as er
+    # k=2's fixed forecast is worse than its batch one, TSMixer's the other way.
+    cl = [_fixed(_er_run("DLinear", s, v, k=k), fx) for s in SEEDS
+          for k, v, fx in ((1, 0.50, 0.50), (2, 0.49, 0.51))]
+    cl += [_fixed(_er_run("TSMixer", s, v, k=k), fx) for s in SEEDS
+           for k, v, fx in ((1, 0.60, 0.60), (2, 0.52, 0.47))]
+    md = er.render_setup(er.CLUSTER_TITLE, cl, er.aggregate(cl))
+    assert "- Protocol: the fixed train-mean membership (`sl_test_fixed/*`)" in md
+    t = _section_tables(md)
+    # Primary: the fixed numbers, ranked on them.
+    assert t["MSE (`sl_test_fixed/loss`)"][2][4:] == ["<u>0.5100</u>", "**0.4700**"]
+    assert t["MAE (`sl_test_fixed/mae`)"][2][4:] == ["<u>0.3570</u>", "**0.3290**"]
+    assert t["Marginal coverage % (`sl_test_fixed/ic`)"][1][4:] == ["90.00", "90.00"]
+    # The last group: the same runs' logged batch numbers, labelled.
+    last = md.split("\n## ")[-1]
+    assert last.startswith("5 · Batch protocol (sensitivity)")
+    assert t["MSE (`sl_test/loss`)"][2][4:] == ["**0.4900**", "<u>0.5200</u>"]
+    assert t["Marginal coverage % (`sl_test/ic`)"][1][4:] == ["80.00", "80.00"]
+    # At k = 1 the two protocols print the same row.
+    assert t["MSE (`sl_test/loss`)"][1] == t["MSE (`sl_test_fixed/loss`)"][1]
+    # Cost and size are the runs' own, not a protocol's.
+    assert "Total training time (`parameters/running_time`)" in t
+
+
+def test_a_cluster_run_without_fixed_metrics_is_short_in_the_fixed_cells(capsys):
+    import extract_results as er
+    cl = [_fixed(_er_run("DLinear", s, 0.5, k=k), 0.6) for s in SEEDS for k in (1, 2)]
+    cl[-1].mse_fixed = cl[-1].mae_fixed = None          # seed 3, k=2: fixed_source none
+    cells = er.aggregate(cl)
+    md = er.render_setup(er.CLUSTER_TITLE, cl, cells, targets=er.seed_targets(cells))
+    t = _section_tables(md)
+    assert t["MSE (`sl_test_fixed/loss`)"][2][4] == "0.6000 (n=2)"
+    assert t["MSE (`sl_test/loss`)"][2][4] == "**0.5000**"
+    assert "1 runs of 'Cluster (k-Grouped Channels)' have no fixed" in capsys.readouterr().err
+
+    # Frames written before the fixed columns: the batch protocol, labelled so.
+    bare = [_er_run("DLinear", s, 0.5, k=k) for s in SEEDS for k in (1, 2)]
+    md = er.render_setup(er.CLUSTER_TITLE, bare, er.aggregate(bare))
+    assert "- Protocol: the logged batch protocol" in md and "### 1.1 · MSE (`sl_test/loss`)" in md
+    assert er.BATCH_GROUP not in md
+    assert "no run of 'Cluster (k-Grouped Channels)' has fixed" in capsys.readouterr().err
+    # Any other tree is untouched.
+    mv = [_er_run("DLinear", s, 0.5) for s in SEEDS]
+    assert er.render_setup(er.MULTIVARIATE_TITLE, mv, er.aggregate(mv)) == \
+        er.render_report(er.MULTIVARIATE_TITLE, mv, er.aggregate(mv))
+
+
 def test_a_per_channel_seed_missing_a_band_is_marked_partial():
     import extract_results as er
     runs = [_er_run("DLinear", s, 0.5, channel=ch) for s in SEEDS for ch in (0, 1)

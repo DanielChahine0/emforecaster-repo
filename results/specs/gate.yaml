@@ -6,7 +6,9 @@
 #
 #   cells       the MSE/MAE tables of Multivariate, Univariate Series,
 #               Univariate (Per Channel) and Cluster (k-Grouped Channels),
-#               recomputed from frames/cells.csv;
+#               recomputed from frames/cells.csv: each from the column its
+#               section prints it from today, a cluster cell from its
+#               fixed-protocol mean (mse_fixed, mae_fixed);
 #               fields: setup, model, dataset, window, k, metric
 #   scoreboard  the Paradigm Comparison's scoreboard and sensitivity rows,
 #               against today's render;
@@ -52,11 +54,14 @@
 # tables/all.md into archive/, repoint PUBLISHED, and set `snapshot` to the new
 # file with empty `held_elsewhere` and `expected` lists.
 #
-# Deliberately NOT expected: the cluster k >= 2 cells of Cluster (k-Grouped
-# Channels). That section and frames/cells.csv still print the logged batch
-# protocol (b6e394191), whose runs have not changed, so a change there would be
-# a real one. If that section moves to the fixed protocol, add the rule in the
-# same commit.
+# The Cluster (k-Grouped Channels) section leads with the fixed protocol since
+# the owner's 2026-09-24 decision; the snapshot's cluster cells are the logged
+# batch protocol (b6e394191). Each is held twice:
+# against today's fixed-protocol mean, where its k >= 2 values moved (the last
+# rule below), and against the batch mean it was published from, whose runs
+# have not changed. A change there is a real one: no rule forgives it, whatever
+# the rule names (reconcile.BATCH_VIA). At k = 1 the two protocols are one
+# forecast, and no k = 1 value is expected to move.
 
 snapshot: 2026-09-22_tables.md
 
@@ -176,3 +181,84 @@ expected:
       now prints as the oracle k; it is chosen over the k >= 2 values that
       moved with the protocol, and moves with them: DLinear 2 -> 3, TSMixer
       2 -> 5. PatchTST's stays at 9.
+
+  - kind: cells
+    setup: cluster
+    window: L336/O96
+    k_min: 2
+    now:
+      - {dataset: ED2022, metric: MSE, model: DLinear, k: 2, value: "0.5352"}
+      - {dataset: ED2022, metric: MSE, model: DLinear, k: 5, value: "0.5355"}
+      - {dataset: ED2022, metric: MSE, model: DLinear, k: 9, value: "0.5357"}
+      - {dataset: ED2022, metric: MSE, model: PatchTST, k: 2, value: "0.5400"}
+      - {dataset: ED2022, metric: MSE, model: PatchTST, k: 3, value: "0.5322"}
+      - {dataset: ED2022, metric: MSE, model: PatchTST, k: 5, value: "0.5401"}
+      - {dataset: ED2022, metric: MSE, model: PatchTST, k: 9, value: "0.5190"}
+      - {dataset: ED2022, metric: MSE, model: TSMixer, k: 2, value: "0.5153"}
+      - {dataset: ED2022, metric: MSE, model: TSMixer, k: 3, value: "0.5248"}
+      - {dataset: ED2022, metric: MSE, model: TSMixer, k: 5, value: "0.5116"}
+      - {dataset: ED2022, metric: MSE, model: TSMixer, k: 9, value: "0.5224"}
+      - {dataset: UH2022, metric: MSE, model: DLinear, k: 2, value: "1.1782"}
+      - {dataset: UH2022, metric: MSE, model: DLinear, k: 3, value: "1.1782"}
+      - {dataset: UH2022, metric: MSE, model: DLinear, k: 5, value: "1.1782"}
+      - {dataset: UH2022, metric: MSE, model: DLinear, k: 9, value: "1.1782"}
+      - {dataset: UH2022, metric: MSE, model: PatchTST, k: 2, value: "1.1673"}
+      - {dataset: UH2022, metric: MSE, model: PatchTST, k: 3, value: "1.1563"}
+      - {dataset: UH2022, metric: MSE, model: PatchTST, k: 5, value: "1.1573"}
+      - {dataset: UH2022, metric: MSE, model: PatchTST, k: 9, value: "1.1511"}
+      - {dataset: UH2022, metric: MSE, model: TSMixer, k: 2, value: "1.1608"}
+      - {dataset: UH2022, metric: MSE, model: TSMixer, k: 3, value: "1.1615"}
+      - {dataset: UH2022, metric: MSE, model: TSMixer, k: 5, value: "1.1615"}
+      - {dataset: UH2022, metric: MSE, model: TSMixer, k: 9, value: "1.1587"}
+      - {dataset: EMF2023, metric: MSE, model: DLinear, k: 5, value: "1.5526"}
+      - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 2, value: "1.5232"}
+      - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 3, value: "1.5101"}
+      - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 5, value: "1.5090"}
+      - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 9, value: "1.5062"}
+      - {dataset: EMF2023, metric: MSE, model: TSMixer, k: 3, value: "1.5084"}
+      - {dataset: EMF2023, metric: MSE, model: TSMixer, k: 5, value: "1.4962"}
+      - {dataset: EMF2023, metric: MSE, model: TSMixer, k: 9, value: "1.4953"}
+      - {dataset: ED2022, metric: MAE, model: DLinear, k: 2, value: "0.3764"}
+      - {dataset: ED2022, metric: MAE, model: DLinear, k: 3, value: "0.3764"}
+      - {dataset: ED2022, metric: MAE, model: DLinear, k: 5, value: "0.3766"}
+      - {dataset: ED2022, metric: MAE, model: DLinear, k: 9, value: "0.3771"}
+      - {dataset: ED2022, metric: MAE, model: PatchTST, k: 2, value: "0.3865"}
+      - {dataset: ED2022, metric: MAE, model: PatchTST, k: 3, value: "0.3757"}
+      - {dataset: ED2022, metric: MAE, model: PatchTST, k: 5, value: "0.3906"}
+      - {dataset: ED2022, metric: MAE, model: PatchTST, k: 9, value: "0.3692"}
+      - {dataset: ED2022, metric: MAE, model: TSMixer, k: 2, value: "0.3619"}
+      - {dataset: ED2022, metric: MAE, model: TSMixer, k: 3, value: "0.3684"}
+      - {dataset: ED2022, metric: MAE, model: TSMixer, k: 5, value: "0.3600"}
+      - {dataset: ED2022, metric: MAE, model: TSMixer, k: 9, value: "0.3671"}
+      - {dataset: UH2022, metric: MAE, model: DLinear, k: 2, value: "0.4827"}
+      - {dataset: UH2022, metric: MAE, model: DLinear, k: 5, value: "0.4827"}
+      - {dataset: UH2022, metric: MAE, model: DLinear, k: 9, value: "0.4828"}
+      - {dataset: UH2022, metric: MAE, model: PatchTST, k: 2, value: "0.4815"}
+      - {dataset: UH2022, metric: MAE, model: PatchTST, k: 3, value: "0.4705"}
+      - {dataset: UH2022, metric: MAE, model: PatchTST, k: 5, value: "0.4731"}
+      - {dataset: UH2022, metric: MAE, model: PatchTST, k: 9, value: "0.4679"}
+      - {dataset: UH2022, metric: MAE, model: TSMixer, k: 2, value: "0.4636"}
+      - {dataset: UH2022, metric: MAE, model: TSMixer, k: 3, value: "0.4655"}
+      - {dataset: UH2022, metric: MAE, model: TSMixer, k: 5, value: "0.4607"}
+      - {dataset: UH2022, metric: MAE, model: TSMixer, k: 9, value: "0.4608"}
+      - {dataset: EMF2023, metric: MAE, model: DLinear, k: 3, value: "0.5027"}
+      - {dataset: EMF2023, metric: MAE, model: DLinear, k: 5, value: "0.5017"}
+      - {dataset: EMF2023, metric: MAE, model: DLinear, k: 9, value: "0.5008"}
+      - {dataset: EMF2023, metric: MAE, model: PatchTST, k: 3, value: "0.4584"}
+      - {dataset: EMF2023, metric: MAE, model: PatchTST, k: 5, value: "0.4600"}
+      - {dataset: EMF2023, metric: MAE, model: PatchTST, k: 9, value: "0.4557"}
+      - {dataset: EMF2023, metric: MAE, model: TSMixer, k: 3, value: "0.4545"}
+      - {dataset: EMF2023, metric: MAE, model: TSMixer, k: 5, value: "0.4492"}
+      - {dataset: EMF2023, metric: MAE, model: TSMixer, k: 9, value: "0.4474"}
+    reason: >
+      The Cluster (k-Grouped Channels) section now prints the fixed train-mean
+      membership protocol (sl_test_fixed/*) in its MSE and MAE tables, the
+      primary cluster protocol since the owner's 2026-09-24 decision, and the
+      logged batch protocol it used to print as its last group, a sensitivity.
+      The snapshot's three models take their fixed-protocol values from the
+      eval_fixed.json sidecars of runs the sweep does not touch, so each k >= 2
+      value that moved is pinned to the one they give: 63 of the 72 (ED2022's
+      MAE ones are the sweep's pins above). The other 9 round to the batch
+      value; at k = 1 the two are one forecast and nothing moves. Every one of
+      the 90 is also held against the batch mean it was published from, where
+      it still has to reproduce.
