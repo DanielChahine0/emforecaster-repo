@@ -30,11 +30,11 @@ from . import figdata as FD
 from . import paradigms as PG
 from .figkit import (
     INK_PRIMARY, INK_SECONDARY, PARTIAL_ALPHA, SURFACE, dataset_colors, dataset_name,
-    fit_texts, footnote, footnotes, layout, legend, mark_kwargs, model_name, pad_range,
+    footnote, footnotes, layout, legend, mark_kwargs, model_name, pad_range,
     panel_title, paradigm_handles, style_axes, title, window_label, write, xlabel,
 )
 from .fig_paradigms import (
-    FLAG_NOTE, METRIC_NAME, WIDTH, _grid_height, _model_ticks, dot_panel, na_note,
+    FLAG_NOTE, METRIC_NAME, WIDTH, _grid_height, _model_ticks, dot_panel, na_note, settle,
 )
 from .style import log_ticks
 
@@ -254,7 +254,7 @@ def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *
     notes = [FLAG_NOTE if flagged_any else None, na_note(models)]
     layout(fig, style, top=0.86, bottom=0.5 if any(notes) else 0.42, left=0.13)
     for ax, texts in labels.items():
-        fit_texts(ax, texts)
+        settle(ax, texts, style)
     footnotes(fig, notes, style)
     return write(fig, root, group=family, subject="calibration",
                  configs=[c.window for c in corpora], formats=formats)

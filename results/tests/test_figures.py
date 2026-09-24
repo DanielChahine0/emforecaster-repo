@@ -152,3 +152,58 @@ def test_a_label_goes_to_the_first_spot_that_covers_no_mark():
     t = figkit.place_clear(ax, "threshold", spots, ignore=(rule,))
     assert t.get_verticalalignment() == "bottom" and t.get_horizontalalignment() == "left"
     plt.close(fig)
+
+
+def _lane_panel(tmp_path, rows):
+    """One ED2022 DLinear dot panel drawn from ``rows``, its labels not yet settled."""
+    import matplotlib.pyplot as plt
+
+    from emfres import fig_paradigms, figdata, figkit
+
+    style = figkit.setup("paper")
+    frames.write_csv(tmp_path / "runs.csv", rows, frames.RUN_FIELDS)
+    corpus = figdata.load(tmp_path / "runs.csv", "emf", (336, 96))
+    # One model row at the height a row gets in P1 (lanes ~5 points apart).
+    fig = plt.figure(figsize=(2.4, 0.8))
+    ax = fig.add_axes((0.1, 0.3, 0.85, 0.4))
+    xs, _, labels = fig_paradigms.dot_panel(ax, corpus, "ed2022", ["DLinear"], "mae", style)
+    fig_paradigms._model_ticks(ax, ["DLinear"], set(), style)
+    ax.set_xlim(*figkit.pad_range(xs, 0.05))
+    fig.canvas.draw()
+    return fig, ax, labels, style
+
+
+def _meets(ax, text, lines) -> bool:
+    """Whether the text's opaque box meets any marker of ``lines``."""
+    from emfres import figkit
+
+    r = ax.figure.canvas.get_renderer()
+    e = text.get_window_extent(r)
+    pad = 0.1 * text.get_fontsize() * ax.figure.dpi / 72
+    others = [line for line in ax.lines if line not in lines]
+    return any(e.x0 - pad < b[2] and b[0] < e.x1 + pad and e.y0 - pad < b[3] and b[1] < e.y1 + pad
+               for b in figkit._obstacles(ax, r, ignore=others))
+
+
+def test_a_k_label_steps_clear_of_the_per_channel_mean_beside_its_diamond(tmp_path):
+    import matplotlib.pyplot as plt
+
+    from emfres import fig_paradigms
+
+    rows = []
+    for s in SEEDS:
+        rows.append(_run("multivariate", s, 0.40))
+        rows += [_run("perchannel", s, 0.3675, channel=ch) for ch in (0, 1)]
+        rows.append(_run("cluster", s, 0.40, k=1, val_loss=0.5))
+        rows.append(_run("cluster", s, 0.37, k=2, val_loss=0.3))
+    fig, ax, labels, style = _lane_panel(tmp_path, rows)
+    means = [line for line in ax.lines if line.get_marker() in ("o", "D")]
+    (label,) = labels
+    # Its first spot, on the diamond's outer side, is under the per-channel
+    # mean just above it ...
+    assert _meets(ax, label.text, means)
+    fig_paradigms.settle(ax, labels, style)
+    # ... and once settled no label box meets a mean, a diamond or a k = 1 dot.
+    assert label.text.get_text() == "k=2"
+    assert not any(_meets(ax, lab.text, means) for lab in labels)
+    plt.close(fig)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -28,6 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.markers import MarkerStyle  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
 from . import paradigms as PG  # noqa: E402
@@ -252,36 +254,42 @@ def pad_range(values, frac: float = 0.06, right: float = 0.0) -> tuple:
 LABEL_BOX = dict(boxstyle="square,pad=0.1", fc=SURFACE, ec="none")
 
 
-def fit_texts(ax, texts, pad: float = 2.0, rounds: int = 4) -> None:
+def fit_texts(ax, texts, pad: float = 2.0, rounds: int = 4) -> bool:
     """Widen a linear x axis until every text in ``texts`` lies inside it.
 
     Labels hang off data points by a fixed offset in points, so how much room
     they need depends on the final axes width: call this after the figure's
     layout. Each round widens by the overhang at the current scale, which
     over-covers it slightly as the scale compresses, so a few rounds settle.
+    Returns whether the axis was widened.
     """
     texts = [t for t in texts if t is not None]
     if not texts:
-        return
+        return False
     renderer = ax.figure.canvas.get_renderer()
+    widened = False
     for _ in range(rounds):
         box = ax.get_window_extent(renderer)
         ext = [t.get_window_extent(renderer) for t in texts]
         over_l = max(0.0, box.x0 + pad - min(e.x0 for e in ext))
         over_r = max(0.0, max(e.x1 for e in ext) - (box.x1 - pad))
         if over_l < 0.5 and over_r < 0.5:
-            return
+            break
         lo, hi = ax.get_xlim()
         per_px = (hi - lo) / box.width
         ax.set_xlim(lo - over_l * per_px, hi + over_r * per_px)
+        widened = True
+    return widened
 
 
-def _obstacles(ax, renderer, ignore=()) -> list:
+def _obstacles(ax, renderer, ignore=(), rules: bool = True) -> list:
     """Display-space boxes (x0, y0, x1, y1) a label must not cover on ``ax``.
 
-    Every marker, and every straight rule (a line whose points share one x or
-    one y: axvline, axhline) except those in ``ignore``. Gridlines are not
-    ax.lines and are left to the label's opaque box.
+    Every marker, as drawn (a seed tick is as narrow as its stroke, a
+    diamond wider than a dot of its size), and every straight rule (a line
+    whose points share one x or one y: axvline, axhline, a hairline between
+    two marks) except those in ``ignore``; with ``rules`` False, no vertical
+    rule. Gridlines are not ax.lines and are left to the label's opaque box.
     """
     px = ax.figure.dpi / 72
     boxes = []
@@ -290,12 +298,16 @@ def _obstacles(ax, renderer, ignore=()) -> list:
             continue
         pts = line.get_transform().transform(line.get_xydata())
         if line.get_marker() not in (None, "None", "", " "):
-            half = line.get_markersize() / 2 * px + line.get_markeredgewidth() * px
-            boxes += [(x - half, y - half, x + half, y + half) for x, y in pts]
+            ms = MarkerStyle(line.get_marker())
+            e = ms.get_path().get_extents(ms.get_transform())
+            size = line.get_markersize() * px
+            edge = line.get_markeredgewidth() * px / 2
+            boxes += [(x + e.x0 * size - edge, y + e.y0 * size - edge,
+                       x + e.x1 * size + edge, y + e.y1 * size + edge) for x, y in pts]
         elif len(pts) >= 2 and line.get_linestyle() not in ("None", "", " "):
             (x0, y0), (x1, y1) = pts.min(axis=0), pts.max(axis=0)
             w = line.get_linewidth() * px / 2
-            if x1 - x0 < 0.5 or y1 - y0 < 0.5:
+            if (x1 - x0 < 0.5 and rules) or y1 - y0 < 0.5:
                 boxes.append((x0 - w, y0 - w, x1 + w, y1 + w))
     return boxes
 
@@ -332,6 +344,106 @@ def place_clear(ax, text: str, candidates, pad: float = 1.5, ignore=(), **kw):
     return kept
 
 
+# Where a lane label draws: over the seed ticks (3) and the hairline (4) it
+# steps clear of, under the means (5) and diamonds (6), so a mark always
+# stays whole even where no clear spot exists.
+LABEL_Z = 4.5
+
+
+@dataclass
+class LaneLabel:
+    """A text written in a dot plot's lane, beside the marks it names.
+
+    ``lo``..``hi`` (data x) spans those marks and ``at`` is the one it names
+    (a diamond); the text starts ``gap`` points past ``hi`` on the right
+    (side +1) or ``lo`` on the left (side -1). ``sides`` are the sides it may
+    take, preferred first; with ``prefer`` False the nearer one wins. ``own``
+    are the marks lo..hi spans and the hairline between them: its starting
+    spot lies past them by construction, so they are not obstacles. Every
+    other mark is, the seed ticks of the marks it names included.
+    """
+    text: object
+    y: float
+    lo: float
+    hi: float
+    at: float
+    sides: tuple = (1,)
+    prefer: bool = True
+    own: tuple = ()
+    gap: float = 4.5
+
+
+def lane_label(ax, text: str, y: float, lo: float, hi: float, at: float, *,
+               sides=(1,), prefer: bool = True, own=(), gap: float = 4.5,
+               **kw) -> LaneLabel:
+    """Annotate ``text`` at its first spot; settle_labels moves it clear of the marks."""
+    side = sides[0]
+    t = ax.annotate(text, (hi if side > 0 else lo, y), xytext=(side * gap, 0),
+                    textcoords="offset points", ha="left" if side > 0 else "right",
+                    va="center", bbox=LABEL_BOX, **{"zorder": LABEL_Z, **kw})
+    return LaneLabel(t, y, lo, hi, at, tuple(sides), prefer, tuple(own), gap)
+
+
+def _place_lane_labels(ax, labels, near: float) -> None:
+    renderer = ax.figure.canvas.get_renderer()
+    px = ax.figure.dpi / 72
+    to_disp = ax.transData.transform
+    placed: list = []
+    for lab in labels:
+        t = lab.text
+        marks = _obstacles(ax, renderer, ignore=lab.own, rules=False) + placed
+        e = t.get_window_extent(renderer)
+        w, h = e.width, e.height
+        # The opaque box's margin (LABEL_BOX pad): what it would cut away.
+        pad = 0.1 * t.get_fontsize() * px
+        step = pad + 1.5 * px
+        xat, yd = to_disp((lab.at, lab.y))
+        y0, y1 = yd - h / 2, yd + h / 2
+        spots = []
+        for side in lab.sides:
+            x = to_disp((lab.hi if side > 0 else lab.lo, lab.y))[0] + side * lab.gap * px
+            for _ in range(200):
+                x0, x1 = (x, x + w) if side > 0 else (x - w, x)
+                hits = [b for b in marks if x0 - pad < b[2] and b[0] < x1 + pad and
+                        y0 - pad < b[3] and b[1] < y1 + pad]
+                if not hits:
+                    break
+                x = max(b[2] for b in hits) + step if side > 0 else min(b[0] for b in hits) - step
+            spots.append((abs(x - xat), side, x))
+        if lab.prefer and spots[0][0] <= near * px:
+            _, side, x = spots[0]
+        else:
+            _, side, x = min(spots, key=lambda s: s[0])
+        t.xy = (ax.transData.inverted().transform((x - side * lab.gap * px, yd))[0], lab.y)
+        t.xyann = (side * lab.gap, 0)
+        t.set_horizontalalignment("left" if side > 0 else "right")
+        x0, x1 = (x, x + w) if side > 0 else (x - w, x)
+        placed.append((x0 - pad, y0 - pad, x1 + pad, y1 + pad))
+
+
+def settle_labels(ax, labels, near: float, rounds: int = 4) -> None:
+    """Put every lane label where its box covers no mark, and fit the axis to them.
+
+    Each label starts past the marks it names on each side it may take and,
+    while its box (with the opaque margin) meets a marker, a hairline or a
+    label already placed (_obstacles), steps past the farthest of those; a
+    vertical reference rule it crosses runs under its opaque box, as a
+    gridline does. It keeps its preferred side unless that leaves it more
+    than ``near`` points from the mark it names; then, or with ``prefer``
+    False, the nearer side wins. The axis is then widened to hold the labels
+    (fit_texts), which moves the marks under them, so the two alternate
+    until the axis stays put. Call after the figure's layout and axis limits.
+    """
+    labels = [lab for lab in labels if lab is not None]
+    if not labels:
+        return
+    for _ in range(rounds):
+        _place_lane_labels(ax, labels, near)
+        if not fit_texts(ax, [lab.text for lab in labels]):
+            return
+    _place_lane_labels(ax, labels, near)
+
+
 def footnotes(fig, notes, style: Style) -> None:
     """The figure's notes on one line at the bottom left, if it has any."""
     notes = [n for n in notes if n]
@@ -341,11 +453,11 @@ def footnotes(fig, notes, style: Style) -> None:
 
 __all__ = [
     "AXIS_RULE", "BAND_FILL", "BURNT_PEACH", "CHARCOAL", "DATASET_COLORS", "FAMILY_DIR",
-    "GRIDLINE", "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "MUTED_COLOR",
-    "OUTCOME", "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS",
-    "dataset_colors", "dataset_name", "diverging_cmap", "fit_texts", "footnote",
-    "footnotes", "label_color", "legend", "mark_kwargs", "model_name", "layout",
-    "outcome_handles", "pad_range", "panel_title", "paradigm_handles", "place_clear",
-    "ranks", "seed_ticks", "setup", "style_axes", "title", "window_label", "write",
-    "xlabel",
+    "GRIDLINE", "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "LABEL_Z",
+    "MUTED_COLOR", "OUTCOME", "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE",
+    "VERDIGRIS", "LaneLabel", "dataset_colors", "dataset_name", "diverging_cmap",
+    "fit_texts", "footnote", "footnotes", "label_color", "lane_label", "legend",
+    "mark_kwargs", "model_name", "layout", "outcome_handles", "pad_range", "panel_title",
+    "paradigm_handles", "place_clear", "ranks", "seed_ticks", "settle_labels", "setup",
+    "style_axes", "title", "window_label", "write", "xlabel",
 ]

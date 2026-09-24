@@ -26,9 +26,9 @@ from . import paradigms as PG
 from .figkit import (
     BAND_FILL, BURNT_PEACH, CHARCOAL, INK_MUTED, INK_PRIMARY, INK_SECONDARY,
     LABEL_BOX, MUTED_COLOR, OUTCOME, PARTIAL_ALPHA, SURFACE, VERDIGRIS, dataset_name,
-    fit_texts, footnote, footnotes, label_color, layout, legend, mark_kwargs, model_name,
-    outcome_handles, pad_range, panel_title, paradigm_handles, place_clear, seed_ticks,
-    style_axes, title, window_label, write, xlabel,
+    fit_texts, footnote, footnotes, label_color, lane_label, layout, legend, mark_kwargs,
+    model_name, outcome_handles, pad_range, panel_title, paradigm_handles, place_clear,
+    seed_ticks, settle_labels, style_axes, title, window_label, write, xlabel,
 )
 
 METRIC_NAME = dict(PG.METRICS)          # {"mae": "MAE", "mse": "MSE"}
@@ -81,8 +81,9 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
               *, per_seed: bool = False, k_labels: bool = True) -> tuple:
     """Draw every model's paradigms on one dataset.
 
-    Returns (x values, any partial, labels); the labels hang off their marks
-    by a fixed offset, so pass them to figkit.fit_texts once the layout is set.
+    Returns (x values, any partial, lane labels); pass the labels to
+    figkit.settle_labels once the layout is set, which moves each clear of
+    every mark and fits the axis to them.
 
     Three lanes per model row: multivariate (filled), per-channel (hollow),
     cluster (k = 1 as a small dot, the validation-chosen k as a diamond,
@@ -99,6 +100,7 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
     labels: list = []
     partial = False
     n = len(models)
+    lane_kw = dict(gap=style.marker * 0.9, fontsize=style.context * 0.95)
     for i, model in enumerate(models):
         y0 = n - 1 - i
         cell = (dataset, model)
@@ -119,21 +121,22 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
                 ax.plot([m.mean], [y], zorder=5, **mark_kwargs(pipe, style, alpha=alpha))
             xs += vals
             row += vals + [m.mean]
+        y = y0 + LANE["cluster"]
         if model in PG.DETERMINISTIC:
             # Not "not run yet": there is no cluster pipeline to run. Written
             # where a k label would be, clear of the row's marks.
             if row:
-                labels.append(ax.annotate(
-                    "n/a", (max(row), y0 + LANE["cluster"]), xytext=(style.marker * 0.9, 0),
-                    textcoords="offset points", ha="left", va="center",
-                    fontsize=style.context * 0.95, color=INK_MUTED, zorder=7, bbox=LABEL_BOX))
+                x = max(row)
+                labels.append(lane_label(ax, "n/a", y, x, x, x, color=INK_MUTED, **lane_kw))
             continue
-        y = y0 + LANE["cluster"]
         k1 = get(cell, PG.K1)
         best = get(cell, PG.BEST)
+        # The marks a lane label names (the k = 1 dot, the diamond and the
+        # hairline between them); their seed ticks are obstacles like any mark.
+        own: list = []
         if k1 is not None and not per_seed:
-            ax.plot([k1.mean], [y], zorder=5,
-                    **mark_kwargs(PG.K1, style, alpha=1.0 if k1.complete else PARTIAL_ALPHA))
+            k1_alpha = 1.0 if k1.complete else PARTIAL_ALPHA
+            own += ax.plot([k1.mean], [y], zorder=5, **mark_kwargs(PG.K1, style, alpha=k1_alpha))
             xs.append(k1.mean)
             partial |= not k1.complete
         if best is not None:
@@ -146,25 +149,27 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
             else:
                 seed_ticks(ax, vals, y, VERDIGRIS, style, alpha=0.55 * alpha)
                 if k1 is not None:
-                    ax.plot([k1.mean, best.mean], [y, y], color=VERDIGRIS, lw=0.7,
-                            alpha=0.7 * alpha, zorder=4, solid_capstyle="butt")
-                ax.plot([best.mean], [y], zorder=6, **mark_kwargs(PG.BEST, style, alpha=alpha))
+                    own += ax.plot([k1.mean, best.mean], [y, y], color=VERDIGRIS, lw=0.7,
+                                   alpha=0.7 * alpha, zorder=4, solid_capstyle="butt")
+                own += ax.plot([best.mean], [y], zorder=6,
+                               **mark_kwargs(PG.BEST, style, alpha=alpha))
             xs += vals
             if not per_seed and k_labels:
-                # The label sits on the diamond's own outer side -- left of it
-                # when clustering beat k = 1 -- so it never lands beside the
-                # k = 1 dot, and past its seed ticks, so it covers none.
+                # The label starts on the diamond's own outer side -- left of
+                # it when clustering beat k = 1 -- so it never lands beside
+                # the k = 1 dot, and steps past whatever mark is there.
+                ends = [best.mean] + ([k1.mean] if k1 is not None else [])
                 left = k1 is not None and best.mean < k1.mean
-                at = min([best.mean] + vals) if left else \
-                    max([best.mean] + vals + ([k1.mean] if k1 is not None else []))
-                labels.append(ax.annotate(
-                    f"k={best.k}" if best.complete else "partial", (at, y),
-                    xytext=(-style.marker * 0.9 if left else style.marker * 0.9, 0),
-                    textcoords="offset points", ha="right" if left else "left", va="center",
-                    fontsize=style.context * 0.95,
-                    color=label_color(VERDIGRIS) if best.complete else INK_MUTED,
-                    zorder=7, bbox=LABEL_BOX))
+                labels.append(lane_label(
+                    ax, f"k={best.k}" if best.complete else "partial", y, min(ends), max(ends),
+                    best.mean, sides=(-1,) if left else (1,), own=own,
+                    color=label_color(VERDIGRIS) if best.complete else INK_MUTED, **lane_kw))
     return xs, partial, labels
+
+
+def settle(ax, labels, style) -> None:
+    """figkit.settle_labels for a dot panel."""
+    settle_labels(ax, labels, near=style.marker * 2)
 
 
 def _grid_height(n_models: int, nrow: int) -> float:
@@ -228,7 +233,7 @@ def fig_dots(corpora: list, metric: str, style, root: Path, formats, *,
     legend(fig, handles, style, y=1 - 0.24 / fig.get_size_inches()[1])
     layout(fig, style, top=0.86, bottom=0.42, wspace=0.08, hspace=0.3 if nrow > 1 else 0.2)
     for ax, texts in labels.items():
-        fit_texts(ax, texts)
+        settle(ax, texts, style)
     xlabel(fig, axes[-1], METRIC_NAME[metric], style)
     footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models)], style)
     return write(fig, root, group=family, subject="dots",
@@ -490,7 +495,7 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
     legend(fig, handles, style, y=1 - 0.24 / fig.get_size_inches()[1])
     layout(fig, style, top=0.86, bottom=0.42, wspace=0.08, hspace=0.3 if nrow > 1 else 0.2)
     for ax, texts in labels.items():
-        fit_texts(ax, texts)
+        settle(ax, texts, style)
     # The threshold's label goes where it covers no seed: beside the rule at
     # the top, else at the bottom, right of the rule before left of it.
     for ax, thr, rule in rules:
