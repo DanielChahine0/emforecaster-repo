@@ -900,7 +900,7 @@ def _section(change: Change) -> str:
 
 def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]], *,
          family: str, runs_spec: Path | None = None, gate_spec: Path | None = None,
-         render_models=None, verbose: bool = False, out=sys.stdout) -> Gate:
+         render_models=None, verbose: bool = False, out=None) -> Gate:
     """Hold every value ``published`` prints against today's frames and render.
 
     ``published`` is ``family``'s snapshot, and only that family's block of
@@ -908,8 +908,8 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
     tables renders it: (slug, title, markdown). ``render_models(models)`` is
     today's paradigm comparison re-counted over only those model ids
     (cli.render_paradigms), what the block's held_elsewhere rows are held
-    against. Prints the account and returns it; the gate passes when no change
-    is unexpected.
+    against. Prints the account (to ``out``, sys.stdout as it is at the call)
+    and returns it; the gate passes when no change is unexpected.
     """
     from .tables import SWEEP_TITLE
 
@@ -961,7 +961,8 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
     return result
 
 
-def report(g: Gate, *, verbose: bool = False, out=sys.stdout) -> None:
+def report(g: Gate, *, verbose: bool = False, out=None) -> None:
+    out = sys.stdout if out is None else out
     print(f"value gate ({g.family}): {g.snapshot} against today's frames", file=out)
     for kind, h in g.held.items():
         changed = h.changed
