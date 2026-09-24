@@ -9,6 +9,7 @@ regenerated on demand and git-ignored. `results/` tracks about 2.3 MB.
 ## Rebuild everything
 
 ```bash
+python results/make.py contention   # .personal GPU logs -> specs/contention.yaml
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
 python results/make.py reconcile    # hold each family's frozen report against frames/
@@ -36,7 +37,7 @@ so extracting mid-sweep never publishes half a run.
 | Path | What lives here | Tracked |
 | :--- | :--- | :--- |
 | `emfres/` | All the code. One flat package. | yes |
-| `specs/` | Declared run exclusions, provenance rules and the gate's expected changes, with the reason for each; the solo timing pass | yes |
+| `specs/` | Declared run exclusions, provenance rules and the gate's expected changes, with the reason for each; the solo timing pass; the foreign GPU windows of the 2026-09-24 sweeps | yes |
 | `frames/` | `runs.csv`, `cells.csv`, `bands.csv`, `timing.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
@@ -94,7 +95,7 @@ or a best k the table does not.
 | P4 | `paradigm-compare/voip/dots_l24-48_o6-12_{mae,mse}` | VoIP, datasets x windows, Persistence as a rule |
 | P5 | `paradigm-compare/<family>/k-gain_<window>_{mae,mse}` | clustering gain against k per model; val k ringed, test-best k marked, batch protocol dashed |
 | P6 | `paradigm-compare/scoreboard_<windows>` | the four comparisons' W/T/L, EMF and both VoIP windows, with and without a cell that does not train |
-| P7 | `paradigm-compare/emf/cost_l336_o96_{mae,mse}` | error and uncontended cost relative to the multivariate run (needs `timing.csv`) |
+| P7 | `paradigm-compare/emf/cost_l336_o96_{mae,mse}` | error and cost relative to the multivariate run, per-channel at its uncontended solo estimate (needs `timing.csv`); a cluster cost with a seed that trained beside another user's GPU process is hollow |
 | P8 | `paradigm-compare/<family>/calibration_<windows>` | coverage and interval width per paradigm |
 | P9 | `paradigm-compare/<family>/seed-skill_<windows>` | every seed's skill over the lookback mean, with the Transformer's trains threshold |
 | P10 | `series/dots_l336_o96_{mae,mse}` | the single-series grid, titled as the separate dataset it is |
@@ -389,6 +390,33 @@ declare is fatal.
   `.personal/timing/`), with the fastest and slowest measured band as the
   bracket, beside the logged contended sum and the multivariate run of the same
   seed. EMF only: VoIP had no solo pass and shows no measurable contention.
+  `contended` and `mv_contended` are the contention flags (below) of the
+  seed's bands and of its multivariate run.
+- **Contended timings: `foreign_overlap`, `contended`** (`runs.csv`; cells.csv
+  `contended` and `n_foreign`). A `running_time` is a wall time, and two
+  things inflate it without touching what a run computes: its own grid
+  training several runs at once (the per-channel grid, 8 or 12 bands at a
+  time, stamped as `concurrency`), and another user's jobs on the same GPU,
+  which no run log records. The 2026-09-24 CCM sweep logged the GPU's
+  compute apps, marked own or FOREIGN, on a 60 s poll
+  (`.personal/ccm_gpu_contention.log`; the tail rerun of the August
+  per-channel bands writes `.personal/tail_gpu_contention.log`). Both are
+  git-ignored, so `make.py contention` (`emfres/contention.py`) derives from
+  them the monitored time and the windows with a FOREIGN process into
+  `specs/contention.yaml`, whose header says how and what the log cannot
+  tell (edges to about a minute, memory not utilisation). `extract` holds
+  each run's training window `[parameters/exp/time, + running_time]`
+  against them: `foreign_overlap` is the fraction inside a window (blank
+  where no GPU record covers the run), and `contended` is `concurrent`,
+  `foreign`, both, `none` (neither recorded), or `?` (concurrency not
+  stamped: the August per-channel bands and the series runs). `n_foreign`
+  counts a cell's runs with an overlap. No run before the sweep has a GPU
+  record except the solo pass (none foreign), so earlier runs are flagged by
+  their stamps alone. On the 2026-09-24 logs, 282 of the sweep's 309
+  finished runs overlapped another user's jobs, which held the GPU for 5.6 of
+  its first 7.3 hours. The timing tables print ‡ after such a cell's time
+  and do not rank it; P7 draws it hollow; the legacy figures name its models
+  in a note. The flag says the time may be inflated: accuracy is unaffected.
 
 ## The paradigm comparison
 
@@ -428,9 +456,14 @@ docstring has the full rules.
   0.090 on the 2026-09-24 logs, where the named two move it to 0.024), and
   without the failed per-channel bands (`best_epoch` <= 2), both sides
   recomputed from `bands.csv`.
-- The cluster sweep marks the validation k and prints the test-best k as an
-  *oracle* when they differ; per-channel times everywhere are labelled per
-  band and contended.
+- The cluster sweep underlines the validation k's cell once the choice is
+  final (every k with every seed of the family; until then Val k says what
+  it was ranked over) and prints the test-best k as an *oracle* when they
+  differ. A per-channel time is labelled per band and contended in its own
+  section, and summed over the bands (the strategy's cost) in the cross
+  tables and the legacy figures (`plot_metrics.py`: "Training time, Σ
+  bands"), contended there too. A timing table's pooled "Mean epoch cost"
+  row that pools a cell still training prints `(n=c/C cells)`.
 - **The per-setup and cross tables lead with the fixed protocol too.** The
   Cluster section prints `sl_test_fixed/*` in its accuracy and conformal
   tables. The logged batch protocol is its last group, `Batch protocol
@@ -477,6 +510,13 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
 
 ## Known gaps
 
+- `specs/contention.yaml` was derived while the CCM sweep still trained
+  (`open: true`, `observed_until` 2026-09-24 18:00): its last span ends
+  there, runs that finish later are only partly held against the GPU log,
+  and `extract` warns about them. Rerun `make.py contention` once the sweep's
+  DONE line is written, and again after the tail rerun, then extract;
+  `make.py contention --check` fails while the GPU logs have entries past
+  the file's end.
 - The EMF frozen snapshot (`PUBLISHED`, `SNAPSHOTS['emf']` in
   `emfres/cli.py`, currently `archive/2026-09-22_tables.md`) is what
   `make.py tables --check` and `make.py reconcile` compare against. It covers
