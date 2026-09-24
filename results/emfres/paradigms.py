@@ -36,9 +36,12 @@ allow:
   still waiting for runs is shown with its n and counted as pending, never
   averaged as if it were complete.
 * **A test across cells.** Each comparison's wins, ties and losses are counted
-  over (dataset, model) cells, with a two-sided Wilcoxon signed-rank p-value on
-  the relative gaps. Gaps under the floor are zero differences and are
-  dropped from the test, as its default zero_method does.
+  over (dataset, model) cells, with the median relative gap of every counted
+  cell and a two-sided Wilcoxon signed-rank p-value on those gaps. A cell
+  whose two sides differ by less than TIE_FLOOR -- an absolute difference in
+  the metric itself, not a relative gap -- is a zero difference: it stays in
+  the count and the median but is dropped from the test, as the test's
+  default zero_method drops zeros.
 * **Whether the Transformer trains.** Seeds 69422 and 69423 of the EMF
   Transformer are dead at initialisation and forecast the lookback mean, and
   the VoIP Transformer never beats it; TRAINS_FRACTION holds the rule. The
@@ -72,7 +75,9 @@ from .runlogs import comparable_fixed
 
 METRICS = (("mae", "MAE"), ("mse", "MSE"))
 
-# Below this, two values are the same computation, not a close race.
+# Below this absolute difference in the metric, two values are the same
+# computation, not a close race: the floor of the tie band, and the zero
+# difference the Wilcoxon test leaves out (tally).
 TIE_FLOOR = 5e-5
 
 MV, PC, K1, BEST = "multivariate", "perchannel", "cluster k=1", "cluster best"
@@ -600,10 +605,13 @@ def tally(board: Board, base: str, chal: str, metric: str, order: list, *,
         if r:
             res.append(r)
     count = {o: sum(r["outcome"] == o for r in res) for o in ("challenger", "tie", "baseline")}
-    gaps = [r["gap"] for r in res if not r["duplicate"]]
+    # The median describes every counted cell. Only the test leaves out a
+    # zero difference (compare's "duplicate"), as its default zero_method does.
+    gaps = [r["gap"] for r in res]
+    tested = [r["gap"] for r in res if not r["duplicate"]]
     return {"count": count, "cells": len(res), "pending": pending, "identical": identical,
-            "n_test": len(gaps), "median": statistics.median(gaps) if gaps else float("nan"),
-            "p": wilcoxon_p(gaps)}
+            "n_test": len(tested), "median": statistics.median(gaps) if gaps else float("nan"),
+            "p": wilcoxon_p(tested)}
 
 
 def _fmt(mean: float, sd: float, n: int) -> str:
@@ -678,9 +686,12 @@ def render(runs_csv: Path, family: str, setting: tuple,
            f"- Counted: a cell enters a comparison when both sides have all {n_family} "
            "seeds (and the best k comes from a finished sweep); a cell still missing "
            "runs is shown with its n and counted as pending",
-           f"- Wilcoxon p: two-sided signed-rank test on the relative gaps of the counted "
-           f"cells; a gap under {TIE_FLOOR:g} is a zero difference and is dropped from "
-           f"the test (its default), so n (test) can be smaller than the cells counted",
+           f"- Median gap and Wilcoxon p: the median relative gap of the counted cells, "
+           f"and a two-sided signed-rank test on those gaps. A cell whose two sides "
+           f"differ by less than {TIE_FLOOR:g} in the metric itself (an absolute "
+           f"difference, not a relative gap) is a zero difference: it stays in the "
+           f"count and the median but not in the test (the test's default drops zeros), "
+           f"so n (test) can be smaller than the cells counted",
            ]
     if any(c[1] in TRAINS_MODELS for c in order):
         out.append(

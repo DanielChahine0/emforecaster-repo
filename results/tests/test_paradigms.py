@@ -194,6 +194,23 @@ def test_identical_arithmetic_is_a_duplicate_not_evidence():
     assert r["duplicate"] and r["outcome"] == "tie"
 
 
+def test_a_zero_difference_stays_in_the_median_and_leaves_only_the_test(tmp_path):
+    # Three cells: per-channel 2% and 1% better, and one within TIE_FLOOR of the
+    # joint run (an absolute 2e-5 on 0.4). The median is over all three.
+    rows = []
+    for ds, pc in (("ed2022", 0.392), ("uh2022", 0.396), ("emf2023", 0.40002)):
+        for s in SEEDS:
+            rows.append(_run("multivariate", s, 0.40, dataset=ds))
+            rows.append(_run("perchannel", s, pc, dataset=ds, channel=0))
+    board = paradigms.build(_values(tmp_path, rows))
+    order = sorted(board.cells)
+    t = paradigms.tally(board, MV, PC, "mae", order)
+    assert (t["cells"], t["n_test"]) == (3, 2)
+    assert t["count"] == {"challenger": 2, "tie": 1, "baseline": 0}
+    assert t["median"] == pytest.approx(-0.01)         # not -0.015, the two tested
+    assert t["p"] == paradigms.wilcoxon_p([-0.02, -0.01])
+
+
 def test_wilcoxon_needs_something_to_test():
     assert paradigms.wilcoxon_p([]) is None
     assert paradigms.wilcoxon_p([0.0, 0.0, 0.0]) is None
