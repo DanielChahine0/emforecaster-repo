@@ -157,6 +157,8 @@ def _write_run(root, seed, **exp):
         "parameters/conf/conf": True,
         "sl_test/loss": [0.5],
         "sl_test/mae": [0.4],
+        # A finished run's last key; without it the run is skipped as unfinished.
+        "sl_test/interval_width_mean": [1.5],
     }
     log.update({f"parameters/exp/{k}": v for k, v in exp.items()})
     (run / "log.json").write_text(json.dumps(log))

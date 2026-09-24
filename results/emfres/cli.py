@@ -130,6 +130,26 @@ def cmd_extract(args) -> int:
               f"(unstamped with no rule, or stamped dirty with no attestation)",
               file=sys.stderr)
 
+    # The fixed-membership metrics are the primary cluster protocol. Say where
+    # they came from, and hold the k = 1 runs to what k = 1 means: one cluster,
+    # so a logged or re-scored fixed value is the batch one up to device noise
+    # (a CPU re-score sits at most 9.2e-5 from a GPU run's logged test metrics,
+    # forecasting/ccm_rescore.py).
+    fixed: dict = {}
+    for r in runs:
+        if r["fixed_source"]:
+            fixed[r["fixed_source"]] = fixed.get(r["fixed_source"], 0) + 1
+    if fixed:
+        print("cluster fixed-membership metrics: "
+              + ", ".join(f"{n} {s}" for s, n in sorted(fixed.items())), file=sys.stderr)
+    off = [r for r in runs if r["k"] == 1 and r["fixed_source"] in ("log", "sidecar")
+           and r["mse"] and r["mse_fixed"]
+           and abs(float(r["mse_fixed"]) - float(r["mse"])) > 1e-3 * abs(float(r["mse"]))]
+    if off:
+        print(f"WARNING: {len(off)} k=1 cluster runs have a fixed-membership MSE more "
+              f"than 1e-3 (relative) from their batch MSE, e.g. {off[0]['path']}",
+              file=sys.stderr)
+
     counts = {"runs": len(runs), "cells": len(cells)}
     per_setup = {}
     for r in runs:

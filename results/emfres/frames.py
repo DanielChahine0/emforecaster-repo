@@ -139,6 +139,14 @@ RUN_FIELDS = [
     "lookback_mse", "skill",
     "running_time", "per_epoch", "num_params",
     "ic", "jc", "interval_width",
+    # Cluster runs only: the same metrics under the fixed train-mean membership
+    # (the primary cluster protocol; mse, mae, val_loss, ic, jc and
+    # interval_width above stay the logged batch protocol), and where they
+    # came from -- runlogs.FIXED_SOURCES: log, sidecar (eval_fixed.json), k1
+    # (the batch values: one cluster has no membership to fix) or none.
+    # Blank on every other setup.
+    "mse_fixed", "mae_fixed", "val_loss_fixed",
+    "ic_fixed", "jc_fixed", "interval_width_fixed", "fixed_source",
     # Provenance (forecasting/provenance.py): the commit the run was stamped
     # with or dated to, whether the tree was dirty, how that commit was
     # established (see runlogs.Run.commit_source), the fingerprint of the
@@ -153,8 +161,14 @@ RUN_FIELDS = [
 
 CELL_FIELDS = [
     "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "conf",
-    "mse", "mse_std", "mae", "mae_std", "running_time", "per_epoch",
+    "mse", "mse_std", "mae", "mae_std",
+    "val_loss", "running_time", "per_epoch",
     "num_params", "ic", "jc", "interval_width",
+    # Cluster cells: the fixed-membership twins of the columns above, blank
+    # unless every run of the cell has a value; fixed_sources lists the
+    # runs' fixed_source values, ';'-joined.
+    "mse_fixed", "mse_fixed_std", "mae_fixed", "mae_fixed_std", "val_loss_fixed",
+    "ic_fixed", "jc_fixed", "interval_width_fixed", "fixed_sources",
     "n_runs", "n_seeds", "n_channels",
     # Distinct training-code versions behind the cell's runs, ';'-joined, with
     # "?" for any run whose code cannot be established; more than one means
@@ -231,6 +245,13 @@ def _row(run: Run, setup: str, repo: Path,
         "ic": _num(run.ic),
         "jc": _num(run.jc),
         "interval_width": _num(run.interval_width),
+        "mse_fixed": _num(run.mse_fixed),
+        "mae_fixed": _num(run.mae_fixed),
+        "val_loss_fixed": _num(run.val_loss_fixed),
+        "ic_fixed": _num(run.ic_fixed),
+        "jc_fixed": _num(run.jc_fixed),
+        "interval_width_fixed": _num(run.interval_width_fixed),
+        "fixed_source": run.fixed_source,
         "git_commit": run.git_commit or "",
         "git_dirty": "" if run.git_dirty is None else int(run.git_dirty),
         "commit_source": run.commit_source,
@@ -313,6 +334,17 @@ def _f(cell: str) -> Optional[float]:
     return float(cell) if cell not in ("", None) else None
 
 
+def _mean_all(vals: list[Optional[float]]) -> Optional[float]:
+    """The mean, or None unless every value is present."""
+    return statistics.mean(vals) if vals and all(v is not None for v in vals) else None
+
+
+def _stdev_all(vals: list[Optional[float]]) -> Optional[float]:
+    """The sample stdev, or None unless every value is present (and n > 1)."""
+    return (statistics.stdev(vals)
+            if len(vals) > 1 and all(v is not None for v in vals) else None)
+
+
 def build_cells(runs: list[dict]) -> list[dict]:
     """Mean each (setup, model, dataset, L, O, k, conf) cell over its runs.
 
@@ -330,18 +362,30 @@ def build_cells(runs: list[dict]) -> list[dict]:
         setup, model, dataset, seq_len, pred_len, k, conf = key
         seeds = {r["seed"] for r in rs if r["seed"]}
         channels = {r["channel"] for r in rs if r["channel"] != ""}
-        get = lambda name: [_f(r[name]) for r in rs]
+        get = lambda name: [_f(r.get(name, "")) for r in rs]
+        sources = sorted({r.get("fixed_source", "") for r in rs} - {""})
         out.append({
             "setup": setup, "family": family_of(dataset),
             "model": model, "dataset": dataset,
             "seq_len": seq_len, "pred_len": pred_len, "k": k, "conf": conf,
             "mse": _num(_mean(get("mse"))), "mse_std": _num(_stdev(get("mse"))),
             "mae": _num(_mean(get("mae"))), "mae_std": _num(_stdev(get("mae"))),
+            "val_loss": _num(_mean(get("val_loss"))),
             "running_time": _num(_mean(get("running_time"))),
             "per_epoch": _num(_mean(get("per_epoch"))),
             "num_params": next((r["num_params"] for r in rs if r["num_params"]), ""),
             "ic": _num(_mean(get("ic"))), "jc": _num(_mean(get("jc"))),
             "interval_width": _num(_mean(get("interval_width"))),
+            "mse_fixed": _num(_mean_all(get("mse_fixed")) if sources else None),
+            "mse_fixed_std": _num(_stdev_all(get("mse_fixed")) if sources else None),
+            "mae_fixed": _num(_mean_all(get("mae_fixed")) if sources else None),
+            "mae_fixed_std": _num(_stdev_all(get("mae_fixed")) if sources else None),
+            "val_loss_fixed": _num(_mean_all(get("val_loss_fixed")) if sources else None),
+            "ic_fixed": _num(_mean_all(get("ic_fixed")) if sources else None),
+            "jc_fixed": _num(_mean_all(get("jc_fixed")) if sources else None),
+            "interval_width_fixed": _num(_mean_all(get("interval_width_fixed"))
+                                         if sources else None),
+            "fixed_sources": ";".join(sources),
             "n_runs": len(rs),
             "n_seeds": len(seeds) or "",
             "n_channels": len(channels) or "",
@@ -386,7 +430,13 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
     """
     digest = hashlib.sha256()
     for r in sorted(runs, key=lambda r: r["path"]):
-        digest.update(f"{r['path']}|{r['mse']}|{r['mae']}|{r['running_time']}\n".encode())
+        line = f"{r['path']}|{r['mse']}|{r['mae']}|{r['running_time']}"
+        # A cluster run's fixed-membership numbers are inputs too (its log or
+        # an eval_fixed.json that appears later); other runs keep the line
+        # they always had.
+        if r.get("fixed_source"):
+            line += f"|{r['fixed_source']}|{r['mse_fixed']}|{r['mae_fixed']}"
+        digest.update(f"{line}\n".encode())
     sources = {"stamped": 0, "attested": 0, "inferred": 0, "dirty": 0, "unstamped": 0}
     versions: dict = {}
     for r in runs:
@@ -413,6 +463,10 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
             entry["equivalent_to"] = ";".join(sorted(v["equivalent_to"]))
         return entry
 
+    fixed_sources: dict = {}
+    for r in runs:
+        if r.get("fixed_source"):
+            fixed_sources[r["fixed_source"]] = fixed_sources.get(r["fixed_source"], 0) + 1
     payload = {
         "logs_commit": _logs_commit(repo),
         # The training-code versions behind the runs, each with the commit ids
@@ -426,6 +480,9 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
         "code_equivalents": {fp: {"runs": e["runs"], "versions": sorted(e["versions"])}
                              for fp, e in sorted(equivalents.items())},
         "unknown_code_runs": sum(1 for r in runs if not r.get("code_version")),
+        # Where the cluster runs' fixed-membership metrics came from
+        # (runlogs.FIXED_SOURCES).
+        "fixed_sources": dict(sorted(fixed_sources.items())),
         "provenance": sources,
         "n_runs": len(runs),
         "runs_digest": digest.hexdigest(),

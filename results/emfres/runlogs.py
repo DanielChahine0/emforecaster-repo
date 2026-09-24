@@ -24,6 +24,23 @@ _CHANNEL_RE = re.compile(r"^ch(\d+)$")
 # The run-dir tag forecasting/grid.py stamps on a cluster cell (exp.id = "k3").
 _K_RE = re.compile(r"^k(\d+)$")
 
+# The last key a finished run logs (forecasting/grid.py MARKER, the grids'
+# resume check): without it the run is still training, or crashed before its
+# test, and is not a result.
+MARKER = "sl_test/interval_width_mean"
+
+# The sidecar forecasting/ccm_rescore.py writes into a cluster run trained
+# before the fixed-membership evaluation: sl_val_fixed/* and sl_test_fixed/*
+# under log.json's key names and list format. log.json is never edited.
+FIXED_SIDECAR = "eval_fixed.json"
+
+# Where a cluster run's fixed-membership metrics come from. "log": the run
+# logged them itself (trained with the fixed evaluation); "sidecar": its
+# eval_fixed.json re-score; "k1": neither, but k = 1 -- one cluster, so the
+# membership has nothing to fix and the fixed metrics are the batch ones by
+# construction; "none": a k > 1 run with neither. Blank on non-cluster runs.
+FIXED_SOURCES = ("log", "sidecar", "k1", "none")
+
 
 def parse_running_time(raw: Optional[str]) -> Optional[float]:
     """Strict read of a logged running_time; raises on anything unreadable."""
@@ -75,6 +92,21 @@ class Run:
     # test split (e.g. a cluster count) has to be made from. None for the
     # fit-once models, which have no epoch loop.
     val_loss: Optional[float] = None
+    # sl_test/mse_per_channel: the test MSE of every channel, in the loader's
+    # channel order. A per-channel run logs its one band here.
+    mse_per_channel: Optional[list] = None
+    # Cluster runs only: the same metrics under the fixed train-mean membership
+    # (forecasting/multivariate/models/ccm.py), and where they came from (see
+    # FIXED_SOURCES). mse_fixed is sl_test_fixed/loss, as mse is sl_test/loss;
+    # val_loss_fixed is sl_val_fixed/loss at the restored best checkpoint.
+    mse_fixed: Optional[float] = None
+    mae_fixed: Optional[float] = None
+    val_loss_fixed: Optional[float] = None
+    ic_fixed: Optional[float] = None
+    jc_fixed: Optional[float] = None
+    interval_width_fixed: Optional[float] = None
+    mse_per_channel_fixed: Optional[list] = None
+    fixed_source: str = ""
 
 
 @dataclass
@@ -208,15 +240,91 @@ def equivalent_code(rules: list[dict], fingerprint: str) -> str:
     return fingerprint
 
 
+def _first(value):
+    """The scalar a log.json list holds (a one-shot test metric), else None."""
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def _fixed_block(src: dict, conf: bool) -> dict:
+    """The fixed-membership fields of a log.json or eval_fixed.json dict."""
+    block = {
+        "mse_fixed": _first(src.get("sl_test_fixed/loss")),
+        "mae_fixed": _first(src.get("sl_test_fixed/mae")),
+        "val_loss_fixed": _first(src.get("sl_val_fixed/loss")),
+        "mse_per_channel_fixed": src.get("sl_test_fixed/mse_per_channel") or None,
+    }
+    if conf:
+        block.update(ic_fixed=_first(src.get("sl_test_fixed/ic")),
+                     jc_fixed=_first(src.get("sl_test_fixed/jc")),
+                     interval_width_fixed=_first(src.get("sl_test_fixed/interval_width_mean")))
+    return block
+
+
+def _sidecar_passed(sidecar: dict) -> bool:
+    """Whether a re-score's own self-checks passed (ccm_rescore writes only then)."""
+    rescore = sidecar.get("rescore") or {}
+    checks = [rescore.get(name) for name in ("batch_check", "fixed_check")
+              if name in rescore]
+    return bool(checks) and all(isinstance(c, dict) and c.get("passed") for c in checks)
+
+
+def fixed_metrics(d: dict, run_dir: Path, k: Optional[int], conf: bool,
+                  batch: dict) -> tuple[dict, str]:
+    """(fields, source) of a cluster run's fixed-membership metrics.
+
+    log.json's own sl_test_fixed/* win: those were computed on the device the
+    run trained on. Otherwise the run dir's eval_fixed.json, if its re-score
+    passed its self-checks. Otherwise, at k = 1, the batch metrics themselves:
+    with one cluster every channel is in it whatever the batch, so the two
+    protocols are the same forecast (``batch`` holds the run's batch values
+    under the fixed field names). A k > 1 run with neither has no fixed
+    metrics ("none").
+    """
+    if any(key.startswith("sl_test_fixed/") for key in d):
+        return _fixed_block(d, conf), "log"
+    path = run_dir / FIXED_SIDECAR
+    if path.is_file():
+        try:
+            with open(path) as f:
+                sidecar = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"WARNING: unreadable {path} ({exc}); ignoring it", file=sys.stderr)
+        else:
+            if _sidecar_passed(sidecar):
+                return _fixed_block(sidecar, conf), "sidecar"
+            print(f"WARNING: {path} does not record a passed re-score; ignoring it",
+                  file=sys.stderr)
+    if k == 1:
+        return dict(batch), "k1"
+    return {}, "none"
+
+
 def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = None,
               inferred: Optional[list[dict]] = None,
               attested: Optional[list[dict]] = None) -> list[Run]:
+    """A Run per finished log.json under logs_root.
+
+    A log without MARKER, or one that does not parse (log.json is written in
+    one go at the end of a run, but a reader can catch the write), is a run
+    still training or one that crashed: it is skipped and counted in a NOTE,
+    never read as a result.
+    """
     runs = []
+    incomplete = []
     for log_path in sorted(logs_root.rglob("log.json")):
         if excluded(log_path, exclude):
             continue
-        with open(log_path) as f:
-            d = json.load(f)
+        try:
+            with open(log_path) as f:
+                d = json.load(f)
+        except json.JSONDecodeError:
+            incomplete.append(log_path)
+            continue
+        if MARKER not in d:
+            incomplete.append(log_path)
+            continue
 
         model = d.get("parameters/exp/model_id")
         dataset_raw = d.get("parameters/data/dataset")
@@ -300,6 +408,16 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
         val_loss = (min(v for v in val_curve if v is not None)
                     if isinstance(val_curve, list) and val_curve else None)
 
+        mse_per_channel = d.get("sl_test/mse_per_channel") or None
+
+        fixed, fixed_source = {}, ""
+        if d.get("parameters/cluster/enabled"):
+            batch = {"mse_fixed": mse, "mae_fixed": mae, "val_loss_fixed": val_loss,
+                     "mse_per_channel_fixed": mse_per_channel}
+            if conf:
+                batch.update(ic_fixed=ic, jc_fixed=jc, interval_width_fixed=interval_width)
+            fixed, fixed_source = fixed_metrics(d, log_path.parent, k, conf, batch)
+
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
                          running_time, per_epoch, num_params, ic, jc, interval_width,
                          channel, k, seed, log_path,
@@ -307,5 +425,11 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                          commit_source=commit_source, val_loss=val_loss,
                          git_dirty=git_dirty, code_commit=code_commit,
                          train_split=d.get("parameters/data/train_split"),
-                         val_split=d.get("parameters/data/val_split")))
+                         val_split=d.get("parameters/data/val_split"),
+                         mse_per_channel=mse_per_channel,
+                         fixed_source=fixed_source, **fixed))
+    if incomplete:
+        print(f"NOTE: skipped {len(incomplete)} unfinished run(s) under {logs_root} "
+              f"(no {MARKER}: still training, or crashed), e.g. {incomplete[0]}",
+              file=sys.stderr)
     return runs

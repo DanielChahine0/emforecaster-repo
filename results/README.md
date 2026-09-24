@@ -25,7 +25,10 @@ python multivariate/src/emf_multivariate.py all   # emf-levels + heatmaps
 
 `extract` reads every `log.json` under `logs/` outside `logs/_archive/` (3,469
 today: 2,109 EMF, 1,360 VoIP — see *Which runs count*) and writes one row per run. Nothing
-downstream reads a log file, and nothing downstream parses markdown.
+downstream reads a log file, and nothing downstream parses markdown. A log
+without `sl_test/interval_width_mean`, the last key a finished run writes, is a
+run still training (or one that crashed): it is skipped and counted in a `NOTE`,
+so extracting mid-sweep never publishes half a run.
 
 ## Layout
 
@@ -145,6 +148,21 @@ added nine windows and reshaped the parameter table from one column to ten,
 changing 131 lines while leaving every published number identical. A tripwire
 that fires on correct work only teaches you to pass `--force`. Growth is now
 reported as a `NOTE`; only a changed value is fatal.
+
+## What the frames hold
+
+- **Cluster runs: the fixed protocol beside the batch one.** A cluster run's
+  `mse`, `mae`, `val_loss`, `ic`, `jc` and `interval_width` are the logged batch
+  protocol, as before. `mse_fixed`, `mae_fixed`, `val_loss_fixed`, `ic_fixed`,
+  `jc_fixed` and `interval_width_fixed` are the same metrics under the fixed
+  train-mean membership, the primary cluster protocol, and `fixed_source` says
+  where they came from: `log` (the run logged `sl_test_fixed/*` itself, and
+  that wins), `sidecar` (the `eval_fixed.json` re-score
+  `forecasting/ccm_rescore.py` writes beside an older run, used only if its
+  self-check passed), `k1` (neither, at k = 1, where one cluster leaves nothing
+  to fix and the batch values are the fixed ones by construction) or `none`.
+  Other setups leave these blank. A cell's fixed means are blank unless every
+  run of it has one; `fixed_sources` lists what went in.
 
 ## Which runs count
 
