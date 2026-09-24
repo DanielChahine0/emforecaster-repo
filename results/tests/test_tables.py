@@ -402,3 +402,25 @@ def test_make_tables_warns_when_bands_csv_is_missing(tmp_path, monkeypatch, caps
     frames.write_csv(tmp_path / "bands.csv", [], frames.BAND_FIELDS)
     assert cli.main(["tables", "--family", "voip", "--check"]) == 0
     assert "bands.csv not found" not in capsys.readouterr().err
+
+
+def test_make_tables_writes_outside_the_repo(tmp_path, monkeypatch, capsys):
+    """RESULTS redirected outside the repo (a scratch render) writes there, no crash."""
+    from emfres import cli
+
+    rows = []
+    for s in SEEDS:
+        for setup, v in (("multivariate", 0.40), ("perchannel", 0.30)):
+            row = _run(setup, s, v, dataset="voip_mobile", seq_len=48, pred_len=12,
+                       family="voip")
+            row["channel"] = "0" if setup == "perchannel" else ""
+            rows.append(row)
+    frames_dir, results = tmp_path / "frames", tmp_path / "results"
+    frames.write_csv(frames_dir / "runs.csv", rows, frames.RUN_FIELDS)
+    frames.write_csv(frames_dir / "bands.csv", [], frames.BAND_FIELDS)
+    frames.write_csv(frames_dir / "cells.csv", frames.build_cells(rows), frames.CELL_FIELDS)
+    monkeypatch.setattr(cli, "FRAMES", frames_dir)
+    monkeypatch.setattr(cli, "RESULTS", results)
+    assert cli.main(["tables", "--family", "voip"]) == 0
+    assert (results / "tables" / "voip" / "paradigms.md").exists()
+    assert f"to {results / 'tables' / 'voip'}/" in capsys.readouterr().out

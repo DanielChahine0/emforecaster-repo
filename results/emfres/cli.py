@@ -430,7 +430,8 @@ def cmd_tables(args) -> int:
     index += [f"- [`csv/{p.name}`](csv/{p.name}){T.twin_note(p)}" for p in twins]
     (outdir / "index.md").write_text("\n".join(index) + "\n")
 
-    rel = outdir.relative_to(REPO)
+    # RESULTS can point outside the repo (a scratch render, the tests).
+    rel = outdir.relative_to(REPO) if outdir.is_relative_to(REPO) else outdir
     print(f"wrote {len(sections)} sections + all.md + index.md to {rel}/")
     for slug, title, _ in sections:
         print(f"  {slug + '.md':<22} {title}")
