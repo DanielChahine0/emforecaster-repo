@@ -11,7 +11,7 @@ regenerated on demand and git-ignored. `results/` tracks about 2.3 MB.
 ```bash
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
-python results/make.py reconcile    # hold the frozen report's values against frames/
+python results/make.py reconcile    # hold each family's frozen report against frames/
 python results/make.py figures      # frames/      -> the paradigm-comparison figures
 python -m pytest results/tests      # provenance, paradigm comparison, baselines, figures
 
@@ -213,13 +213,18 @@ after the rules. Today `bb6be0a379d9`, the code the 2026-09-24 CCM sweep trains
 on, counts as `21e1374ddc2c`; the August per-channel runs (`21edc003e04e`) are
 not declared equivalent and still show as a second version.
 
-`make.py reconcile` holds every value the frozen snapshot publishes (`PUBLISHED`
-in `emfres/cli.py`, currently `archive/2026-09-22_tables.md`) against the value
-today's frames give, and `make.py tables` runs the same gate before writing.
-Three kinds of value are held (`emfres/reconcile.py`). The last column is how
-many values `2026-09-22_tables.md` publishes of each; how many of them
-reproduce today, and which changes are expected, move with every run the
-sweep finishes, so `make.py reconcile --all` is where to read them:
+`make.py reconcile` holds every value a family's frozen snapshot publishes
+(`SNAPSHOTS` in `emfres/cli.py`: EMF's is `archive/2026-09-22_tables.md`, and
+VoIP has none yet) against the value today's frames give, and `make.py tables`
+runs the same gate before writing. By default it gates every family that has
+a snapshot, prints a line for each one that has none, and ends with one
+verdict per family (`reconcile: emf PASS (88 declared changes); voip not gated
+(no frozen snapshot yet)`). A family without a snapshot does not fail the run;
+`--family emf|voip` gates one. Three kinds of value are held
+(`emfres/reconcile.py`). The last column is how many values
+`2026-09-22_tables.md` publishes of each; how many of them reproduce today,
+and which changes are expected, move with every run the sweep finishes, so
+`make.py reconcile --all` is where to read them:
 
 | Kind | What | Held against | Published in the snapshot |
 | :--- | :--- | :--- | ---: |
@@ -246,8 +251,10 @@ A changed value is **expected** when a rule in `specs/gate.yaml` matches it.
 Each rule names the kind and fields it covers, why they changed, and in `now`
 the value each of them prints today: a matched value that prints anything
 else is unexpected, so a rule forgives the transition its reason quotes
-(Tie 10 → 7) and no other value in its columns. The file names the snapshot
-its rules were written for: against any other they do not apply. The
+(Tie 10 → 7) and no other value in its columns. The file keeps one block per
+family (`emf:`, `voip:`), each naming the snapshot its rules were written
+for: they apply to that snapshot only, never to another one or to the other
+family, and a list outside a block is not read. The EMF block's
 declared changes are the per-channel EMForecaster cells (16 bands retrained
 at 128x4); ARIMA's cells moving from Tie to the Identical
 column, and the per-channel vs multivariate median gap; the k = 1 vs
@@ -459,17 +466,30 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
 
 ## Known gaps
 
-- The frozen snapshot (`PUBLISHED` in `emfres/cli.py`, currently
-  `archive/2026-09-22_tables.md`) is what `make.py tables --check` and
-  `make.py reconcile` compare against. It covers only the values published
-  when it was frozen; anything added since is counted as new but unguarded,
-  which is the cost of checking against a snapshot rather than a second
-  implementation. Re-freeze it once the CCM sweep has ended and the
-  expected changes (`make.py reconcile --all`) are reviewed: copy
-  `tables/all.md` into `archive/`, repoint `PUBLISHED`, and set
-  `specs/gate.yaml`'s `snapshot` to the new file with empty `held_elsewhere`
-  and `expected` lists. The VoIP tables have no snapshot yet (`SNAPSHOTS` in
-  `emfres/cli.py`) and are rendered ungated.
+- The EMF frozen snapshot (`PUBLISHED`, `SNAPSHOTS['emf']` in
+  `emfres/cli.py`, currently `archive/2026-09-22_tables.md`) is what
+  `make.py tables --check` and `make.py reconcile` compare against. It covers
+  only the values published when it was frozen; anything added since is
+  counted as new but unguarded, which is the cost of checking against a
+  snapshot rather than a second implementation. Re-freeze it once the CCM
+  sweep has ended and the expected changes (`make.py reconcile --all`) are
+  reviewed: copy `tables/all.md` into `archive/`, repoint `PUBLISHED`, and
+  set the `emf` block's `snapshot` in `specs/gate.yaml` to the new file with
+  empty `held_elsewhere` and `expected` lists.
+- The VoIP tables have no snapshot yet (`SNAPSHOTS['voip']` is `None`): they
+  are rendered ungated, and `make.py reconcile` says so. Freezing one takes
+  the same steps: copy `tables/voip/all.md` to
+  `archive/<date>_voip_tables.md`, point `SNAPSHOTS['voip']` at it, and set
+  the `voip` block's `snapshot` to its name. The gate reads the VoIP tables
+  as it reads the EMF ones. On frames extracted on 2026-09-24, today's VoIP
+  render gated against itself holds 320 cells, 496 scoreboard values and
+  432 sweep values, all of which reproduce.
+- Once a snapshot prints the fixed protocol in its Cluster section (the EMF
+  one after its re-freeze, and any VoIP one), the batch-protocol group at the
+  end of that section is text only: `cells` reads only the section's first
+  MSE and MAE tables. No per-cell batch value is gated then. What stays
+  gated of that protocol is the paradigm comparison's batch-protocol
+  sensitivity rows (counts, median gap, p).
 - `specs/provenance.yaml` holds three kinds of evidenced rule. `inferred` dates
   runs logged before stamping (2026-09-19) by setup and `exp/time` window;
   `attested` resolves runs stamped on a dirty tree to the commit whose code they
