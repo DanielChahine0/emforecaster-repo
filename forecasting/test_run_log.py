@@ -19,7 +19,7 @@ import pytest
 import torch
 import yaml
 
-from forecasting import grid, grids, perchannel
+from forecasting import grid, grids, perchannel, provenance
 from forecasting.multivariate.exp import exp as exp_module
 from forecasting.multivariate.utils.logger import convert_pydantic_types
 from forecasting.multivariate.utils.models import get_model
@@ -208,3 +208,12 @@ def test_every_paradigm_logs_the_same_windows(runs):
     counts = {name: [log[f"parameters/data/n_{split}_windows"] for split in SPLITS]
               for name, (log, _, _) in runs.items()}
     assert all(count == counts["mv"] for count in counts.values()), counts
+
+
+@pytest.mark.parametrize("name", CASES)
+def test_every_run_stamps_whether_it_ran_under_cuda_mps(runs, name):
+    # Beside, not over, the config's Apple-silicon switch parameters/exp/mps.
+    log, _, exp = runs[name]
+    assert log["parameters/exp/cuda_mps"] is provenance.cuda_mps()
+    assert log["parameters/exp/cuda_mps_pipe_dir"] == provenance.mps_pipe_directory()
+    assert log["parameters/exp/mps"] is exp.args.exp.mps

@@ -323,9 +323,9 @@ class Experiment:
 
         log_pydantic(self.logger, self.args, "parameters")
 
-        # Provenance: which code, which machine, and how many trainings shared
-        # the GPU. A run that lacks these cannot be placed in a paradigm
-        # comparison (see .personal/PLAN.md, contract C1/C7).
+        # Provenance: which code, which machine, how many trainings shared the
+        # GPU and whether through CUDA MPS. A run that lacks these cannot be
+        # placed in a paradigm comparison (see .personal/PLAN.md, contract C1/C7).
         for key, value in provenance.run_provenance(self.args).items():
             self.logger[f"parameters/exp/{key}"] = value
 

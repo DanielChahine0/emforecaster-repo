@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import types
 
 from forecasting import grid, grids
@@ -343,3 +344,21 @@ def test_run_grid_in_process_cells_run_eager_with_concurrency_one(tmp_path, monk
                   windows=[(336, 96)])
     assert seen
     assert all(compiled is False and n == 1 for compiled, n in seen)
+
+
+def test_cell_processes_inherit_the_launchers_mps_pipe_directory(monkeypatch):
+    # A jobs>1 cell stamps cuda_mps in its own process, from the pipe directory
+    # the launcher exported, as an in-process cell does from this one's.
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("CUDA_MPS_PIPE_DIRECTORY", "/tmp/mps-test/pipe")
+    monkeypatch.setattr(grid.subprocess, "run", fake_run)
+    ablation = grid.cell_ablation("DLinear", "ED2022", 336, 96, 0.1, grid.SEED)
+    ok, _ = grid.run_cell_subprocess("rf_emf_mv/dlinear", ablation, threads=2)
+    assert ok
+    assert seen["CUDA_MPS_PIPE_DIRECTORY"] == "/tmp/mps-test/pipe"
+    assert seen["OMP_NUM_THREADS"] == "2"

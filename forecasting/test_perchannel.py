@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 
 from forecasting import grids, perchannel
 
@@ -271,3 +272,23 @@ def test_ablation_forces_eager_mode_and_records_concurrency():
     assert plain["global.exp.concurrency"] == 1
     pooled = perchannel.channel_ablation("ED2022", 336, 96, 0, 0.1, concurrency=8)
     assert pooled["global.exp.concurrency"] == 8
+
+
+def test_band_processes_inherit_the_launchers_mps_pipe_directory(monkeypatch):
+    # The driver writes no provenance of its own: each band stamps cuda_mps in
+    # its own process (provenance.cuda_mps), from the pipe directory the
+    # launcher exported. The thread budget is added to that environment, not
+    # swapped in for it.
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("CUDA_MPS_PIPE_DIRECTORY", "/tmp/mps-test/pipe")
+    monkeypatch.setattr(perchannel.subprocess, "run", fake_run)
+    ok, _ = perchannel.run_channel("rf_emf_mv/dlinear", "ED2022", 336, 96, 0, 0.1,
+                                   threads=2)
+    assert ok
+    assert seen["CUDA_MPS_PIPE_DIRECTORY"] == "/tmp/mps-test/pipe"
+    assert seen["OMP_NUM_THREADS"] == "2"

@@ -189,7 +189,7 @@ The exit code is non-zero if any cell failed.
   echo quit | nvidia-cuda-mps-control            # stop it when the sweep is done
   ```
 
-  It only pays for many small concurrent processes: a single multivariate or cluster cell gains nothing, and neither does ARIMA, which fits on the CPU. The levers that would be faster still -- a larger batch, mixed precision, `torch.compile`, fewer epochs -- all change the numbers, so they are not used on benchmark runs.
+  It only pays for many small concurrent processes: a single multivariate or cluster cell gains nothing, and neither does ARIMA, which fits on the CPU. The levers that would be faster still -- a larger batch, mixed precision, `torch.compile`, fewer epochs -- all change the numbers, so they are not used on benchmark runs. Each run records in its `log.json` whether it ran under MPS, as `parameters/exp/cuda_mps` (true when a daemon was listening on the pipe directory the run was given), and that directory, as `parameters/exp/cuda_mps_pipe_dir`, so its timing is read against runs that shared the GPU the same way.
 
 Examples:
 
