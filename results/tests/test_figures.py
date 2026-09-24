@@ -126,3 +126,29 @@ def test_a_per_channel_bracket_is_drawn_only_where_it_shows():
     drawn, note = fig_cost._band_whiskers(fig, [(ax, 5.0, 20.0, 0.0, "k", 1.0, 10.0)], style)
     assert drawn and note is None
     plt.close(fig)
+
+
+def test_a_label_goes_to_the_first_spot_that_covers_no_mark():
+    import matplotlib.pyplot as plt
+
+    from emfres import figkit
+
+    style = figkit.setup("paper")
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    rule = ax.axvline(0.5)
+    ax.plot([0.6], [0.95], marker="o", markersize=style.marker, linestyle="None")
+    spots = [((0.5, top), ("data", "axes fraction"), (2 * side, 2 * (1 - 2 * top)),
+              "left" if side > 0 else "right", "top" if top else "bottom")
+             for top in (1, 0) for side in (1, -1)]
+    # A mark right of the rule at the top: the label takes the top left.
+    t = figkit.place_clear(ax, "threshold", spots, ignore=(rule,))
+    assert t.get_horizontalalignment() == "right" and t.get_verticalalignment() == "top"
+    assert [x.get_text() for x in ax.texts] == ["threshold"]
+    # The rule it labels is ignored; any other rule is avoided like a mark.
+    ax.axvline(0.3)
+    t.remove()
+    t = figkit.place_clear(ax, "threshold", spots, ignore=(rule,))
+    assert t.get_verticalalignment() == "bottom" and t.get_horizontalalignment() == "left"
+    plt.close(fig)
