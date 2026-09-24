@@ -329,6 +329,54 @@ def test_a_malformed_held_elsewhere_entry_is_dropped(tmp_path):
     assert any("held_elsewhere 1" in n for n in g.notes)
 
 
+def test_a_pinned_rule_forgives_only_the_value_it_declares(tmp_path):
+    before = _scoreboard([(PC, "MAE", 1, 10, 10, 21, "0.0268"),
+                          (PC, "MSE", 2, 8, 11, 21, "0.0182")])
+    rule = {"kind": "scoreboard", "comparison": "Per-channel vs Multivariate",
+            "column": ["Tie", "Cells"], "reason": "ARIMA is identical by construction.",
+            "now": [{"column": "Tie", "metric": "MAE", "value": 7},
+                    {"column": "Tie", "metric": "MSE", "value": "5"},
+                    {"column": "Cells", "value": "18"}]}
+    declared = _scoreboard([(PC, "MAE", 1, 7, 10, 18, "0.0268"),
+                            (PC, "MSE", 2, 5, 11, 18, "0.0182")])
+    g = _gate(tmp_path, before, declared, [rule])
+    assert g.ok and g.n_expected == 4
+    # The same columns, other values: Tie 10 -> 0, Cells 21 -> 5, and the
+    # MSE tie at the MAE row's pinned value.
+    other = _scoreboard([(PC, "MAE", 1, 0, 10, 5, "0.0268"),
+                         (PC, "MSE", 2, 7, 11, 18, "0.0182")])
+    g = _gate(tmp_path, before, other, [rule])
+    assert sorted(c.label().split("] ")[1] for c in g.unexpected) == [
+        "Cells: 21 -> 5", "Tie: 10 -> 0", "Tie: 8 -> 7"]
+    assert g.n_expected == 1                       # MSE Cells 21 -> 18 is declared
+
+
+def test_one_pinned_value_holds_for_everything_the_rule_matches():
+    rule = {"kind": "scoreboard", "comparison": "Per-channel vs Multivariate",
+            "metric": "MSE", "column": "Median gap", "now": "+1.04%", "reason": "x"}
+    key = dict(section="Paradigm Comparison", table="scoreboard",
+               comparison="Per-channel vs Multivariate", variant="", metric="MSE",
+               column="Median gap")
+    assert R.matches(rule, R.Change("scoreboard", key, "+1.03%", "+1.04%"))
+    assert not R.matches(rule, R.Change("scoreboard", key, "+1.03%", "+1.05%"))
+    assert not R.matches(rule, R.Change("scoreboard", dict(key, metric="MAE"),
+                                        "+1.31%", "+1.04%"))
+    assert not R.matches(rule, R.Change("scoreboard", key, "+1.03%", None))
+
+
+def test_a_malformed_pin_drops_its_rule(tmp_path):
+    before = _scoreboard([(PC, "MAE", 1, 10, 10, 21, "0.0268")])
+    after = _scoreboard([(PC, "MAE", 1, 7, 10, 18, "0.0268")])
+    base = {"kind": "scoreboard", "column": ["Tie", "Cells"], "reason": "declared."}
+    rules = [dict(base, now=[]),                                   # pins nothing
+             dict(base, now=[{"column": "Tie"}]),                  # no value
+             dict(base, now=[{"model": "DLinear", "value": "7"}]), # no such field
+             dict(base, now=True)]
+    g = _gate(tmp_path, before, after, rules)
+    assert not g.ok and len(g.unexpected) == 2
+    assert len([n for n in g.notes if "`now` must be" in n]) == 4
+
+
 def test_k_min_matches_only_the_clustered_ks():
     rule = {"kind": "sweep", "column": "k", "k_min": 2, "reason": "protocol."}
     key = dict(dataset="ED2022", window="L336/O96", metric="MAE", model="DLinear",

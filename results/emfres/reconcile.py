@@ -596,9 +596,10 @@ def _spec_entries(spec: Path | None, snapshot: str, name: str,
 def load_expected(spec: Path | None, snapshot: str) -> tuple[list[dict], list[str]]:
     """The rules of specs/gate.yaml that apply to ``snapshot``, and notes.
 
-    A rule written for another snapshot, a rule with no reason, and a rule
-    naming a field its kind does not have are all left out, with a note:
-    each can only make the gate stricter by being dropped, never looser.
+    A rule written for another snapshot, a rule with no reason, a rule naming
+    a field its kind does not have and a rule whose ``now`` is malformed
+    (_pins) are all left out, with a note: each can only make the gate
+    stricter by being dropped, never looser.
     """
     rules, notes = _spec_entries(spec, snapshot, "expected", "expected changes")
     kept = []
@@ -610,28 +611,66 @@ def load_expected(spec: Path | None, snapshot: str) -> tuple[list[dict], list[st
         if not str(rule.get("reason") or "").strip():
             notes.append(f"WARNING: {spec.name} rule {i}: no reason; ignoring it")
             continue
-        unknown = set(rule) - set(KINDS[rule["kind"]]) - {"kind", "reason", "k_min"}
+        unknown = (set(rule) - set(KINDS[rule["kind"]])
+                   - {"kind", "reason", "k_min", "now"})
         if unknown:
             notes.append(f"WARNING: {spec.name} rule {i}: {rule['kind']} values have no "
                          f"field {', '.join(sorted(unknown))}; ignoring it")
+            continue
+        if "now" in rule and _pins(rule) is None:
+            notes.append(f"WARNING: {spec.name} rule {i}: `now` must be one printed "
+                         f"value, or a list of entries each with a `value` and only "
+                         f"{rule['kind']} fields; ignoring it")
             continue
         kept.append(dict(rule, _n=i))
     return kept, notes
 
 
+def _pins(rule: dict) -> list[dict] | None:
+    """What a rule's ``now`` pins, as entries of (fields..., value); None if malformed.
+
+    ``now`` is one printed value, which every value the rule matches has to
+    print today, or a list of entries, each naming some of the kind's fields
+    and the ``value`` the values it matches print today: so a rule forgives
+    the transition its reason declares, not any value in the columns it names.
+    """
+    now = rule.get("now")
+    if isinstance(now, (str, int, float)) and not isinstance(now, bool):
+        return [{"value": str(now)}]
+    names = set(KINDS.get(rule.get("kind"), ()))
+    if (not isinstance(now, list) or not now
+            or not all(isinstance(e, dict) and "value" in e and set(e) - {"value"} <= names
+                       for e in now)):
+        return None
+    return [dict(e, value=str(e["value"])) for e in now]
+
+
+def _fields_match(spec: dict, key: dict) -> bool:
+    """Every field ``spec`` names (a value or a list, any case) is the key's."""
+    for name, want in spec.items():
+        allowed = want if isinstance(want, list) else [want]
+        if name not in key or (str(key[name]).casefold()
+                               not in {str(a).casefold() for a in allowed}):
+            return False
+    return True
+
+
 def matches(rule: dict, change: Change) -> bool:
+    """Whether ``rule`` declares ``change``: its fields and k_min match the
+    changed value, and, if it pins ``now``, today's value is the one pinned."""
     if rule["kind"] != change.kind:
         return False
-    for name in KINDS[change.kind]:
-        if name not in rule:
-            continue
-        allowed = rule[name] if isinstance(rule[name], list) else [rule[name]]
-        if str(change.key[name]).casefold() not in {str(a).casefold() for a in allowed}:
-            return False
+    if not _fields_match({n: rule[n] for n in KINDS[change.kind] if n in rule}, change.key):
+        return False
     if "k_min" in rule:
         k = str(change.key.get("k", ""))
         if not k.isdigit() or int(k) < int(rule["k_min"]):
             return False
+    if "now" in rule:
+        pins = _pins(rule) or []
+        return change.current is not None and any(
+            _fields_match({n: v for n, v in pin.items() if n != "value"}, change.key)
+            and same(pin["value"], change.current) for pin in pins)
     return True
 
 
