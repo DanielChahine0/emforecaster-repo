@@ -39,6 +39,12 @@ exclude:
 # intentional archival is indistinguishable from a silently dropped run -- and
 # a permanently red gate is a gate nobody reads. Anything absent and NOT
 # matched here still fails, which is the whole point of writing it down.
+#
+# A rule matches on `setups`, `dataset`, `lookbacks` and `horizon`; a field it
+# omits matches anything. `dataset` takes the label the tables print (ED2022,
+# VoIP Mobile) or its cells.csv slug (ed2022, voip_mobile). The rules are
+# shared by every family: one applies wherever its dataset is published, and a
+# rule naming no dataset applies to the EMF and the VoIP snapshots alike.
 archived:
   - reason: >
       The ED2022 lookback ladder (L = 48..480 by 48 at O = 96) moved to

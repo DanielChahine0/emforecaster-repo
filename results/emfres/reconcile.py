@@ -422,9 +422,9 @@ def load_archived(spec: Path) -> list[dict]:
     """Deliberately-unpublished cells declared in specs/runs.yaml.
 
     A rule matches on (setup, dataset, lookback, horizon); every field it
-    omits is a wildcard. Returned as-is so an unreadable spec degrades to "no
-    allowances" -- the gate then over-reports rather than under-reports, which
-    is the safe direction for a tripwire.
+    omits is a wildcard (is_archived). Returned as-is so an unreadable spec
+    degrades to "no allowances" -- the gate then over-reports rather than
+    under-reports, which is the safe direction for a tripwire.
     """
     if not spec.exists():
         return []
@@ -438,10 +438,19 @@ def load_archived(spec: Path) -> list[dict]:
 
 def is_archived(rules: list[dict], setup: str, dataset: str,
                 lookback: int, horizon: int) -> bool:
+    """Whether a specs/runs.yaml `archived` rule withdraws this cell.
+
+    ``dataset`` is the label the tables print (ED2022, VoIP Mobile); a rule
+    may name it by that label or by its cells.csv slug (ed2022, voip_mobile),
+    in any case. The rules are not kept per family: a rule applies wherever
+    its dataset is published, and one naming no dataset applies to every
+    family's snapshot.
+    """
+    names = {dataset.casefold(), dataset_slug(dataset).casefold()}
     for rule in rules:
         if "setups" in rule and setup not in rule["setups"]:
             continue
-        if "dataset" in rule and dataset.upper() != str(rule["dataset"]).upper():
+        if "dataset" in rule and str(rule["dataset"]).casefold() not in names:
             continue
         if "lookbacks" in rule and lookback not in rule["lookbacks"]:
             continue

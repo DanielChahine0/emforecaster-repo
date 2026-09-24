@@ -529,6 +529,20 @@ def test_a_voip_cell_is_held_against_its_cells_row(tmp_path):
     assert g.ok and g.held["cells"].published == 4 and not g.held["cells"].changes
 
 
+def test_an_archived_rule_names_a_dataset_by_its_label_or_its_slug():
+    # The tables print "VoIP Mobile", cells.csv has voip_mobile: a rule written
+    # either way withdraws the cell, and names no other dataset.
+    for name in ("VoIP Mobile", "voip_mobile", "VOIP_MOBILE"):
+        rules = [{"setups": ["cluster"], "dataset": name, "horizon": 12}]
+        assert R.is_archived(rules, "cluster", "VoIP Mobile", 48, 12)
+        assert not R.is_archived(rules, "cluster", "VoIP Fixed", 48, 12)
+        assert not R.is_archived(rules, "cluster", "VoIP Mobile", 24, 6)
+    for name in ("ED2022", "ed2022", "emf_2023_university_5_with_ptv"):
+        label = "EMF2023" if name.startswith("emf") else "ED2022"
+        assert R.is_archived([{"dataset": name}], "multivariate", label, 336, 96)
+    assert not R.is_archived([{"dataset": "ed2022"}], "multivariate", "UH2022", 336, 96)
+
+
 def _cluster_gate(tmp_path, *, batch_key="sl_test/loss", mse="0.5350", mse_fixed="0.5352",
                   rules=()):
     """A snapshot publishing one cluster k=2 MSE of 0.5350 under ``batch_key``."""
