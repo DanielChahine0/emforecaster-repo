@@ -419,9 +419,9 @@ declare is fatal.
   warns. After a sweep: `make.py contention`, `make.py contention --check`,
   `make.py extract`, then commit the spec with the frames. No run before the sweep has a GPU
   record except the solo pass (none foreign), so earlier runs are flagged by
-  their stamps alone. On the 2026-09-24 logs, 282 of the sweep's 309
-  finished runs overlapped another user's jobs, which held the GPU for 5.6 of
-  its first 7.3 hours. The timing tables print ‡ after such a cell's time;
+  their stamps alone. By 18:48 on 2026-09-24 (the committed spec), 285 of
+  the sweep's 312 finished runs overlapped another user's jobs, which held
+  the GPU for 6.4 of its first 8.2 hours. The timing tables print ‡ after such a cell's time;
   P7 draws it hollow; the legacy figures' note gives, per model, how many of
   the runs behind the plotted time overlapped (e.g. 15 of EMForecaster's 249
   per-channel band runs; a tables.md does not say, so "some"). The flag
