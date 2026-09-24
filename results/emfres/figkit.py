@@ -276,12 +276,68 @@ def fit_texts(ax, texts, pad: float = 2.0, rounds: int = 4) -> None:
         ax.set_xlim(lo - over_l * per_px, hi + over_r * per_px)
 
 
+def _obstacles(ax, renderer, ignore=()) -> list:
+    """Display-space boxes (x0, y0, x1, y1) a label must not cover on ``ax``.
+
+    Every marker, and every straight rule (a line whose points share one x or
+    one y: axvline, axhline) except those in ``ignore``. Gridlines are not
+    ax.lines and are left to the label's opaque box.
+    """
+    px = ax.figure.dpi / 72
+    boxes = []
+    for line in ax.lines:
+        if line in ignore or not line.get_visible():
+            continue
+        pts = line.get_transform().transform(line.get_xydata())
+        if line.get_marker() not in (None, "None", "", " "):
+            half = line.get_markersize() / 2 * px + line.get_markeredgewidth() * px
+            boxes += [(x - half, y - half, x + half, y + half) for x, y in pts]
+        elif len(pts) >= 2 and line.get_linestyle() not in ("None", "", " "):
+            (x0, y0), (x1, y1) = pts.min(axis=0), pts.max(axis=0)
+            w = line.get_linewidth() * px / 2
+            if x1 - x0 < 0.5 or y1 - y0 < 0.5:
+                boxes.append((x0 - w, y0 - w, x1 + w, y1 + w))
+    return boxes
+
+
+def place_clear(ax, text: str, candidates, pad: float = 1.5, ignore=(), **kw):
+    """Annotate at the first candidate spot whose text box clears the marks.
+
+    ``candidates`` are (xy, xycoords, xytext offset in points, ha, va). The
+    text must fit inside the axes and cover no marker and no straight rule
+    (figkit._obstacles; ``ignore`` names rules it may touch, such as the one
+    it labels). Where no candidate is clear the first is kept: its opaque box
+    still keeps what it covers off the text. Call after the layout and the
+    axis limits are final.
+    """
+    renderer = ax.figure.canvas.get_renderer()
+    marks = _obstacles(ax, renderer, ignore)
+    frame = ax.get_window_extent(renderer)
+    kept = None
+    for xy, coords, offset, ha, va in candidates:
+        t = ax.annotate(text, xy, xycoords=coords, xytext=offset, textcoords="offset points",
+                        ha=ha, va=va, bbox=LABEL_BOX, **kw)
+        e = t.get_window_extent(renderer)
+        inside = frame.x0 <= e.x0 and e.x1 <= frame.x1 and frame.y0 <= e.y0 and e.y1 <= frame.y1
+        clear = inside and not any(e.x0 - pad < b[2] and b[0] < e.x1 + pad and
+                                   e.y0 - pad < b[3] and b[1] < e.y1 + pad for b in marks)
+        if clear:
+            if kept is not None:
+                kept.remove()
+            return t
+        if kept is None:
+            kept = t
+        else:
+            t.remove()
+    return kept
+
+
 __all__ = [
     "AXIS_RULE", "BAND_FILL", "BURNT_PEACH", "CHARCOAL", "DATASET_COLORS", "FAMILY_DIR",
     "GRIDLINE", "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "MUTED_COLOR",
     "OUTCOME", "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS",
     "dataset_colors", "dataset_name", "diverging_cmap", "fit_texts", "footnote",
     "label_color", "legend", "mark_kwargs", "model_name", "layout", "outcome_handles",
-    "pad_range", "panel_title", "paradigm_handles", "ranks", "seed_ticks", "setup",
-    "style_axes", "title", "window_label", "write", "xlabel",
+    "pad_range", "panel_title", "paradigm_handles", "place_clear", "ranks",
+    "seed_ticks", "setup", "style_axes", "title", "window_label", "write", "xlabel",
 ]

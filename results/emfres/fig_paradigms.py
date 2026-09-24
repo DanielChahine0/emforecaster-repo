@@ -27,8 +27,8 @@ from .figkit import (
     BAND_FILL, BURNT_PEACH, CHARCOAL, INK_MUTED, INK_PRIMARY, INK_SECONDARY,
     LABEL_BOX, MUTED_COLOR, OUTCOME, PARTIAL_ALPHA, SURFACE, VERDIGRIS, dataset_name,
     fit_texts, footnote, label_color, layout, legend, mark_kwargs, model_name,
-    outcome_handles, pad_range, panel_title, paradigm_handles, seed_ticks, style_axes,
-    title, window_label, write, xlabel,
+    outcome_handles, pad_range, panel_title, paradigm_handles, place_clear, seed_ticks,
+    style_axes, title, window_label, write, xlabel,
 )
 
 METRIC_NAME = dict(PG.METRICS)          # {"mae": "MAE", "mse": "MSE"}
@@ -439,6 +439,7 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
                              squeeze=False, sharey=True)
     partial = False
     flagged_any = False
+    rules = []
     for r, corpus in enumerate(corpora):
         for c, dataset in enumerate(datasets):
             ax = axes[r][c]
@@ -448,11 +449,8 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
             ax.axvline(0, color=INK_SECONDARY, lw=0.6, zorder=2)
             thr = FD.trains_threshold(corpus, dataset)
             if thr is not None:
-                ax.axvline(thr, color=BURNT_PEACH, lw=0.8, ls=(0, (3, 2)), zorder=2)
-                ax.annotate("Transformer trains", (thr, 1.0),
-                            xycoords=("data", "axes fraction"),
-                            xytext=(2, -1), textcoords="offset points", ha="left", va="top",
-                            fontsize=style.context * 0.95, color=label_color(BURNT_PEACH))
+                rules.append((ax, thr, ax.axvline(thr, color=BURNT_PEACH, lw=0.8,
+                                                  ls=(0, (3, 2)), zorder=2)))
                 xs.append(thr)
             if xs:
                 ax.set_xlim(*pad_range(xs + [0.0], 0.06))
@@ -469,6 +467,15 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
     handles = paradigm_handles(style, (PG.MV, PG.PC, PG.BEST), partial=partial, seeds=False)
     legend(fig, handles, style, y=1 - 0.24 / fig.get_size_inches()[1])
     layout(fig, style, top=0.86, bottom=0.42, wspace=0.08, hspace=0.3 if nrow > 1 else 0.2)
+    # The threshold's label goes where it covers no seed: beside the rule at
+    # the top, else at the bottom, right of the rule before left of it.
+    for ax, thr, rule in rules:
+        place_clear(ax, "Transformer trains", [
+            ((thr, top), ("data", "axes fraction"), (2 * side, 2 * (1 - 2 * top)),
+             "left" if side > 0 else "right", "top" if top else "bottom")
+            for top in (1, 0) for side in (1, -1)],
+            ignore=(rule,), fontsize=style.context * 0.95, color=label_color(BURNT_PEACH),
+            zorder=7)
     xlabel(fig, axes[-1], "Skill (1 − MSE / lookback-mean MSE)", style)
     if flagged_any:
         footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
