@@ -20,8 +20,13 @@ WINDOWS = {"emf": [(336, 96)], "voip": [(48, 12), (24, 6)]}
 
 # The frozen report every published value is gated against (make.py tables /
 # reconcile). Re-frozen when a set of numbers is accepted as published; the
-# previous snapshots stay in archive/ as provenance.
+# previous snapshots stay in archive/ as provenance. The changes expected
+# against it are declared in specs/gate.yaml, which names the snapshot its
+# rules were written for, so a re-freeze retires them.
 PUBLISHED = RESULTS / "archive" / "2026-09-22_tables.md"
+# The snapshot per family. It covers the EMF corpus only: the VoIP tables are
+# ungated until a snapshot is frozen for them.
+SNAPSHOTS = {"emf": PUBLISHED}
 
 
 def spec_excludes() -> list[str]:
@@ -222,16 +227,11 @@ def cmd_extract(args) -> int:
     return 0
 
 
-def cmd_tables(args) -> int:
-    import json
-    from difflib import unified_diff
-
+def render_family(family: str) -> list[tuple[str, str, str]]:
+    """Every section `make.py tables` writes for a family: (slug, title, markdown)."""
     from . import tables as T
 
     runs_csv = FRAMES / "runs.csv"
-    if not runs_csv.exists():
-        print(f"{runs_csv} not found -- run `make.py extract` first", file=sys.stderr)
-        return 1
     # The paradigm comparison's band variants read bands.csv beside runs.csv.
     # Without it they are left out (the section's note says so) -- which the
     # tracked frames alone cannot tell apart from bands that changed nothing.
@@ -242,7 +242,6 @@ def cmd_tables(args) -> int:
               f"with runs.csv for the tracked frames to reproduce those rows.",
               file=sys.stderr)
 
-    family = args.family
     # The benchmark window every cross-setup section is built for, per corpus.
     setting = WINDOWS[family][0]
     sections = (T.render_sections(runs_csv, REPO, RESULTS, family)
@@ -259,22 +258,57 @@ def cmd_tables(args) -> int:
     # The seed-aware answer to "which paradigm is best": matched seeds, a tie
     # band at seed noise, k chosen on validation (see emfres/paradigms.py).
     from . import paradigms as PG
-    paradigm_md = PG.render(runs_csv, family, setting, **labels)
+    from .reconcile import PARADIGM_TITLE
+    paradigm_md = PG.render(runs_csv, family, setting, title=PARADIGM_TITLE, **labels)
     if paradigm_md:
-        sections.append(("paradigms", "Paradigm Comparison", paradigm_md))
+        sections.append(("paradigms", PARADIGM_TITLE, paradigm_md))
     # The family's other windows, each its own section: the same comparison as a
     # robustness check, never pooled with the benchmark's cells.
     for seq_len, pred_len in WINDOWS[family][1:]:
-        title = f"Paradigm Comparison · L{seq_len}/O{pred_len}"
+        title = f"{PARADIGM_TITLE} · L{seq_len}/O{pred_len}"
         md = PG.render(runs_csv, family, (seq_len, pred_len), title=title, **labels)
         if md:
             sections.append((f"paradigms-l{seq_len}", title, md))
+    return sections
+
+
+def run_gate(family: str, sections, snapshot: Path | None = None, verbose: bool = False):
+    """The value gate for a family's rendered sections, or None when it has no snapshot."""
+    from . import reconcile as R
+
+    snapshot = SNAPSHOTS.get(family) if snapshot is None else snapshot
+    if snapshot is None:
+        print(f"NOTE: no frozen snapshot for family {family!r} -- values are not "
+              f"gated against one", file=sys.stderr)
+        return None
+    if not snapshot.exists():
+        print(f"WARNING: the frozen snapshot {snapshot} is missing -- values are not "
+              f"gated", file=sys.stderr)
+        return None
+    return R.gate(snapshot, FRAMES / "cells.csv", sections,
+                  runs_spec=SPECS / "runs.yaml", gate_spec=SPECS / "gate.yaml",
+                  verbose=verbose)
+
+
+def cmd_tables(args) -> int:
+    import json
+
+    from . import reconcile as R
+    from . import tables as T
+
+    runs_csv = FRAMES / "runs.csv"
+    if not runs_csv.exists():
+        print(f"{runs_csv} not found -- run `make.py extract` first", file=sys.stderr)
+        return 1
+    family = args.family
+    sections = render_family(family)
     if not sections:
         print(f"no runs in family {family!r}", file=sys.stderr)
         return 1
 
     # Gate: every value the frozen report publishes must still come out of the
-    # CSVs. This is deliberately a *value* check, not a text comparison.
+    # CSVs, or be a change specs/gate.yaml declares. This is deliberately a
+    # *value* check, not a text comparison.
     #
     # It used to diff the rendered markdown against the archive and refuse on
     # any difference. That cannot survive a section legitimately gaining rows:
@@ -282,29 +316,21 @@ def cmd_tables(args) -> int:
     # parameter-count table from one column to ten, changing a great deal of
     # text while leaving every published number identical. A tripwire that
     # fires on correct work teaches you to pass --force, which is worse than
-    # having no tripwire. reconcile tolerates growth by construction -- a cell
-    # the archive never had is a cell it cannot contradict.
-    from . import reconcile as R
+    # having no tripwire. The gate tolerates growth by construction -- a value
+    # the archive never had is a value it cannot contradict.
+    gate = run_gate(family, sections)
+    if gate is not None and not gate.ok and not args.force:
+        print(f"\nA published value changed and specs/gate.yaml does not expect it; "
+              f"refusing to write. Pass --force to write anyway.", file=sys.stderr)
+        return 1
 
-    # The frozen snapshot covers the EMF corpus only, so it cannot speak for a
-    # VoIP rebuild; those tables are ungated until a snapshot is frozen for them.
-    published = PUBLISHED if family == "emf" else None
-    if published is None:
-        print(f"NOTE: no frozen snapshot for family {family!r} -- values are not "
-              f"gated against one", file=sys.stderr)
-    elif published.exists():
-        values_match = R.reconcile(published, FRAMES / "cells.csv") == 0
-        if not values_match and not args.force:
-            print(f"\nA published value no longer reproduces from frames/; refusing "
-                  f"to write. Pass --force to write anyway.", file=sys.stderr)
-            return 1
+    # Text drift is reported, never fatal: it says how the report grew, and
+    # what of each changed section the gate did (or did not) hold.
+    if gate is not None:
+        from difflib import unified_diff
 
-        # Text drift is reported, never fatal: it says how the report grew.
-        import re
-        have = {}
-        for block in re.split(r"(?m)^(?=# )", published.read_text()):
-            if block.startswith("# "):
-                have[block.splitlines()[0][2:].strip()] = block.strip()
+        published = SNAPSHOTS[family]
+        have = dict(R.split_blocks(published.read_text()))
         for _, title, md in sections:
             old = have.get(title)
             if old is None:
@@ -315,14 +341,20 @@ def cmd_tables(args) -> int:
             add = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
             rem = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
             if add or rem:
-                # Under --force the values may be exactly what changed, so the
-                # reassurance is only printed when the gate actually passed.
-                verdict = ("every published value still matches" if values_match
-                           else "published values changed -- written under --force")
                 print(f"NOTE: '{title}' changed since {published.name} "
-                      f"(+{add}/-{rem} lines; {verdict})", file=sys.stderr)
+                      f"(+{add}/-{rem} lines; {gate.coverage(title)})", file=sys.stderr)
     if args.check:
-        print(f"\nchecked {len(sections)} sections -- every published value reproduces")
+        if gate is None:
+            print(f"\nrendered {len(sections)} sections -- family {family!r} has no "
+                  f"frozen snapshot, so no value was gated")
+            return 0
+        if not gate.ok:
+            print(f"\nchecked {len(sections)} sections -- {len(gate.unexpected)} "
+                  f"published values changed unexpectedly (see above)")
+            return 1
+        print(f"\nchecked {len(sections)} sections -- every published value reproduces"
+              + (f" or is one of the {gate.n_expected} changes specs/gate.yaml "
+                 f"expects" if gate.n_expected else ""))
         return 0
 
     # One directory per corpus: the EMF tables keep their established paths,
@@ -363,12 +395,18 @@ def cmd_tables(args) -> int:
 
 
 def cmd_reconcile(args) -> int:
-    from . import reconcile
-    cells = FRAMES / "cells.csv"
-    if not cells.exists():
-        print(f"{cells} not found -- run `make.py extract` first", file=sys.stderr)
+    for name in ("cells.csv", "runs.csv"):
+        if not (FRAMES / name).exists():
+            print(f"{FRAMES / name} not found -- run `make.py extract` first",
+                  file=sys.stderr)
+            return 1
+    if args.tables is None and args.family not in SNAPSHOTS:
+        print(f"no frozen snapshot for family {args.family!r}; pass --tables",
+              file=sys.stderr)
         return 1
-    return reconcile.reconcile(args.tables, cells)
+    sections = render_family(args.family)
+    gate = run_gate(args.family, sections, snapshot=args.tables, verbose=args.all)
+    return 0 if gate is not None and gate.ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -396,14 +434,20 @@ def main(argv: list[str] | None = None) -> int:
                          "channels, windows and split -- so they are never "
                          "rendered into one table. 'voip' writes tables/voip/.")
     tb.add_argument("--check", action="store_true",
-                    help="rebuild and diff against tables.md, write nothing")
+                    help="rebuild and gate against the frozen snapshot, write nothing")
     tb.add_argument("--force", action="store_true",
-                    help="write even if a section drifted from tables.md")
+                    help="write even if a published value changed unexpectedly")
     tb.set_defaults(func=cmd_tables)
 
     rc = sub.add_parser(
-        "reconcile", help="check tables.md's published cells against frames/cells.csv")
-    rc.add_argument("--tables", type=Path, default=PUBLISHED)
+        "reconcile", help="hold the frozen report's published values against frames/")
+    rc.add_argument("--family", default="emf", choices=["emf", "voip"],
+                    help="which corpus's render to hold it against (default: emf)")
+    rc.add_argument("--tables", type=Path, default=None,
+                    help="the snapshot to hold (default: the family's frozen one, "
+                         f"archive/{PUBLISHED.name} for emf)")
+    rc.add_argument("--all", action="store_true",
+                    help="list every expected change and every new value, uncapped")
     rc.set_defaults(func=cmd_reconcile)
 
     args = parser.parse_args(argv)
