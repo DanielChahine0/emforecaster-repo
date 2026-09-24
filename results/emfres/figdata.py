@@ -515,14 +515,21 @@ def series_values(runs_csv: Path, window: tuple = SERIES_WINDOW) -> dict:
 # Spot check: the figures' numbers against cells.csv
 # --------------------------------------------------------------------------- #
 
-def spot_check(corpus: Corpus, cells_csv: Path, tol: float = 1e-9) -> tuple:
-    """(checked, mismatches) of the plotted seed means against cells.csv.
+def spot_check(corpus: Corpus, cells_csv: Path, tol: float = 1e-9,
+               runs_csv: Optional[Path] = None) -> tuple:
+    """(checked, mismatches) of the seed means the figures draw against cells.csv.
 
-    Every multivariate cell, every per-channel cell whose seeds are all
-    complete (cells.csv averages every band x seed run, which equals the mean
-    of per-seed band means only then) and every cluster k with a fixed value
-    for all its seeds. Derived from the frames, so it holds after every
-    re-extraction: a figure that drifted from the tables fails it.
+    The seed values every accuracy figure is drawn from (P1, P2, P4, P5,
+    P6, P9): every multivariate cell, every per-channel cell whose seeds are
+    all complete (cells.csv averages every band x seed run, which equals the
+    mean of per-seed band means only then) and every cluster k with a fixed
+    value for all its seeds. With ``runs_csv``, also P8's coverage and width
+    (calibration) and P7's multivariate and cluster training time (costs)
+    under the same conditions. Not checked, having no cells.csv counterpart:
+    P7's per-channel cost (timing.csv's solo estimate) and P3's band ratios
+    (bands.csv); P10 has spot_check_series. Derived from the frames, so it
+    holds after every re-extraction: a figure that drifted from the tables
+    fails it.
     """
     if not Path(cells_csv).exists():
         return 0, []
@@ -566,4 +573,70 @@ def spot_check(corpus: Corpus, cells_csv: Path, tol: float = 1e-9) -> tuple:
             if row and len(fixed) == len(seeds) and _f(row.get("n_seeds")) == len(seeds):
                 check(("cluster", dataset, model, pipeline[1]), fixed,
                       (("mae", "mae_fixed"), ("mse", "mse_fixed")))
+    if runs_csv is None:
+        return checked, bad
+
+    def whole(key, n, pipe) -> bool:
+        """cells.csv's plain mean is the seed mean only over every seed, all complete."""
+        row = table.get(key)
+        return bool(row) and _f(row.get("n_seeds")) == n and (
+            pipe != PG.PC or _f(row.get("n_complete_seeds")) == n)
+
+    setups = {PG.MV: "multivariate", PG.PC: "perchannel"}
+    seen = set()
+    for (cell, pipe), m in calibration(corpus, runs_csv).items():
+        cov, width = m["coverage"], m["width"]
+        if pipe in (PG.K1, PG.BEST):
+            key, cols = ("cluster", *cell, cov.k), (("coverage", "ic_fixed"),
+                                                    ("width", "interval_width_fixed"))
+        else:
+            key, cols = (setups[pipe], *cell, None), (("coverage", "ic"),
+                                                      ("width", "interval_width"))
+        if key in seen or not cov.complete or not whole(key, cov.n, pipe):
+            continue
+        seen.add(key)
+        check(key, {s: {"coverage": cov.seeds[s], "width": width.seeds[s]} for s in cov.seeds},
+              cols)
+    timing = Path(runs_csv).with_name("timing.csv")
+    for (cell, pipe), cost in costs(corpus, runs_csv, timing).items():
+        if pipe == PG.PC:
+            continue
+        k = corpus.board.choices[cell].k if pipe == PG.BEST else None
+        key = ("cluster" if pipe == PG.BEST else "multivariate", *cell, k)
+        row = table.get(key)
+        if not row or _f(row.get("n_seeds")) != cost.n:
+            continue
+        want = _f(row.get("running_time"))
+        if want is None:
+            continue
+        checked += 1
+        if abs(cost.seconds - want) > tol * max(1.0, abs(want)):
+            bad.append((key, "running_time", cost.seconds, want))
+    return checked, bad
+
+
+def spot_check_series(runs_csv: Path, cells_csv: Path, tol: float = 1e-9) -> tuple:
+    """(checked, mismatches) of P10's series seed means against cells.csv."""
+    if not Path(cells_csv).exists():
+        return 0, []
+    seq_len, pred_len = SERIES_WINDOW
+    table = {}
+    with open(cells_csv) as f:
+        for r in csv.DictReader(f):
+            if r["setup"] == "series" and r["conf"] == "1" and \
+                    (int(r["seq_len"]), int(r["pred_len"])) == (seq_len, pred_len):
+                table[(r["dataset"], r["model"])] = r
+    checked, bad = 0, []
+    for key, seeds in series_values(runs_csv).items():
+        row = table.get(key)
+        if not row or _f(row.get("n_seeds")) != len(seeds):
+            continue
+        for metric in ("mae", "mse"):
+            want = _f(row.get(metric))
+            if want is None:
+                continue
+            got = statistics.fmean(v[metric] for v in seeds.values())
+            checked += 1
+            if abs(got - want) > tol * max(1.0, abs(want)):
+                bad.append((("series", *key), metric, got, want))
     return checked, bad

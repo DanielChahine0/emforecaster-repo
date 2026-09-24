@@ -142,6 +142,32 @@ def test_the_spot_check_holds_the_figures_to_cells_csv(tmp_path):
     assert [(key[0], metric) for key, metric, *_ in bad] == [("multivariate", "mae")]
 
 
+def test_the_spot_check_also_holds_coverage_width_and_cost_to_cells_csv(tmp_path):
+    rows = _corpus_rows()
+    for i, r in enumerate(rows):
+        r.update(ic=repr(88.0 + i % 3), interval_width=repr(1.0 + 0.01 * i),
+                 running_time=repr(60.0 + i))
+        if r["setup"] == "cluster":
+            r.update(ic_fixed=repr(87.0 + i % 3), interval_width_fixed=repr(1.1 + 0.01 * i))
+    corpus, d = _load(tmp_path, rows)
+    n_means, _ = FD.spot_check(corpus, d / "cells.csv")
+    n, bad = FD.spot_check(corpus, d / "cells.csv", runs_csv=d / "runs.csv")
+    assert n > n_means and bad == []
+    # A coverage the figure would draw that no longer matches cells.csv.
+    frames.write_csv(d / "runs.csv", [dict(r, ic="95.0") if r["setup"] == "multivariate"
+                                      and r["model"] == "DLinear" else r for r in rows],
+                     frames.RUN_FIELDS)
+    _, bad = FD.spot_check(corpus, d / "cells.csv", runs_csv=d / "runs.csv")
+    assert {(key[0], metric) for key, metric, *_ in bad} == {("multivariate", "coverage")}
+
+
+def test_the_series_spot_check_holds_its_seed_means(tmp_path):
+    rows = [_run("series", s, 0.3 + 0.01 * i, dataset="det") for i, s in enumerate(SEEDS)]
+    d = _frames(tmp_path, rows)
+    n, bad = FD.spot_check_series(d / "runs.csv", d / "cells.csv")
+    assert n == 2 and bad == []
+
+
 def test_the_series_grid_is_read_on_its_own(tmp_path):
     rows = [_run("series", s, 0.3 + 0.01 * i, dataset="det")
             for i, s in enumerate(SEEDS)]

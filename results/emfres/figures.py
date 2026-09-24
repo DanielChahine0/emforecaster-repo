@@ -61,11 +61,16 @@ def render(frames_dir: Path, outdir: Path, *, families=("emf", "voip"), only=Non
     if check:
         for fam, cs in corpora.items():
             for corpus in cs:
-                n, bad = FD.spot_check(corpus, frames_dir / "cells.csv")
+                n, bad = FD.spot_check(corpus, frames_dir / "cells.csv", runs_csv=runs_csv)
                 print(f"spot check {fam} {K.window_label(corpus.window)}: "
-                      f"{n - len(bad)}/{n} plotted means agree with cells.csv",
+                      f"{n - len(bad)}/{n} seed means agree with cells.csv",
                       file=sys.stderr)
                 problems += bad
+        if "emf" in families:
+            n, bad = FD.spot_check_series(runs_csv, frames_dir / "cells.csv")
+            print(f"spot check series: {n - len(bad)}/{n} seed means agree with cells.csv",
+                  file=sys.stderr)
+            problems += bad
 
     def want(fid, fam):
         return fid in wanted and fam in FIGURES[fid][0] and fam in families
