@@ -107,3 +107,22 @@ def test_one_family_and_one_figure(tmp_path):
 def test_an_unknown_figure_id_is_refused(tmp_path):
     with pytest.raises(ValueError):
         figures.render(_partial_frames(tmp_path), tmp_path / "out", only=["P12"])
+
+
+def test_a_per_channel_bracket_is_drawn_only_where_it_shows():
+    import matplotlib.pyplot as plt
+
+    from emfres import fig_cost, figkit
+
+    style = figkit.setup("paper")
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.set_xscale("log")
+    ax.set_xlim(0.5, 30)
+    # A +-3% bracket on an axis spanning 60x hides under its mark: not drawn,
+    # and the note says how wide it is instead.
+    drawn, note = fig_cost._band_whiskers(fig, [(ax, 9.7, 10.3, 0.0, "k", 1.0, 10.0)], style)
+    assert not drawn and "−3% to +3%" in note
+    # A bracket from half to twice the estimate shows, and is drawn.
+    drawn, note = fig_cost._band_whiskers(fig, [(ax, 5.0, 20.0, 0.0, "k", 1.0, 10.0)], style)
+    assert drawn and note is None
+    plt.close(fig)

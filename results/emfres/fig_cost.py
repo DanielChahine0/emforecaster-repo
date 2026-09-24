@@ -5,7 +5,9 @@ P7  cost         accuracy against uncontended training cost (EMF only: VoIP
                  trained one at a time, so their logged time is their cost; a
                  per-channel pipeline's cost is timing.csv's solo estimate
                  summed over its bands, with the fastest-to-slowest measured
-                 band as a whisker. Never the contended per-channel log time.
+                 band as a whisker where it is wider than the mark (a note
+                 gives the range where it is not). Never the contended
+                 per-channel log time.
 P8  calibration  per-channel coverage and interval width of the conformal
                  intervals (target 1 - alpha = 90%), in P1's model rows and
                  paradigm lanes.
@@ -68,6 +70,7 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                              sharex=True, sharey=True)
     partial = False
     xs, ys = [1.0], [0.0]
+    whiskers = []          # (ax, lo, hi, y, colour, alpha, estimate), drawn after layout
     for idx, model in enumerate(models):
         ax = axes[idx // ncol][idx % ncol]
         style_axes(ax, style, grid="both")
@@ -92,8 +95,8 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                 alpha = 1.0 if complete else PARTIAL_ALPHA
                 x, y = c.seconds / base.seconds, 100 * r["rel"]
                 if c.lo is not None:
-                    ax.plot([c.lo / base.seconds, c.hi / base.seconds], [y, y], color=hue[ds],
-                            lw=0.8, alpha=alpha, zorder=3, solid_capstyle="butt")
+                    whiskers.append((ax, c.lo / base.seconds, c.hi / base.seconds, y, hue[ds],
+                                     alpha, x))
                 ax.plot([x], [y], marker=marker, linestyle="None", zorder=5, alpha=alpha,
                         markersize=style.marker * (0.9 if marker == "D" else 1.0),
                         markerfacecolor=hue[ds] if filled else SURFACE,
@@ -126,7 +129,11 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                 for mk, sz, filled, lab in (("o", 1.0, False, "Per-channel"),
                                             ("D", 0.9, True, "Cluster, best k"))]
     handles += [Line2D([], [], color=hue[ds], lw=2.2, label=dataset_name(ds)) for ds in datasets]
-    handles.append(Line2D([], [], color=INK_SECONDARY, lw=0.8, label="Fastest–slowest band"))
+    layout(fig, style, top=0.84, bottom=0.42, left=0.09, wspace=0.08, hspace=0.42)
+    drawn, note = _band_whiskers(fig, whiskers, style)
+    if drawn:
+        handles.append(Line2D([], [], color=INK_SECONDARY, lw=0.8, marker="|",
+                              markersize=style.marker * 0.8, label="Fastest–slowest band"))
     if partial:
         # Grey, not Verdigris: in this figure a hue names a dataset.
         handles.append(Line2D([], [], marker="D", linestyle="None", alpha=PARTIAL_ALPHA,
@@ -134,10 +141,45 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                               markeredgecolor=INK_SECONDARY,
                               markeredgewidth=style.line_width * 0.5, label="Still training"))
     legend(fig, handles, style, y=1 - 0.24 / height)
-    layout(fig, style, top=0.84, bottom=0.42, left=0.09, wspace=0.08, hspace=0.42)
+    if note:
+        # Only the bottom margin moves: the whiskers were judged on the widths.
+        layout(fig, style, top=0.84, bottom=0.52, left=0.09, wspace=0.08, hspace=0.42)
+        footnote(fig, note, style)
     xlabel(fig, list(axes.flat), "Training time, × the multivariate run", style)
     return write(fig, root, group=corpus.family, subject="cost",
                  configs=[corpus.window], metric=metric, formats=formats)
+
+
+def _band_whiskers(fig, whiskers, style) -> tuple:
+    """Draw each per-channel bracket that is wider than its mark; (any drawn, note).
+
+    The bracket -- every band at the fastest, or the slowest, measured band's
+    seconds per epoch -- is a few percent of the estimate, which on a log axis
+    spanning tens of times the multivariate cost hides under the marker. A
+    bracket that would hide is not drawn; when none is drawn the note gives
+    the range in words instead, so the legend never keys a mark nobody sees.
+    """
+    if not whiskers:
+        return False, None
+    mark_px = style.marker * fig.dpi / 72
+    drawn = False
+    for ax, lo, hi, y, color, alpha, _ in whiskers:
+        (x0, _), (x1, _) = ax.transData.transform([(lo, y), (hi, y)])
+        if x1 - x0 > 1.2 * mark_px:
+            ax.plot([lo, hi], [y, y], color=color, lw=0.8, alpha=alpha, zorder=3,
+                    marker="|", markersize=style.marker * 0.8, markevery=[0, 1],
+                    solid_capstyle="butt")
+            drawn = True
+    if drawn:
+        return True, None
+    lo = min(w[1] / w[6] for w in whiskers) - 1
+    hi = max(w[2] / w[6] for w in whiskers) - 1
+
+    def pct(v):
+        return f"{100 * v:+.0f}%".replace("-", "\u2212")
+
+    return False, (f"Per-channel cost with every band at the fastest or the slowest band's "
+                   f"speed: {pct(lo)} to {pct(hi)}, inside the marks")
 
 
 def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *,
