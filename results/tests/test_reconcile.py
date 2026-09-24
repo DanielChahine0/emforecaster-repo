@@ -175,6 +175,18 @@ def test_only_an_undeclared_change_fails_the_gate(tmp_path):
     assert g.ok and g.n_expected == 5
 
 
+def test_no_rule_forgives_a_value_that_vanished_or_turned_into_a_dash(tmp_path):
+    before = _scoreboard([(BEST, "MAE", 9, 0, 0, 9, "0.00391")])
+    after = _scoreboard([(BEST, "MAE", 8, 1, 0, 0, "-")])
+    everything = {"kind": "scoreboard", "reason": "The primary protocol changed."}
+    g = _gate(tmp_path, before, after, [everything])
+    assert not g.ok
+    assert [c.key["column"] for c in g.unexpected] == ["Wilcoxon p"]
+    assert g.n_expected == 3                       # the counts moved; that is declared
+    g = _gate(tmp_path, before, _scoreboard([]), [everything])
+    assert len(g.unexpected) == 6 and g.n_expected == 0
+
+
 def test_k_min_matches_only_the_clustered_ks():
     rule = {"kind": "sweep", "column": "k", "k_min": 2, "reason": "protocol."}
     key = dict(dataset="ED2022", window="L336/O96", metric="MAE", model="DLinear",

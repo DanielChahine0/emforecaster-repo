@@ -18,7 +18,9 @@ A published value that no longer reproduces is a *change*. Some changes are
 the point of a deliberate step -- a retrained band, a new primary protocol --
 and specs/gate.yaml declares them, each with its reason, for the snapshot it
 was written against: those print as expected. Any other change is unexpected
-and fails the gate. A value today's report has and the snapshot does not is
+and fails the gate, and so is a value that vanished or turned into '-',
+whatever a rule says: a rule declares a value that moved, never one that went
+missing. A value today's report has and the snapshot does not is
 *new*: counted, never fatal, since a cell the snapshot never had is a cell it
 cannot contradict. Once the expected changes are reviewed, re-freezing the
 snapshot is what retires them.
@@ -90,6 +92,16 @@ class Change:
     key: dict
     published: str
     current: str | None          # None: today's report no longer publishes it
+
+    @property
+    def vanished(self) -> bool:
+        """Today's report no longer prints the value, or prints '-' for it.
+
+        No rule forgives this (gate): every change specs/gate.yaml declares
+        moves a value, none removes one, so a value that vanished under a rule
+        is a failure the rule was not written for.
+        """
+        return self.current is None or self.current == "-" or self.current.startswith("- ")
 
     def where(self) -> str:
         k = self.key
@@ -644,7 +656,8 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
     unexpected = []
     for h in held.values():
         for change in h.changes:
-            hit = next((cs for rule, cs in expected if matches(rule, change)), None)
+            hit = None if change.vanished else next(
+                (cs for rule, cs in expected if matches(rule, change)), None)
             (unexpected if hit is None else hit).append(change)
     result = Gate(published.name, held, expected, unexpected, notes)
     report(result, verbose=verbose, out=out)
@@ -681,6 +694,10 @@ def report(g: Gate, *, verbose: bool = False, out=sys.stdout) -> None:
         print(f"  {c.label()}", file=out)
     if not verbose and len(g.unexpected) > 40:
         print(f"  ... and {len(g.unexpected) - 40} more (make.py reconcile --all)", file=out)
+    gone = sum(c.vanished for c in g.unexpected)
+    if gone:
+        print(f"  ({gone} of them vanished or turned into '-': no rule forgives that)",
+              file=out)
     if verbose:
         for h in g.held.values():
             for c in h.new:
