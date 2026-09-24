@@ -28,6 +28,13 @@ every table. The two per-band/joint grids share one model list outright
 (UNIVARIATE_MODELS is MV_MODELS); univariate_series keeps a separate list only
 because it runs a different package with different job configs, not because it is
 a different set of models.
+
+The four WINDOWS are what a grid defines, not what has been run: for the
+multivariate, per-channel and cluster grids, logs/ holds L336_O96, the
+benchmark, and no other EMF window, so the EMF three-paradigm comparison exists
+at that window alone; univariate_series has all four. A bare sweep still plans
+all four, and --window 336x96 keeps it to the benchmark. The VoIP grids below
+define their own VOIP_WINDOWS.
 """
 
 import csv

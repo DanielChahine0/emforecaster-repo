@@ -787,16 +787,21 @@ class ModernTCN(BaseModel):
 class Cluster(BaseModel):
     """CCM channel clustering (forecasting/multivariate/models/ccm.py).
 
-    When enabled, the model_id's ordinary network is built with its per-channel
-    temporal linears swapped for cluster-wise ones and wrapped with CCM's
-    cluster assigner -- both modules upstream's own code, imported verbatim
-    from the vendored TimeSeriesCCM-main/ tree: channels are assigned to k
-    clusters by a learned, soft, sinkhorn-normalized assignment against
-    trainable cluster embeddings, and k parallel Linear layers are mixed by
-    that assignment. Only DLinear, PatchTST, TSMixer, EMForecaster,
-    RF_EMF_Transformer and LSTM (the last three swap the read-out their
+    When enabled, the model_id's ordinary network is built with a linear map it
+    applies to each channel on its own swapped for a cluster-wise one and
+    wrapped with CCM's cluster assigner -- both modules upstream's own code,
+    imported verbatim from the vendored TimeSeriesCCM-main/ tree: channels are
+    assigned to k clusters by a learned, soft, sinkhorn-normalized assignment
+    against trainable cluster embeddings, and k parallel Linear layers are
+    mixed by that assignment. Only DLinear, PatchTST, TSMixer (their temporal
+    linears), EMForecaster, RF_EMF_Transformer and LSTM (the read-out their
     channels share) are built this way (models/ccm.py CCM_MODELS); any other
     model_id is rejected at model build.
+
+    A cluster run is scored twice: under upstream's batch-pooled membership
+    (sl_val/*, sl_test/*, kept as a sensitivity row) and under one fixed
+    membership fitted on the training split (sl_val_fixed/*, sl_test_fixed/*,
+    the primary evaluation); see models/ccm.py.
 
     Two prior implementations produced runs under logs/ trees that are NOT
     resumable against the current code:

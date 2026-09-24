@@ -1,12 +1,16 @@
 """The lookback-mean forecast: the error a model scores by learning nothing.
 
-Every model in the joint and per-channel grids normalizes each input window
-(RevIN) before forecasting, so a network whose output never leaves zero in that
-normalized space forecasts, once denormalized, the mean of its own lookback
-window. That is what a collapsed run looks like from the outside. On the EMF
-benchmark the Transformer does exactly this at seeds 69422 and 69423 on every
-dataset, and its test MSE matches the lookback-mean forecast's to within 0.05%
-(ED2022: 1.0073 against 1.0075) while its one trained seed is 50% better.
+PatchTST, TSMixer, EMForecaster, the Transformer and LSTM normalize each input
+window (RevIN) before forecasting, so a network whose output never leaves zero
+in that normalized space forecasts, once denormalized, the mean of its own
+lookback window. That is what a collapsed run of one of them looks like from
+the outside. DLinear has no RevIN in any paradigm (its job config's
+revin/revout flags do nothing), and neither do ARIMA and Persistence, so for
+those three the lookback mean is a reference point, not where a collapse
+lands. On the EMF benchmark the Transformer does exactly this at seeds 69422
+and 69423 on every dataset, and its test MSE matches the lookback-mean
+forecast's to within 0.05% (ED2022: 1.0073 against 1.0075) while its one
+trained seed is 50% better.
 
 ``skill`` is 1 - mse / lookback_mse, measured on the same windows: positive
 when a model beats the trivial forecast, zero when it matches it, negative when
@@ -20,10 +24,10 @@ better than its own mean, and a weak model on a hard target. Checked across all
 to put a threshold in, and even a seed-level rule ("some seeds learned, some
 did not") flags VoIP cells whose seeds are merely small and spread out. The
 Transformer's collapse is identified by the conjunction of evidence instead --
-a flat training loss, skill of 0.000, and two failed seeds identical to four
-decimals -- and is documented rather than flagged. A training-loss rule fails
-too: per-channel DLinear barely moves its loss because it *starts* at a
-moving-average forecast with a tiny learning rate.
+a flat training loss, skill of 0.000, and two failed seeds whose test MSEs
+agree to within 2e-4 -- and is documented rather than flagged. A training-loss
+rule fails too: per-channel DLinear barely moves its loss because it *starts*
+at a moving-average forecast with a tiny learning rate.
 
 Computed from the data with the training package's own loader, so the split,
 the train-only scaler, the outage and trace-join masks and the window starts

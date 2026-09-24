@@ -21,11 +21,12 @@ implementation from the multivariate cell each cluster cell exists to be
 compared against -- different init, RevIN, decomposition kernel. Now the
 clustering layers are threaded through this repo's own models instead: a
 cluster cell is the multivariate cell's exact network, with the same job
-config, hyperparameters and init, its per-channel temporal linears swapped for
+config, hyperparameters and init, a linear map it applies to each channel on
+its own (a temporal linear, or the read-out its channels share) swapped for
 upstream's Cluster_wise_linear.
 
-Where the clustering enters each model (mirroring where upstream's own wrappers
-put Cluster_wise_linear):
+Where the clustering enters each model (for the first three, where upstream's
+own wrappers put Cluster_wise_linear):
 
   DLinear       the seasonal and trend linears (the whole model).
   PatchTST      the flatten head; the per-channel attention encoder is
@@ -61,9 +62,14 @@ Repo-side adaptations, each marked ADAPTED below or at its site:
     Exp_CCM builds a batch-wise matrix that is only the right shape in its
     M4/stock setups; its multivariate path loads a precomputed .npy the
     release does not ship. Same kernel, applied along the channel axis.
-  - PatchTST depth. Upstream additionally injects the cluster embeddings into
-    its attention layers as extra tokens; ours clusters only the head, so the
-    encoder stays byte-identical to the multivariate cell's.
+  - PatchTST depth. Upstream's PatchTSTC passes the cluster embeddings and
+    membership into every encoder layer, but the cluster-token attention that
+    would use them is commented out in the release
+    (TimeSeriesCCM-main/models/patch_layer.py:355-367), so its encoder does
+    not read them either. Ours clusters only the head, as the release in
+    effect does, and leaves out the unused modules upstream still builds in
+    each layer (p2c, c2p, ff_var and their norms), so the encoder stays
+    byte-identical to the multivariate cell's.
   - TimesNet is out. Our TimesNet embeds all channels jointly from the first
     layer, so there is no per-channel linear for CCM to route; upstream's
     TimesNetC restructures the network to create one, which is exactly the

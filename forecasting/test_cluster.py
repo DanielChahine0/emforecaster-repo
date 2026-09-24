@@ -2,7 +2,8 @@
 
 The cluster grid threads CCM (Channel Clustering Module, NeurIPS 2024) through
 this repo's own model implementations: get_model builds the multivariate cell's
-exact network with its per-channel temporal linears swapped for upstream's own
+exact network with a linear map it applies to each channel on its own (a
+temporal linear, or the read-out its channels share) swapped for upstream's own
 Cluster_wise_linear (imported verbatim from the vendored TimeSeriesCCM-main/
 tree via utils/ccm_upstream.py) and wraps it in CCMForecaster
 (forecasting/multivariate/models/ccm.py), which drives upstream's

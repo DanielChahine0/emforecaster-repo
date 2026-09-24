@@ -51,9 +51,10 @@ def get_model(args, generator=torch.Generator()):
     # TimeSeriesCCM-main/ tree -- and wraps the result in CCMForecaster
     # (forecasting/multivariate/models/ccm.py), which drives upstream's
     # Cluster_assigner and owns the similarity loss.
-    # Everything else about the run -- data, optimizer, conformal
-    # recalibration, logging -- is unchanged, so a cluster cell differs from
-    # its multivariate counterpart only in the clustering module.
+    # The run's data and optimizer are unchanged, so a cluster cell trains as
+    # its multivariate counterpart does but for the clustering module; its
+    # evaluation adds CCMForecaster's fixed-membership protocol (sl_*_fixed)
+    # beside the unchanged batch-protocol keys.
     n_clusters = args.cluster.k_clusters if args.cluster.enabled else None
     if n_clusters is not None and args.exp.model_id not in CCM_MODELS:
         raise no_adaptation_error(args.exp.model_id)
