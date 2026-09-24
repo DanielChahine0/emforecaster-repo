@@ -45,6 +45,9 @@ PIPES = (PG.MV, PG.PC, PG.BEST)
 # What a hollow cluster diamond means (figdata.Cost.foreign).
 CONTENDED_NOTE = ("‡ A seed trained while another user's process was on the GPU "
                   "(specs/contention.yaml): its time may be inflated, its error is not")
+# Added when such a diamond is also still training, drawn faded: the legend
+# has one swatch for each, none for the two together.
+CONTENDED_PARTIAL = "; faded, it is still training too"
 
 
 def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, style,
@@ -75,6 +78,7 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
     fig, axes = plt.subplots(nrow, ncol, figsize=(WIDTH, height), squeeze=False,
                              sharex=True, sharey=True)
     partial = False
+    partial_fill = set()   # whether each still-training cluster diamond is filled
     contended = False      # a cluster cost with a foreign-contended seed
     base_contended = []    # models whose multivariate reference is
     xs, ys = [1.0], [0.0]
@@ -108,6 +112,8 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                 if c.foreign:
                     filled = False
                     contended = True
+                if not complete and marker == "D":
+                    partial_fill.add(filled)
                 x, y = c.seconds / base.seconds, 100 * r["rel"]
                 if c.lo is not None:
                     whiskers.append((ax, c.lo / base.seconds, c.hi / base.seconds, y, hue[ds],
@@ -156,13 +162,18 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
                               markeredgewidth=style.line_width * 0.5,
                               label="Cluster, time contended‡"))
     if partial:
-        # Grey, not Verdigris: in this figure a hue names a dataset.
+        # Grey, not Verdigris: in this figure a hue names a dataset. Hollow
+        # when every still-training diamond drawn is (a contended one), so the
+        # swatch keys a mark the figure has.
         handles.append(Line2D([], [], marker="D", linestyle="None", alpha=PARTIAL_ALPHA,
-                              markersize=style.marker * 0.9, markerfacecolor=INK_SECONDARY,
+                              markersize=style.marker * 0.9,
+                              markerfacecolor=SURFACE if partial_fill == {False}
+                              else INK_SECONDARY,
                               markeredgecolor=INK_SECONDARY,
                               markeredgewidth=style.line_width * 0.5, label="Still training"))
     legend(fig, handles, style, y=1 - 0.24 / height)
-    notes = [CONTENDED_NOTE if contended else None,
+    notes = [(CONTENDED_NOTE + (CONTENDED_PARTIAL if False in partial_fill else ""))
+             if contended else None,
              (f"Multivariate time contended‡: {', '.join(base_contended)}"
               if base_contended else None), note]
     notes = [n for n in notes if n]

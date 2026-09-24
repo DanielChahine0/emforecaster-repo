@@ -502,3 +502,47 @@ def test_p7_counts_and_notes_a_cost_another_users_gpu_process_may_have_inflated(
     written = fig_cost.fig_cost(corpus, runs_csv, frames_dir / "timing.csv", "mae",
                                 figkit.setup("paper"), tmp_path / "figs", ["png"])
     assert written and fig_cost.CONTENDED_NOTE in notes
+
+
+def test_p7_keys_a_still_training_cost_that_is_also_contended(tmp_path, monkeypatch):
+    """A cluster cost still training is faded; a contended one is hollow; one
+    that is both is a faded hollow diamond. The "Still training" swatch is
+    hollow when every faded diamond is, and the note says what a faded hollow
+    one is whenever the figure has one."""
+    import csv
+
+    from emfres import fig_cost, figkit, figdata as FD
+
+    def draw(foreign_datasets):
+        frames_dir = _partial_frames(tmp_path / "-".join(foreign_datasets) / "frames")
+        runs_csv = frames_dir / "runs.csv"
+        with open(runs_csv) as f:
+            rows = list(csv.DictReader(f))
+        # LSTM's sweep has one seed of k=1 so far: its cost is still training.
+        for r in rows:
+            if (r["setup"], r["model"], r["k"]) == ("cluster", "LSTM", "1") \
+                    and r["dataset"] in foreign_datasets:
+                r["foreign_overlap"], r["contended"] = "0.3", "foreign"
+        frames.write_csv(runs_csv, rows, frames.RUN_FIELDS)
+        corpus = FD.load(runs_csv, "emf", (336, 96))
+        notes, handles = [], []
+        monkeypatch.setattr(fig_cost, "footnote",
+                            lambda fig, text, style, y=0.0: notes.append(text))
+        monkeypatch.setattr(fig_cost, "legend",
+                            lambda fig, hs, style, y: handles.extend(hs))
+        assert fig_cost.fig_cost(corpus, runs_csv, frames_dir / "timing.csv", "mae",
+                                 figkit.setup("paper"), tmp_path / "figs", ["png"])
+        swatch = next(h for h in handles if h.get_label() == "Still training")
+        return notes, swatch.get_markerfacecolor() == figkit.SURFACE
+
+    # Both LSTM costs faded and hollow: the swatch is hollow, the note says both.
+    notes, hollow = draw(("ed2022", "uh2022"))
+    assert hollow
+    assert fig_cost.CONTENDED_NOTE + fig_cost.CONTENDED_PARTIAL in notes
+    # One of each: the swatch keys the filled one, the note the hollow one.
+    notes, hollow = draw(("ed2022",))
+    assert not hollow
+    assert fig_cost.CONTENDED_NOTE + fig_cost.CONTENDED_PARTIAL in notes
+    # None contended: as before.
+    notes, hollow = draw(())
+    assert not hollow and not any(fig_cost.CONTENDED_NOTE in n for n in notes)

@@ -95,7 +95,7 @@ or a best k the table does not.
 | P4 | `paradigm-compare/voip/dots_l24-48_o6-12_{mae,mse}` | VoIP, datasets x windows, Persistence as a rule |
 | P5 | `paradigm-compare/<family>/k-gain_<window>_{mae,mse}` | clustering gain against k per model; val k ringed, test-best k marked, batch protocol dashed |
 | P6 | `paradigm-compare/scoreboard_<windows>` | the four comparisons' W/T/L, EMF and both VoIP windows, with and without a cell that does not train |
-| P7 | `paradigm-compare/emf/cost_l336_o96_{mae,mse}` | error and cost relative to the multivariate run, per-channel at its uncontended solo estimate (needs `timing.csv`); a cluster cost with a seed that trained beside another user's GPU process is hollow |
+| P7 | `paradigm-compare/emf/cost_l336_o96_{mae,mse}` | error and cost relative to the multivariate run, per-channel at its uncontended solo estimate (needs `timing.csv`); a cluster cost with a seed that trained beside another user's GPU process is hollow (and faded while still training: the note says so, and the "Still training" swatch is hollow when every faded diamond is) |
 | P8 | `paradigm-compare/<family>/calibration_<windows>` | coverage and interval width per paradigm |
 | P9 | `paradigm-compare/<family>/seed-skill_<windows>` | every seed's skill over the lookback mean, with the Transformer's trains threshold |
 | P10 | `series/dots_l336_o96_{mae,mse}` | the single-series grid, titled as the separate dataset it is |
