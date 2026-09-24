@@ -100,21 +100,33 @@ or a best k the table does not.
 | P10 | `series/dots_l336_o96_{mae,mse}` | the single-series grid, titled as the separate dataset it is |
 
 The paradigm owns the colour: multivariate Charcoal Blue filled, per-channel
-the same hue hollow, cluster Verdigris (a diamond for the chosen k, labelled
-on its own outer side and joined to a small dot for k = 1). Models are rows
-or facets, named in text; outcomes are Verdigris (challenger better), Burnt
-Peach (baseline better) and a hollow muted ring (tie). Where a figure colours
-by dataset (P5, P7) it takes `style.DATASET_COLORS`, three hues that are none
-of those. A cell where no seed trains in any paradigm (the VoIP Transformer)
-is marked † and muted wherever it is named, and P3 leaves it out of the share
-strip; ARIMA's cluster lane reads n/a, as it is per-band by construction.
+the same hue hollow, cluster Verdigris (a diamond for the chosen k, joined to
+a small dot for k = 1 and labelled with its k beside it, on its outer side
+away from the k = 1 dot unless that side is more than two marker widths away
+and the other nearer; either side when k = 1 is chosen). A label in a dot
+plot's lane steps clear of every mark, seed tick and other label
+(`figkit.settle_labels`), then the axis widens to hold it; only reference
+rules and gridlines run under its opaque box. Models are rows or facets,
+named in text; outcomes are Verdigris (challenger better), Burnt Peach
+(baseline better) and a hollow muted ring (tie). Where a figure colours by
+dataset (P5, P7) it takes `style.DATASET_COLORS`, three hues that are none of
+those. A cell where no seed trains in any paradigm (the VoIP Transformer) is
+marked † and muted wherever it is named, and P3 leaves it out of the share
+strip, whose bars are each band's share of the dataset's summed band gaps
+(the gap summed over models, so models that disagree on a band cancel there)
+and add up to 100%. ARIMA's cluster lane reads n/a, as it is per-band by
+construction.
 Type is IBM Plex Sans (`style.rc_fonts`), sizes the IEEEtran `paper` preset
 unless `--style slide`.
 
 The figures render from whatever the frames hold. A model whose sweep is still
 training is drawn faded (and hollow in P5), labelled partial, and left out of
-every count, exactly as the tables count it pending; re-extracting after the
-sweep draws it in full with no code change. The model list, datasets and k
+every count, exactly as the tables count it pending; one whose planned sweep
+has no run yet on a dataset reads pending in the dot plots' cluster lane and
+on the gap forests' zero rule (so the drawn pending cells match the count in
+each panel title), and is named in a note under P3 and P5. A figure the
+frames give nothing to draw is named in a `NOTE`. Re-extracting after the
+sweep draws it all in full with no code change. The model list, datasets and k
 values all come from the frames. ED2024 and UH2024 never appear
 (`figdata.HIDDEN_DATASETS`; the EDA tool leaves them out unless named). Each
 run spot-checks the seed means the figures are drawn from against
