@@ -98,8 +98,47 @@ def render_sections(runs_csv: Path, repo: Path, results: Path,
         if not runs:
             continue
         title = SETUP_TITLES.get(setup, setup.title())
-        out.append((setup, title, er.render_report(title, runs, er.aggregate(runs))))
+        extra = trivial_forecasts(runs_csv, setup, family, er) if setup == "series" else None
+        out.append((setup, title, er.render_report(title, runs, er.aggregate(runs),
+                                                   extra=extra or None)))
     return out
+
+
+def trivial_forecasts(runs_csv: Path, setup: str, family: Optional[str], er) -> list:
+    """The series section's trivial-forecast table, from runs.csv's baseline columns.
+
+    The single-series tree logs no baseline, and its Transformer has no RevIN,
+    so a collapsed seed lands on the training mean, not on the lookback mean
+    the joint grids' collapses land on (audit S6). One row per
+    (dataset, L, O): the two forecasts' test MSE, the same for every run of the
+    cell. [] when runs.csv has no baseline columns.
+    """
+    from .frames import family_of
+
+    found: dict = {}
+    with open(runs_csv) as f:
+        for row in csv.DictReader(f):
+            if row["setup"] != setup or (family is not None and (
+                    row.get("family") or family_of(row["dataset"])) != family):
+                continue
+            lookback, mean = _f(row.get("lookback_mse", "")), _f(row.get("train_mean_mse", ""))
+            if lookback is not None and mean is not None:
+                found[(row["dataset"], int(row["seq_len"]), int(row["pred_len"]))] = (
+                    lookback, mean)
+    if not found:
+        return []
+    keys = sorted(found, key=lambda k: (er.dataset_rank(k[0]), k[1], k[2]))
+    lines = er.md_table(
+        ["Dataset", "$L$", "$O$", "Lookback mean", "Training mean"], "lrrrr",
+        [[er.dataset_label(ds), str(sl), str(pl), f"{found[(ds, sl, pl)][0]:.4f}",
+          f"{found[(ds, sl, pl)][1]:.4f}"] for ds, sl, pl in keys])
+    note = ("Test MSE of two forecasts that learn nothing, on the runs' own windows "
+            "(`emfres/baselines.py`, this tree's own loader): repeating each window's "
+            "lookback mean, and the training split's mean (0 in the scaled space). "
+            "runs.csv's `skill` is 1 − MSE / lookback-mean MSE. This tree's "
+            "Transformer has no RevIN, so a collapsed seed lands on the training mean "
+            "(ptv2 L336/O96: 1.1619 at three of five seeds), not on the lookback mean.")
+    return [("Trivial forecasts", "Lookback-mean and training-mean MSE", lines, note)]
 
 
 def render_cross_sections(runs_csv: Path, repo: Path, results: Path,

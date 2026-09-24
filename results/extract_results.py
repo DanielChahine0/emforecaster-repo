@@ -366,7 +366,10 @@ def per_band_note(runs: list[Run]) -> str:
             f"solo timing pass measured one (EMF, L336/O96).")
 
 
-def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
+def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
+                  extra: Optional[list[tuple]] = None) -> str:
+    """One setup's section. ``extra`` appends (group, table title, lines, note)
+    groups after the model-size table -- what only the frames path knows."""
     models = sort_models({k[0] for k in cells})
     confs = [c for c in (False, True) if row_keys_for(cells, c)]
     settings = sorted({(r.seq_len, r.pred_len) for r in runs})
@@ -441,6 +444,10 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
         doc.table("Trainable weights (`parameters/sl/num_params`)", sizes,
                   note=f"For multivariate logs this varies by dataset (different channel counts), "
                        f"not just by {by}; shown here is the first value found per {by}.")
+
+    for group, table_title, lines, note in extra or []:
+        doc.group(group)
+        doc.table(table_title, lines, note=note)
 
     return doc.render()
 

@@ -88,3 +88,21 @@ def test_per_channel_times_are_labelled_contended_per_band():
                                       "that was stamped"
     assert "per band and contended" in er.per_band_note(pc)
     assert er.per_band_note([run(None, 1)]) == ""          # a joint tree: trained alone
+
+
+def test_the_series_section_lists_its_trivial_forecasts(tmp_path):
+    import extract_results as er
+
+    rows = []
+    for seed, mse in ((1, 0.6), (2, 1.1619)):
+        row = {f: "" for f in frames.RUN_FIELDS}
+        row.update(setup="series", family="emf", model="RF_EMF_Transformer", dataset="ptv2",
+                   seq_len=336, pred_len=96, seed=str(seed), conf=1, mse=repr(mse),
+                   mae="0.5", lookback_mse="1.3363", train_mean_mse="1.1619")
+        rows.append(row)
+    path = tmp_path / "runs.csv"
+    frames.write_csv(path, rows, frames.RUN_FIELDS)
+    ((group, _, lines, note),) = tables.trivial_forecasts(path, "series", "emf", er)
+    assert group == "Trivial forecasts" and "RevIN" in note
+    assert lines[-1] == "| PTV2 | 336 | 96 | 1.3363 | 1.1619 |"
+    assert tables.trivial_forecasts(path, "perchannel", "emf", er) == []
