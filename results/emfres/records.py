@@ -37,6 +37,15 @@ TRUST_COLUMNS = [("Coverage", "ic"), ("Joint coverage", "jc"),
 # plot_complexity needs parameter counts beside accuracy and cost.
 COMPLEXITY_COLUMNS = METRIC_COLUMNS + [("Parameters", "num_params")]
 
+# A cluster section leads with the fixed train-mean membership, the primary
+# cluster protocol (extract_results.render_setup), so a cluster cell's record
+# reads the fixed twin of each column that has one. Time and size have no
+# protocol. Frames written before the fixed columns existed have no twin to
+# read, and their cluster records stay the logged batch protocol, as the
+# section then does.
+FIXED_TWINS = {"mse": "mse_fixed", "mae": "mae_fixed", "ic": "ic_fixed", "jc": "jc_fixed",
+               "interval_width": "interval_width_fixed"}
+
 
 def _f(v: str) -> Optional[float]:
     return float(v) if v not in ("", None) else None
@@ -73,6 +82,8 @@ def records_from_cells(cells_csv: Path, results: Path, metrics=None,
         mine = [r for r in rows if r["setup"] == setup]
         if not mine:
             continue
+        twins = (FIXED_TWINS if setup == "cluster" and any(r.get("mse_fixed") for r in mine)
+                 else {})
 
         # The tables render one section per conformal flag; the figures only
         # ever read the section that actually got published, which is the one
@@ -102,7 +113,7 @@ def records_from_cells(cells_csv: Path, results: Path, metrics=None,
                 for ds, sl, pl, k in row_keys:
                     for col, label in enumerate(labels):
                         r = by_key.get((ds, sl, pl, k, label))
-                        value = _f(r[column]) if r else None
+                        value = _f(r.get(twins.get(column, column), "")) if r else None
                         records.append(pm.Record(
                             section=section,
                             metric=metric,

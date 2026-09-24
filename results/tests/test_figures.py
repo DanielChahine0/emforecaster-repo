@@ -279,3 +279,34 @@ def test_a_cluster_lane_with_no_run_yet_reads_pending(tmp_path):
     # blank lane (ARIMA's, which has none, reads "n/a").
     assert [lab.text.get_text() for lab in labels] == ["pending"]
     plt.close(fig)
+
+
+def test_the_legacy_figures_read_a_cluster_cells_fixed_protocol(tmp_path):
+    from pathlib import Path
+
+    from emfres.records import TRUST_COLUMNS, records_from_cells
+
+    results = Path(__file__).resolve().parents[1]
+    base = {f: "" for f in frames.CELL_FIELDS}
+    cell = dict(base, setup="cluster", family="emf", model="DLinear", dataset="ed2022",
+                seq_len=336, pred_len=96, k="2", conf=1, mse="0.50", mae="0.40",
+                running_time="60", ic="80", mse_fixed="0.45", mae_fixed="0.35",
+                ic_fixed="90")
+    mv = dict(base, setup="multivariate", family="emf", model="DLinear", dataset="ed2022",
+              seq_len=336, pred_len=96, conf=1, mse="0.55", mae="0.42", running_time="50",
+              ic="85")
+    path = tmp_path / "cells.csv"
+    frames.write_csv(path, [cell, mv], frames.CELL_FIELDS)
+    got = {(r.section.split()[0], r.metric): r.value
+           for r in records_from_cells(path, results)
+           + records_from_cells(path, results, metrics=TRUST_COLUMNS)}
+    # As the Cluster section prints them: the fixed protocol; time has none.
+    assert got[("Cluster", "MSE")] == 0.45 and got[("Cluster", "MAE")] == 0.35
+    assert got[("Cluster", "Coverage")] == 90.0 and got[("Cluster", "Training time")] == 60.0
+    assert got[("Multivariate", "MSE")] == 0.55
+
+    # Frames older than the fixed columns: the batch protocol, as the section then prints.
+    frames.write_csv(path, [dict(cell, mse_fixed="", mae_fixed="", ic_fixed=""), mv],
+                     frames.CELL_FIELDS)
+    old = {(r.section.split()[0], r.metric): r.value for r in records_from_cells(path, results)}
+    assert old[("Cluster", "MSE")] == 0.50
