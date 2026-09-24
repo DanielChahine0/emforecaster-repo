@@ -30,11 +30,12 @@ because it runs a different package with different job configs, not because it i
 a different set of models.
 
 The four WINDOWS are what a grid defines, not what has been run: for the
-multivariate, per-channel and cluster grids, logs/ holds L336_O96, the
-benchmark, and no other EMF window, so the EMF three-paradigm comparison exists
-at that window alone; univariate_series has all four. A bare sweep still plans
-all four, and --window 336x96 keeps it to the benchmark. The VoIP grids below
-define their own VOIP_WINDOWS.
+multivariate, per-channel and cluster grids, the live logs/ trees hold L336_O96,
+the benchmark, and no other EMF window, so the EMF three-paradigm comparison
+exists at that window alone; univariate_series has all four. (logs/_archive/
+keeps some L-ladder rungs at other windows, the cluster ones upstream-era; they
+are not benchmark runs.) A bare sweep still plans all four, and --window 336x96
+keeps it to the benchmark. The VoIP grids below define their own VOIP_WINDOWS.
 """
 
 import csv

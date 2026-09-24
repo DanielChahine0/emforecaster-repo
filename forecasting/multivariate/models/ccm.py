@@ -86,9 +86,10 @@ Two evaluation protocols (see fit_fixed_membership):
 
   batch  upstream's own: every forward pools the membership over the windows
          in its batch, so an eval forecast depends on which other windows
-         share its batch -- on the sequential test loader, up to batch_size-1
-         later windows whose lookbacks overlap its target. Logged as sl_val/*
-         and sl_test/*, and kept as the sensitivity row.
+         share its batch -- up to batch_size-1 of them, and on the sequential
+         test loader the later ones among them (up to seq_len+pred_len-1)
+         have lookbacks that overlap its target. Logged as sl_val/* and
+         sl_test/*, and kept as the sensitivity row.
   fixed  one membership per run, pooled over the whole training split after
          the best checkpoint is restored, so a forecast depends on its own
          lookback only. Logged as sl_val_fixed/* and sl_test_fixed/*; the

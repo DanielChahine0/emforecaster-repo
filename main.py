@@ -185,15 +185,17 @@ if __name__ == "__main__":
                              "have run, so the results drop into the same tables.")
     parser.add_argument("--dataset", type=str, default=None,
                         help="Grid mode only: restrict to specific dataset(s) "
-                             "instead of all three. Comma-separated, matched "
-                             "case-insensitively against either the dataset name "
-                             "or its logs/ folder slug, so '--dataset ED2022', "
+                             "instead of every dataset in the grid. Comma-"
+                             "separated, matched case-insensitively against "
+                             "either the dataset name or its logs/ folder "
+                             "slug, so '--dataset ED2022', "
                              "'--dataset ed2022' and '--dataset emf2023' (for "
                              "EMF_2023_university_5_with_PTV) all work.")
     parser.add_argument("--window", type=str, default=None,
                         help="Grid mode only: restrict to specific window(s) "
-                             "instead of all four. Format 'LxO' (e.g. '336x96') "
-                             "or 'L336_O96'; comma-separate for several. Omit to "
+                             "instead of every window in the grid. Format "
+                             "'LxO' (e.g. '336x96') or 'L336_O96'; "
+                             "comma-separate for several. Omit to "
                              "run every window. A window outside the grid's own "
                              "list is allowed, so '--window 720x96' runs a "
                              "custom lookback as a one-off without editing "

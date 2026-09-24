@@ -45,12 +45,12 @@ from forecasting import hardware
 
 def get_model(args, generator=torch.Generator()):
     # The cluster grid runs the SAME constructors below with n_clusters set --
-    # the model's per-channel temporal linears (EMForecaster, the Transformer
-    # and LSTM: the read-out their channels share) become upstream's own
-    # Cluster_wise_linear, imported verbatim from the vendored
-    # TimeSeriesCCM-main/ tree -- and wraps the result in CCMForecaster
-    # (forecasting/multivariate/models/ccm.py), which drives upstream's
-    # Cluster_assigner and owns the similarity loss.
+    # a linear map the model applies to each channel on its own (a temporal
+    # linear, or for EMForecaster, the Transformer and LSTM the read-out their
+    # channels share) becomes upstream's own Cluster_wise_linear, imported
+    # verbatim from the vendored TimeSeriesCCM-main/ tree -- and wraps the
+    # result in CCMForecaster (forecasting/multivariate/models/ccm.py), which
+    # drives upstream's Cluster_assigner and owns the similarity loss.
     # The run's data and optimizer are unchanged, so a cluster cell trains as
     # its multivariate counterpart does but for the clustering module; its
     # evaluation adds CCMForecaster's fixed-membership protocol (sl_*_fixed)
