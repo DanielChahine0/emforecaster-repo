@@ -225,6 +225,22 @@ def test_timing_names_the_contention_of_a_seeds_bands_and_its_multivariate_run()
     assert (t["contended"], t["mv_contended"]) == ("concurrent;foreign", "none")
 
 
+def test_a_run_past_an_open_specs_end_is_not_known_rather_than_none():
+    running = SWEEP_LOG.splitlines()[0] + "\n"            # the sweep is still training
+    c = C.derive(GPU_LOG, running, until=T("10:12:00"))
+    assert c.open and c.observed_until == T("10:12:00")
+    assert not c.past_end(T("10:05:00"), 120)             # ends 10:07
+    assert c.past_end(T("10:11:00"), 180) and c.past_end(T("10:13:00"), 60)
+    assert C.flag(1, None, past_end=True) == "?"
+    assert C.flag(1, 0.3, past_end=True) == "foreign"     # an overlap seen: a lower bound
+    assert C.flag(8, 0.0, past_end=True) == "concurrent;?"
+    assert C.flag(None, None, past_end=True) == "?"
+    # A closed spec ends at its sweep's DONE: a later run has no GPU record, as
+    # every run before the sweep, and reads none.
+    closed = C.derive(GPU_LOG, SWEEP_LOG)
+    assert not closed.open and not closed.past_end(T("10:19:00"), 600)
+
+
 def test_extract_flags_every_run_and_warns_when_the_spec_ends_before_a_run(
         tmp_path, monkeypatch, capsys):
     specs, logs = tmp_path / "specs", tmp_path / "logs"
@@ -232,21 +248,53 @@ def test_extract_flags_every_run_and_warns_when_the_spec_ends_before_a_run(
     running = SWEEP_LOG.splitlines()[0] + "\n"            # the sweep is still training
     (specs / "contention.yaml").write_text(
         C.dump(C.derive(GPU_LOG, running, until=T("10:12:00"))))
-    for seed, (start, secs) in {"1": ("10:01:00", 240), "2": ("10:11:00", 180)}.items():
+    for seed, (start, secs) in {"1": ("10:01:00", 240), "2": ("10:11:00", 180),
+                                "3": ("10:05:00", 120), "4": ("10:13:00", 60)}.items():
         run = logs / "multivariate" / "LSTM" / "toy" / "L336_O96_cp" / seed
         run.mkdir(parents=True)
         (run / "log.json").write_text(json.dumps(
             _log(T(start), secs, 1, **{"parameters/data/dataset": "TOY"})))
+    # The GPU log went on after the spec: one entry, at 10:15.
+    gpu, sweep = tmp_path / "gpu.log", tmp_path / "sweep.log"
+    gpu.write_text(GPU_LOG)
+    sweep.write_text(running)
+    monkeypatch.setattr(cli, "LOG_PAIRS", [(gpu, sweep)])
     monkeypatch.setattr(cli, "SPECS", specs)
     monkeypatch.setattr(cli, "FRAMES", tmp_path / "frames")
     monkeypatch.setattr(cli, "REPO", tmp_path)
     assert cli.main(["extract", "--logs", str(logs), "--no-spec"]) == 0
     err = capsys.readouterr().err
-    assert "contended timings: 2 foreign" in err and "its last span still open" in err
-    assert "1 runs finished after specs/contention.yaml's observed_until" in err
+    assert "contended timings: 1 ?, 2 foreign, 1 none" in err
+    assert "its last span still open" in err
+    assert ("2 runs trained past specs/contention.yaml's observed_until 2026-09-24 10:12:00 "
+            "while its sweep was still running") in err
+    assert "the GPU logs have 1 entries after" in err
     import csv
     with open(tmp_path / "frames" / "runs.csv") as f:
         rows = {r["seed"]: r for r in csv.DictReader(f)}
-    assert rows["1"]["contended"] == "foreign"
+    assert rows["1"]["contended"] == "foreign" and rows["3"]["contended"] == "none"
     # 10:11-10:14 against windows to 10:12 (the spec's end): a lower bound.
+    assert rows["2"]["contended"] == "foreign"
     assert float(rows["2"]["foreign_overlap"]) == pytest.approx(1 / 3)
+    # 10:13-10:14, all of it after the spec's end: not known, not none.
+    assert rows["4"]["contended"] == "?" and rows["4"]["foreign_overlap"] == ""
+    manifest = json.loads((tmp_path / "frames" / "MANIFEST.json").read_text())
+    assert manifest["contention"] == {"observed_until": "2026-09-24 10:12:00", "open": True,
+                                      "past_end": 2, "gpu_log_entries_after": 1}
+    assert "2 runs trained past" in cli.stale_contention(tmp_path / "frames")
+    assert "1 entries after it" in cli.stale_contention(tmp_path / "frames")
+
+    # Derived again once the sweep is done: nothing past its end, nothing after it.
+    (specs / "contention.yaml").write_text(C.dump(C.derive(GPU_LOG, SWEEP_LOG)))
+    sweep.write_text(SWEEP_LOG)
+    assert cli.main(["extract", "--logs", str(logs), "--no-spec"]) == 0
+    capsys.readouterr()
+    manifest = json.loads((tmp_path / "frames" / "MANIFEST.json").read_text())
+    assert manifest["contention"]["past_end"] == 0
+    assert manifest["contention"]["gpu_log_entries_after"] == 0
+    assert cli.stale_contention(tmp_path / "frames") == ""
+    # The ? resolves: 10:13-10:14 was inside the foreign window from 10:12 to 10:15,
+    # which a none would have hidden.
+    with open(tmp_path / "frames" / "runs.csv") as f:
+        again = {r["seed"]: r for r in csv.DictReader(f)}
+    assert again["4"]["contended"] == "foreign" and float(again["4"]["foreign_overlap"]) == 1.0

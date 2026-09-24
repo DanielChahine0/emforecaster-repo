@@ -567,7 +567,10 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                          running_time, per_epoch, num_params, ic, jc, interval_width,
                          channel, k, seed, log_path,
                          started=started, foreign_overlap=overlap,
-                         contended=contention_flag(concurrency, overlap),
+                         contended=contention_flag(
+                             concurrency, overlap,
+                             contention is not None
+                             and contention.past_end(started, running_time)),
                          git_commit=git_commit, concurrency=concurrency,
                          commit_source=commit_source, val_loss=val_loss,
                          git_dirty=git_dirty, code_commit=code_commit,

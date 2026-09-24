@@ -408,9 +408,16 @@ declare is fatal.
   each run's training window `[parameters/exp/time, + running_time]`
   against them: `foreign_overlap` is the fraction inside a window (blank
   where no GPU record covers the run), and `contended` is `concurrent`,
-  `foreign`, both, `none` (neither recorded), or `?` (concurrency not
-  stamped: the August per-channel bands and the series runs). `n_foreign`
-  counts a cell's runs with an overlap. No run before the sweep has a GPU
+  `foreign`, both, `none` (neither recorded), or `?` (not known:
+  concurrency not stamped, the August per-channel bands and the series
+  runs; or no overlap seen yet in a run that trained past the end of a spec
+  derived while its sweep ran, which `none` would show as clean). `n_foreign`
+  counts a cell's runs with an overlap. `extract` records in MANIFEST.json
+  how many runs trained past an open spec's end and how many entries the
+  local GPU logs have after it; while either is nonzero `make.py tables`
+  refuses to write (`--check` notes it, `--force` overrides) and `figures`
+  warns. After a sweep: `make.py contention`, `make.py contention --check`,
+  `make.py extract`, then commit the spec with the frames. No run before the sweep has a GPU
   record except the solo pass (none foreign), so earlier runs are flagged by
   their stamps alone. On the 2026-09-24 logs, 282 of the sweep's 309
   finished runs overlapped another user's jobs, which held the GPU for 5.6 of

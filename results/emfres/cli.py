@@ -129,6 +129,49 @@ def spec_contention():
         return None
 
 
+def gpu_log_entries_after(until) -> int | None:
+    """How many entries the local GPU logs (LOG_PAIRS) have after ``until``:
+    a sweep that went on after specs/contention.yaml was derived, or a later
+    sweep's log it has not read. None when no GPU log is readable (another
+    machine: .personal is git-ignored)."""
+    from . import contention as C
+
+    found = None
+    for g, _ in LOG_PAIRS:
+        try:
+            text = g.read_text()
+        except OSError:
+            continue
+        found = (found or 0) + sum(1 for snap in C.parse_gpu_log(text) if snap.time > until)
+    return found
+
+
+def stale_contention(frames_dir: Path) -> str:
+    """Why the frames' contended flags are not final, from the contention
+    entry extract writes to MANIFEST.json; '' when they are (or it has none)."""
+    import json
+
+    path = frames_dir / "MANIFEST.json"
+    try:
+        c = json.loads(path.read_text()).get("contention") or {}
+    except (OSError, ValueError):
+        return ""
+    why = []
+    if c.get("past_end"):
+        why.append(f"{c['past_end']} runs trained past specs/contention.yaml's "
+                   f"observed_until {c.get('observed_until')} while it was open, so their "
+                   f"contended flag is ? or a lower bound")
+    if c.get("gpu_log_entries_after"):
+        why.append(f"the GPU logs had {c['gpu_log_entries_after']} entries after it when "
+                   f"the frames were extracted, so it is stale")
+    return "; ".join(why)
+
+
+# What to do about stale_contention, after a sweep (specs/contention.yaml's header).
+STALE_FIX = ("rerun `make.py contention`, check it with `make.py contention --check`, "
+             "then `make.py extract`, and commit the spec with the frames")
+
+
 def cmd_contention(args) -> int:
     """GPU logs -> specs/contention.yaml: the foreign windows and a per-cell summary.
 
@@ -314,14 +357,34 @@ def cmd_extract(args) -> int:
              + (", its last span still open" if contention.open else "") + ")"
              if contention is not None and contention.observed_until else
              " (no specs/contention.yaml: nothing is flagged foreign)"), file=sys.stderr)
+    manifest_contention = None
     if contention is not None and contention.observed_until:
-        late = [s for s, r in loaded if r.started is not None and r.running_time
+        until = f"{contention.observed_until:%Y-%m-%d %H:%M:%S}"
+        # An open spec: the sweep went on after it was derived. Such a run is
+        # flagged ? (or foreign, on the overlap seen so far), never none.
+        past = [r for _, r in loaded if contention.past_end(r.started, r.running_time)]
+        if past:
+            print(f"WARNING: {len(past)} runs trained past specs/contention.yaml's "
+                  f"observed_until {until} while its sweep was still running, e.g. "
+                  f"{past[0].path}: their contended flag is ? where no overlap was seen "
+                  f"yet, a lower bound where one was. `make.py tables` will not write "
+                  f"from these frames; {STALE_FIX}", file=sys.stderr)
+        # A closed spec: a run after its sweep's DONE has no GPU record.
+        late = [r for _, r in loaded if not contention.open and r.started is not None
+                and r.running_time
                 and r.started + timedelta(seconds=r.running_time) > contention.observed_until
                 and r.started >= contention.monitored[0][0]] if contention.monitored else []
         if late:
             print(f"WARNING: {len(late)} runs finished after specs/contention.yaml's "
-                  f"observed_until, so part of their time was never held against the GPU "
-                  f"log; rerun `make.py contention`, then extract", file=sys.stderr)
+                  f"observed_until {until}, so part of their time was never held against "
+                  f"the GPU log; if a GPU log covers them, {STALE_FIX}", file=sys.stderr)
+        after = gpu_log_entries_after(contention.observed_until)
+        if after:
+            print(f"WARNING: the GPU logs have {after} entries after specs/contention.yaml's "
+                  f"observed_until {until}: it is stale. `make.py tables` will not write "
+                  f"from these frames; {STALE_FIX}", file=sys.stderr)
+        manifest_contention = {"observed_until": until, "open": contention.open,
+                               "past_end": len(past), "gpu_log_entries_after": after}
 
     counts = {"runs": len(runs), "cells": len(cells), "bands": len(bands),
               "timing": len(timing)}
@@ -346,7 +409,8 @@ def cmd_extract(args) -> int:
         frames.write_csv(FRAMES / "epochs.csv", epochs, frames.EPOCH_FIELDS)
         counts["epochs"] = len(epochs)
 
-    frames.write_manifest(FRAMES / "MANIFEST.json", REPO, runs, counts, exclude)
+    frames.write_manifest(FRAMES / "MANIFEST.json", REPO, runs, counts, exclude,
+                          contention=manifest_contention)
 
     rel = FRAMES.relative_to(REPO) if FRAMES.is_relative_to(REPO) else FRAMES
     print(f"wrote {rel}/runs.csv    {len(runs)} runs")
@@ -490,6 +554,17 @@ def cmd_tables(args) -> int:
         print(f"\nA published value changed and specs/gate.yaml does not expect it; "
               f"refusing to write. Pass --force to write anyway.", file=sys.stderr)
         return 1
+    # Frames whose contention flags are not final: a timing table would print
+    # an unmarked time for a run nobody held against the GPU log.
+    stale = stale_contention(FRAMES)
+    if stale:
+        if args.check:
+            print(f"NOTE: the frames' contention flags are not final: {stale}",
+                  file=sys.stderr)
+        elif not args.force:
+            print(f"\nThe frames' contention flags are not final: {stale}. Refusing to "
+                  f"write: {STALE_FIX}. Pass --force to write anyway.", file=sys.stderr)
+            return 1
 
     # Text drift is reported, never fatal: it says how the report grew, and
     # what of each changed section the gate did (or did not) hold.
@@ -627,6 +702,11 @@ def cmd_figures(args) -> int:
         print(f"{frames_dir / 'runs.csv'} not found -- run `make.py extract` first",
               file=sys.stderr)
         return 1
+    stale = stale_contention(frames_dir)
+    if stale:
+        print(f"WARNING: the frames' contention flags are not final: {stale}; P7 draws "
+              f"such a cost as if clean. {STALE_FIX[0].upper()}{STALE_FIX[1:]}.",
+              file=sys.stderr)
     families = ("emf", "voip") if args.family == "all" else (args.family,)
     only = [f.strip().upper() for f in args.only.split(",") if f.strip()] if args.only else None
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
@@ -675,8 +755,9 @@ def main(argv: list[str] | None = None) -> int:
     tb.add_argument("--check", action="store_true",
                     help="rebuild and gate against the frozen snapshot, write nothing")
     tb.add_argument("--force", action="store_true",
-                    help="write even if a published value changed unexpectedly, or "
-                         "the family's frozen snapshot is missing")
+                    help="write even if a published value changed unexpectedly, the "
+                         "family's frozen snapshot is missing, or the frames' contention "
+                         "flags are not final (MANIFEST.json)")
     tb.set_defaults(func=cmd_tables)
 
     rc = sub.add_parser(

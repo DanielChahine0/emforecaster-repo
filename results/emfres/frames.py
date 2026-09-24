@@ -697,8 +697,13 @@ def _logs_commit(repo: Path) -> str:
 
 
 def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
-                   exclude: list[str]) -> None:
+                   exclude: list[str], contention: Optional[dict] = None) -> None:
     """Record what went in, so a stale artifact can be spotted rather than trusted.
+
+    ``contention``, when specs/contention.yaml was read: its observed_until
+    and open, how many runs trained past an open spec's end (past_end), and
+    how many entries the local GPU logs have after it (None: none readable).
+    `make.py tables` refuses to write from frames where either is nonzero.
 
     Hashing every log.json would be slow and is not the point: what matters is
     the set of inputs and the numbers derived from them, so the digest runs
@@ -776,5 +781,7 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
         "exclude": exclude,
         "setups": sorted({r["setup"] for r in runs}),
     }
+    if contention is not None:
+        payload["contention"] = contention
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")

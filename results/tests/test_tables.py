@@ -520,6 +520,41 @@ def test_make_tables_warns_when_bands_csv_is_missing(tmp_path, monkeypatch, caps
     assert "bands.csv not found" not in capsys.readouterr().err
 
 
+def test_make_tables_will_not_write_from_frames_whose_contention_flags_are_not_final(
+        tmp_path, monkeypatch, capsys):
+    """Frames extracted while a sweep ran past specs/contention.yaml's end
+    (MANIFEST.json's contention entry): --check notes it, a write refuses
+    unless --force."""
+    import json
+
+    from emfres import cli
+
+    rows = []
+    for s in SEEDS:
+        for setup, v in (("multivariate", 0.40), ("perchannel", 0.30)):
+            row = _run(setup, s, v, dataset="voip_mobile", seq_len=48, pred_len=12,
+                       family="voip")
+            row["channel"] = "0" if setup == "perchannel" else ""
+            rows.append(row)
+    frames_dir, results = tmp_path / "frames", tmp_path / "results"
+    frames.write_csv(frames_dir / "runs.csv", rows, frames.RUN_FIELDS)
+    frames.write_csv(frames_dir / "bands.csv", [], frames.BAND_FIELDS)
+    frames.write_csv(frames_dir / "cells.csv", frames.build_cells(rows), frames.CELL_FIELDS)
+    (frames_dir / "MANIFEST.json").write_text(json.dumps({"contention": {
+        "observed_until": "2026-09-24 18:00:04", "open": True, "past_end": 2,
+        "gpu_log_entries_after": 5}}))
+    monkeypatch.setattr(cli, "FRAMES", frames_dir)
+    monkeypatch.setattr(cli, "RESULTS", results)
+    assert cli.main(["tables", "--family", "voip", "--check"]) == 0
+    assert "contention flags are not final: 2 runs trained past" in capsys.readouterr().err
+    assert cli.main(["tables", "--family", "voip"]) == 1
+    err = capsys.readouterr().err
+    assert "Refusing to write" in err and "make.py contention --check" in err
+    assert not (results / "tables").exists()
+    assert cli.main(["tables", "--family", "voip", "--force"]) == 0
+    assert (results / "tables" / "voip" / "paradigms.md").exists()
+
+
 def test_make_tables_writes_outside_the_repo(tmp_path, monkeypatch, capsys):
     """RESULTS redirected outside the repo (a scratch render) writes there, no crash."""
     from emfres import cli

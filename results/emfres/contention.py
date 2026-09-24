@@ -20,7 +20,10 @@ those windows (``flag``):
 * ``none``: neither is recorded -- concurrency 1 and no foreign process seen,
   or no GPU record at all (every run before 2026-09-24 10:38 but the solo
   timing pass of specs/timing.yaml, which found none);
-* ``?``: concurrency not stamped (runs logged before 2026-09-19).
+* ``?``: not known -- concurrency not stamped (runs logged before
+  2026-09-19), or, with no overlap seen, a run that trained past the end of
+  a spec derived while its sweep was still running (``Contention.past_end``):
+  the GPU log goes on, the spec does not, and ``none`` would read as clean.
 
 A run's training window is [parameters/exp/time, + running_time]. The flag
 says its time may be inflated; its accuracy is unaffected -- sharing a GPU
@@ -178,6 +181,16 @@ class Contention:
             return None
         return min(1.0, self.foreign_seconds(started, end) / seconds)
 
+    def past_end(self, started: Optional[datetime], seconds: Optional[float]) -> bool:
+        """Whether a run's training window runs past observed_until while the
+        last span is open: the sweep went on after the spec was derived, so
+        the part after it was logged but never read (flag gives such a run
+        ``?``, not ``none``). A closed spec's end is its sweep's DONE: a run
+        after it has no GPU record, as every run before the sweep."""
+        if not self.open or self.observed_until is None or started is None or not seconds:
+            return False
+        return started + timedelta(seconds=seconds) > self.observed_until
+
 
 def derive(gpu_log: str, sweep_log: Optional[str] = None,
            until: Optional[datetime] = None, source: str = "") -> Contention:
@@ -250,8 +263,13 @@ def combine(parts: list) -> Contention:
                       max(ends) if ends else None, any(p.open for p in parts))
 
 
-def flag(concurrency: Optional[int], overlap: Optional[float]) -> str:
-    """A run's contended value: its tokens ';'-joined, or "none"."""
+def flag(concurrency: Optional[int], overlap: Optional[float],
+         past_end: bool = False) -> str:
+    """A run's contended value: its tokens ';'-joined, or "none".
+
+    ``past_end`` (Contention.past_end): part of its window came after an
+    open spec's end, so no overlap seen means not known, not none.
+    """
     parts = []
     if concurrency is None:
         parts.append(UNKNOWN)
@@ -259,6 +277,8 @@ def flag(concurrency: Optional[int], overlap: Optional[float]) -> str:
         parts.append(CONCURRENT)
     if overlap:
         parts.append(FOREIGN)
+    elif past_end and UNKNOWN not in parts:
+        parts.append(UNKNOWN)
     return ";".join(parts) or NONE
 
 
@@ -308,11 +328,17 @@ HEADER = """\
 #                    (blank: no part of it was monitored)
 #   contended        concurrent (its own grid trained several runs at once,
 #                    concurrency > 1), foreign (foreign_overlap > 0), both
-#                    ';'-joined, none (neither recorded), or ? (concurrency
-#                    not stamped, runs before 2026-09-19)
+#                    ';'-joined, none (neither recorded), or ? (not known:
+#                    concurrency not stamped, runs before 2026-09-19; or no
+#                    overlap seen in a run that trained past `observed_until`
+#                    while this file is `open`)
 # and to cells.csv each cell's distinct values and n_foreign, its runs with a
 # foreign overlap. The timing tables mark such a cell and P7 draws it hollow.
-# The flag says the time may be inflated; the accuracy is unaffected.
+# The flag says the time may be inflated; the accuracy is unaffected. Frames
+# extracted while runs trained past `observed_until` of an open file, or while
+# the GPU logs go on after it, say so in MANIFEST.json, and `make.py tables`
+# will not write from them: after a sweep, rerun `make.py contention`, check
+# it with `--check`, extract, and commit this file with the frames.
 #
 # Earlier trees. No run before the CCM sweep has a GPU record, except the solo
 # timing pass of 2026-09-22 (specs/timing.yaml: foreign processes none in all
