@@ -358,21 +358,50 @@ def model_variants(keys, models) -> list[tuple[str, Optional[int]]]:
                   key=lambda v: (model_rank(v[0]), -1 if v[1] is None else v[1]))
 
 
-def epoch_summary_table(runs, models, conf) -> list[str]:
-    # Split by k as well as model: CCM builds k parallel per-cluster layers, so
-    # epoch cost grows with k and pooling k=2 with k=9 would report neither.
+# The pooled epoch-cost table's marker for a row that pools a cell still
+# training, added to the table's note wherever one is printed.
+POOLED_SHORT_NOTE = ("`(n=c/C cells)`: c of the C cells the row pools have every seed; "
+                     "the others are still training, and the runs of theirs that "
+                     "finished are pooled in, so the mean is not final.")
+
+
+def pooled_shortfall(runs, cells: Optional[dict], targets: Optional[dict]) -> str:
+    """'' when every cell these runs belong to is complete, else ' (n=c/C cells)'.
+
+    The pooled-row twin of shortfall: c of the C cells the runs come from are
+    complete (shortfall is empty for them).
+    """
+    if not cells or not targets:
+        return ""
+    keys = {(r.model, r.dataset, r.seq_len, r.pred_len, r.conf, r.k) for r in runs}
+    done = sum(1 for key in keys if not shortfall(cells.get(key), key, targets))
+    return "" if done == len(keys) else f" (n={done}/{len(keys)} cells)"
+
+
+def epoch_summary_table(runs, models, conf, cells: Optional[dict] = None,
+                        targets: Optional[dict] = None) -> tuple[list[str], bool]:
+    """(the mean-epoch-cost table, whether a row pools a cell still training).
+
+    Split by k as well as model: CCM builds k parallel per-cluster layers, so
+    epoch cost grows with k and pooling k=2 with k=9 would report neither. A
+    row pools every run of its (model, k) in the section; with ``cells`` and
+    ``targets`` one that pools a cell still training carries
+    pooled_shortfall's marker.
+    """
     rows = []
     for m, k in model_variants({(r.model, None, None, None, None, r.k) for r in runs}, models):
-        vals = [r.per_epoch for r in runs
+        mine = [r for r in runs
                 if r.model == m and r.k == k and r.conf == conf and r.per_epoch is not None]
-        if vals:
-            rows.append((variant_label(m, k), statistics.mean(vals), len(vals)))
-    return md_table(
+        if mine:
+            rows.append((variant_label(m, k), statistics.mean(r.per_epoch for r in mine),
+                         len(mine), pooled_shortfall(mine, cells, targets)))
+    table = md_table(
         ["Model", "Mean / epoch", "Estimation for 100 ep", "Runs"],
         "lrrr",
-        [[label, format_seconds_fine(mean), f"~{format_seconds(mean * 100)}", str(n)]
-         for label, mean, n in sorted(rows, key=lambda r: r[1])],
+        [[label, format_seconds_fine(mean) + note, f"~{format_seconds(mean * 100)}", str(n)]
+         for label, mean, n, note in sorted(rows, key=lambda r: r[1])],
     )
+    return table, any(note for *_, note in rows)
 
 
 def model_size_table(cells, models) -> list[str]:
@@ -556,8 +585,10 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
         doc.table("Per-epoch training time (`running_time / len(sl_train/loss)`)",
                   metric_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine,
                                targets=targets))
-        doc.table("Mean epoch cost by model", epoch_summary_table(runs, models, conf),
-                  note="Pooled over every run of that model in this section.")
+        epochs, pooled_short = epoch_summary_table(runs, models, conf, cells, targets)
+        doc.table("Mean epoch cost by model", epochs,
+                  note="Pooled over every run of that model in this section."
+                       + (f" {POOLED_SHORT_NOTE}" if pooled_short else ""))
 
         if conf:
             doc.group("Conformal prediction")

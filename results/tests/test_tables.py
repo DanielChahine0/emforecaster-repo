@@ -169,6 +169,30 @@ def test_a_cell_short_of_its_seeds_shows_n_and_is_never_ranked():
     assert "(n=" not in plain and "Protocol" not in plain
 
 
+def test_the_pooled_epoch_table_marks_a_row_that_pools_a_cell_still_training():
+    er, mv, cl = _trees()
+    # A second dataset: TSMixer k=1 is complete there, one seed short on ed2022.
+    cl += [_er_run("TSMixer", s, 0.40, k=1, dataset="uh2022") for s in SEEDS]
+    cl += [_er_run(m, s, 0.40, k=1, dataset="uh2022") for s in SEEDS for m in ("DLinear",)]
+    cells = er.aggregate(cl)
+    targets = er.seed_targets(er.aggregate(mv), cells)
+    table, short = er.epoch_summary_table(cl, ["DLinear", "TSMixer"], True, cells, targets)
+    assert short
+    rows = {er.variant_label(m, k): next(r for r in table if f"| {er.variant_label(m, k)} |" in r)
+            for m, k in (("TSMixer", 1), ("DLinear", 1), ("DLinear", 2))}
+    assert "(n=1/2 cells)" in rows[er.variant_label("TSMixer", 1)]   # ed2022 short
+    assert "(n=" not in rows[er.variant_label("DLinear", 1)]
+    assert "(n=" not in rows[er.variant_label("DLinear", 2)]
+    md = er.render_report(er.CLUSTER_TITLE, cl, cells, targets=targets)
+    assert er.POOLED_SHORT_NOTE in md
+    # A complete tree's table is unmarked, and says nothing about it.
+    plain, short = er.epoch_summary_table(mv, ["DLinear", "TSMixer"], True,
+                                          er.aggregate(mv), targets)
+    assert not short and not any("(n=" in r for r in plain)
+    assert er.POOLED_SHORT_NOTE not in er.render_report(er.MULTIVARIATE_TITLE, mv,
+                                                        er.aggregate(mv), targets=targets)
+
+
 def _fixed(run, mse_fixed, *, source="sidecar"):
     """A cluster run with fixed-membership metrics (MAE at the same 0.7 ratio)."""
     from dataclasses import replace
