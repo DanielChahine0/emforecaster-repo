@@ -226,6 +226,8 @@ def test_a_time_another_users_gpu_process_may_have_inflated_is_marked_and_ranked
     mse = next(rows for head, rows in tabs.items() if head.startswith("MSE"))
     assert "‡" not in " ".join(" ".join(r) for r in mse)
     assert er.FOREIGN_NOTE in md
+    # The unmarked cells beside it were not necessarily watched: the note says so.
+    assert "no ‡ on an earlier cell means no record" in er.FOREIGN_NOTE
     epochs = next(rows for head, rows in tabs.items() if head.startswith("Mean epoch"))
     assert next(r for r in epochs if "(k=2)" in r[0] and "DLinear" in r[0])[3] == "3 (3 ‡)"
     # The multivariate tree trained with nobody else on the card: no mark, no note.

@@ -211,7 +211,9 @@ FOREIGN_NOTE = ("‡ = a cell with a run that trained while another user's proce
                 "the GPU (`specs/contention.yaml`): its time can only be too high, as "
                 "sharing the card adds wall time, so it is ranked as logged. A ‡ time "
                 "ranked ahead of another would stay ahead uncontended; one ranked behind "
-                "may belong ahead. Its accuracy is unaffected.")
+                "may belong ahead. Its accuracy is unaffected. Only runs from the "
+                "2026-09-24 sweep on were monitored: no ‡ on an earlier cell means no "
+                "record, not a GPU to itself.")
 
 
 def foreign_mark(cell: Optional[Cell]) -> str:
