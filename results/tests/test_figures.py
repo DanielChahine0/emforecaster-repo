@@ -207,3 +207,28 @@ def test_a_k_label_steps_clear_of_the_per_channel_mean_beside_its_diamond(tmp_pa
     assert label.text.get_text() == "k=2"
     assert not any(_meets(ax, lab.text, means) for lab in labels)
     plt.close(fig)
+
+
+def test_a_chosen_k_of_one_is_labelled_beside_its_diamond_not_past_an_outlier(tmp_path):
+    import matplotlib.pyplot as plt
+
+    from emfres import fig_paradigms
+
+    rows = []
+    for s, v in zip(SEEDS, (0.380, 0.381, 0.440)):
+        rows.append(_run("multivariate", s, 0.40))
+        rows += [_run("perchannel", s, 0.45, channel=ch) for ch in (0, 1)]
+        rows.append(_run("cluster", s, v, k=1, val_loss=0.3))
+        rows.append(_run("cluster", s, 0.39, k=2, val_loss=0.5))
+    fig, ax, labels, style = _lane_panel(tmp_path, rows)
+    fig_paradigms.settle(ax, labels, style)
+    (label,) = labels
+    assert label.text.get_text() == "k=1"
+    r = fig.canvas.get_renderer()
+    e = label.text.get_window_extent(r)
+    diamond = ax.transData.transform((sum((0.380, 0.381, 0.440)) / 3, 0))[0]
+    near = min(abs(e.x0 - diamond), abs(e.x1 - diamond)) * 72 / fig.dpi
+    # Within two marker widths of the diamond, not past the 0.44 seed.
+    assert near <= 2 * style.marker
+    assert not _meets(ax, label.text, list(ax.lines))
+    plt.close(fig)

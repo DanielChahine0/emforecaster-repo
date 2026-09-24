@@ -87,11 +87,12 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
 
     Three lanes per model row: multivariate (filled), per-channel (hollow),
     cluster (k = 1 as a small dot, the validation-chosen k as a diamond,
-    joined to it by a hairline and labelled with its k on its own outer side,
-    away from the k = 1 dot; "n/a" for a model that is per-band by
-    construction, whose footnote is na_note's). Seeds are ticks behind the
-    means, or, with ``per_seed``, each seed is its own mark and no mean is
-    drawn.
+    joined to it by a hairline and labelled with its k, on its own outer side
+    -- away from the k = 1 dot -- unless that side is far and the other
+    nearer; either side when the chosen k is 1; "n/a" for a model that is
+    per-band by construction, whose footnote is na_note's). Seeds are ticks
+    behind the means, or, with ``per_seed``, each seed is its own mark and no
+    mean is drawn.
     ``metric`` is a seed-metric name (figdata.marks) or a function
     (cell, pipe) -> figdata.Marks for values the seed metrics do not hold.
     """
@@ -155,20 +156,21 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
                                **mark_kwargs(PG.BEST, style, alpha=alpha))
             xs += vals
             if not per_seed and k_labels:
-                # The label starts on the diamond's own outer side -- left of
-                # it when clustering beat k = 1 -- so it never lands beside
-                # the k = 1 dot, and steps past whatever mark is there.
+                # The outer side is the one away from the k = 1 dot, so the
+                # label never reads as naming it; with k = 1 chosen there is
+                # no dot to avoid and the nearer side wins.
                 ends = [best.mean] + ([k1.mean] if k1 is not None else [])
-                left = k1 is not None and best.mean < k1.mean
+                one = k1 is None or best.k == 1
+                sides = (-1, 1) if not one and best.mean < k1.mean else (1, -1)
                 labels.append(lane_label(
                     ax, f"k={best.k}" if best.complete else "partial", y, min(ends), max(ends),
-                    best.mean, sides=(-1,) if left else (1,), own=own,
+                    best.mean, sides=sides, prefer=not one, own=own,
                     color=label_color(VERDIGRIS) if best.complete else INK_MUTED, **lane_kw))
     return xs, partial, labels
 
 
 def settle(ax, labels, style) -> None:
-    """figkit.settle_labels for a dot panel."""
+    """figkit.settle_labels for a dot panel: a label keeps its side within 2 marker widths."""
     settle_labels(ax, labels, near=style.marker * 2)
 
 
