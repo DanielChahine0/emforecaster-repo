@@ -80,6 +80,7 @@ def runs_from_csv(path: Path, repo: Path, family: Optional[str] = None):
                 k=_i(row["k"]),
                 seed=row["seed"] or None,
                 path=repo / row["path"],
+                concurrency=_i(row.get("concurrency", "")),
             ))
     return by_setup
 
@@ -134,7 +135,11 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
     uv = [(t, c) for t, c in cells.items()
           if t not in (er.MULTIVARIATE_TITLE, er.CLUSTER_TITLE)]
     if mv and uv:
-        md = er.render_comparison(er.COMPARISON_TITLE, er.MULTIVARIATE_TITLE, mv, uv)
+        pc_runs = by_setup.get("perchannel", [])
+        md = er.render_comparison(
+            er.COMPARISON_TITLE, er.MULTIVARIATE_TITLE, mv, uv,
+            concurrency={SETUP_TITLES["perchannel"]: er.concurrency_text(pc_runs)}
+            if pc_runs else None)
         if md:
             out.append(("mv-vs-univariate", er.COMPARISON_TITLE, md))
 
@@ -148,7 +153,9 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
 
     pipelines = er.build_pipelines(cells)
     if pipelines:
-        md = er.render_ultimate(er.ULTIMATE_TITLE, pipelines)
+        pc_runs = by_setup.get("perchannel", [])
+        md = er.render_ultimate(er.ULTIMATE_TITLE, pipelines,
+                                er.concurrency_text(pc_runs) if pc_runs else None)
         if md:
             out.append(("pipelines", er.ULTIMATE_TITLE, md))
     return out

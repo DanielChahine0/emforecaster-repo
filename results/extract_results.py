@@ -314,6 +314,34 @@ def coverage_summary(runs: list[Run], cells: dict[tuple, Cell]) -> str:
     return f"{len(runs)} logs; each cell averages {span} replicate run(s)"
 
 
+def concurrency_text(runs: list[Run]) -> str:
+    """How many trainings shared the GPU with these runs, from their stamps.
+
+    The per-channel grid trains several bands at once (``concurrency`` in the
+    run log, stamped since 2026-09-19), every other grid one run at a time,
+    so a per-channel running_time is a contended time.
+    """
+    vals = sorted({r.concurrency for r in runs if r.concurrency is not None})
+    unstamped = sum(1 for r in runs if r.concurrency is None)
+    parts = []
+    if vals:
+        parts.append(" or ".join(str(v) for v in vals) + " trainings at a time")
+    if unstamped:
+        parts.append(f"{unstamped} runs logged before that was stamped")
+    return "; ".join(parts) or "not stamped"
+
+
+def per_band_note(runs: list[Run]) -> str:
+    """The label a per-channel tree's timing tables need, or "" for any other tree."""
+    if not runs or any(r.channel is None for r in runs):
+        return ""
+    return (f" Per-channel times are per band and contended: each is one band's model, "
+            f"trained while other bands shared the GPU ({concurrency_text(runs)}), so it "
+            f"is neither the cost of forecasting every band nor comparable with a run "
+            f"trained alone. `frames/timing.csv` holds the uncontended estimate where the "
+            f"solo timing pass measured one (EMF, L336/O96).")
+
+
 def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
     models = sort_models({k[0] for k in cells})
     confs = [c for c in (False, True) if row_keys_for(cells, c)]
@@ -357,7 +385,7 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell]) -> str:
         doc.group("Training cost" + suffix)
         doc.para("**Bold** = fastest in the row, <u>underline</u> = runner-up."
                  + (f" `{MISSING}` = not logged (ARIMA is not gradient-trained)."
-                    if "ARIMA" in models else ""))
+                    if "ARIMA" in models else "") + per_band_note(runs))
         doc.table("Total training time (`parameters/running_time`)",
                   metric_table(cells, models, row_keys, conf, "running_time", format_seconds))
         doc.table("Per-epoch training time (`running_time / len(sl_train/loss)`)",
@@ -441,7 +469,9 @@ def pair_table(keys, left, right, left_label, right_label, attr, fmt,
 
 
 def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
-                      uv_roots: list[tuple[str, dict[tuple, Cell]]]) -> str:
+                      uv_roots: list[tuple[str, dict[tuple, Cell]]],
+                      concurrency: Optional[dict[str, str]] = None) -> str:
+    """``concurrency`` maps a univariate tree's title to concurrency_text of its runs."""
     mv = canonical_cells(mv_cells)
     matched = [(label, canonical_cells(c)) for label, c in uv_roots]
     matched = [(label, c, shared_keys(mv, c)) for label, c in matched]
@@ -473,8 +503,14 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
             all_wins.append((right, name, wins))
 
         doc.group(f"Training cost ({pair})")
+        conc = (concurrency or {}).get(label)
         doc.para(f"`{right}` is the mean cost of one channel's model; `all channels` multiplies it "
-                 f"by the channel count. Δ compares that total against {left}.")
+                 f"by the channel count. Δ compares that total against {left}."
+                 + (f" The {right.lower()} runs trained alongside other bands ({conc}), "
+                    f"the {left.lower()} ones alone, so their times are contended and Δ is not a "
+                    f"like-for-like cost; `frames/timing.csv` holds the uncontended "
+                    f"estimate where the solo timing pass measured one (EMF, L336/O96)."
+                    if conc else ""))
         rows = []
         for key in keys:
             a = getattr(mv.get(key), "running_time", None)
@@ -585,7 +621,9 @@ def channel_counts(pipelines, datasets, sl, pl, conf) -> str:
                      for ds in datasets if ds in counts)
 
 
-def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
+def render_ultimate(title: str, pipelines: list[Pipeline],
+                    pc_concurrency: Optional[str] = None) -> str:
+    """``pc_concurrency`` is concurrency_text of the per-channel runs."""
     sl, pl = ULTIMATE_SETTING
     axes = [(conf,) + ultimate_axes(pipelines, sl, pl, conf) for conf in (False, True)]
     axes = [a for a in axes if a[1]]
@@ -649,7 +687,11 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
                            f"single-channel run times the channel count"
                            + (f" ({chans})" if chans else "") + "; every other row is one "
                            f"model's training run, averaged over seeds. ARIMA is not gradient-trained and "
-                           f"logs no time.")
+                           f"logs no time."
+                           + (f" The per-channel bands trained alongside each other "
+                              f"({pc_concurrency}), every other row alone, so the "
+                              f"per-channel row is a contended time."
+                              if pc_concurrency else ""))
 
     return doc.render()
 
@@ -1013,7 +1055,9 @@ def main() -> None:
     uv_roots = [(t, c) for t, c in by_title.items()
                 if t not in (MULTIVARIATE_TITLE, CLUSTER_TITLE)]
     if mv_cells and uv_roots:
-        comparison = render_comparison(COMPARISON_TITLE, MULTIVARIATE_TITLE, mv_cells, uv_roots)
+        comparison = render_comparison(COMPARISON_TITLE, MULTIVARIATE_TITLE, mv_cells, uv_roots,
+                                       concurrency={t: concurrency_text(r)
+                                                    for t, r, _ in loaded if per_band_note(r)})
         if comparison:
             updates.append((COMPARISON_TITLE, comparison))
         else:
@@ -1029,7 +1073,10 @@ def main() -> None:
             updates.append((CCM_TITLE, ccm_section))
 
     pipelines = build_pipelines(by_title)
-    ultimate = render_ultimate(ULTIMATE_TITLE, pipelines) if pipelines else ""
+    pc_runs = next((r for t, r, _ in loaded if t == PER_CHANNEL_TITLE), [])
+    ultimate = (render_ultimate(ULTIMATE_TITLE, pipelines,
+                                concurrency_text(pc_runs) if pc_runs else None)
+                if pipelines else "")
     if ultimate:
         updates.append((ULTIMATE_TITLE, ultimate))
     elif pipelines:

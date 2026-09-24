@@ -73,3 +73,18 @@ def test_a_k_still_training_shows_its_n_and_is_not_ranked(tmp_path):
     row = next(line for line in md.splitlines() if line.startswith("| DLinear"))
     assert "0.1000 (n=1)" in row
     assert "k=2, sidecar; ranked 1,2,3 of 1,2,3,5" in row
+
+
+def test_per_channel_times_are_labelled_contended_per_band():
+    import extract_results as er
+    from emfres.runlogs import Run
+
+    def run(channel, concurrency):
+        return Run("DLinear", "ed2022", 336, 96, True, 0.5, 0.4, 60.0, 1.0, 10, None, None,
+                   None, channel, None, "1", Path("x"), concurrency=concurrency)
+
+    pc = [run(0, 8), run(1, 12), run(2, None)]
+    assert er.concurrency_text(pc) == "8 or 12 trainings at a time; 1 runs logged before " \
+                                      "that was stamped"
+    assert "per band and contended" in er.per_band_note(pc)
+    assert er.per_band_note([run(None, 1)]) == ""          # a joint tree: trained alone
