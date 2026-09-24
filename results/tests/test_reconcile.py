@@ -761,6 +761,27 @@ def test_reconcile_gates_every_frozen_family_and_names_the_rest(tmp_path, monkey
     assert "nothing was gated" in capsys.readouterr().err
 
 
+def test_tables_tells_no_snapshot_from_a_missing_one(tmp_path, monkeypatch, capsys):
+    # No snapshot yet renders ungated; a frozen one whose file is gone fails
+    # --check and refuses to write, as reconcile fails on it.
+    from emfres import cli
+
+    _voip_frames(tmp_path)
+    monkeypatch.setattr(cli, "FRAMES", tmp_path)
+    monkeypatch.setattr(cli, "SPECS", tmp_path)
+    monkeypatch.setattr(cli, "SNAPSHOTS", {"emf": None, "voip": None})
+    assert cli.main(["tables", "--family", "voip", "--check"]) == 0
+    assert "family 'voip' has no frozen snapshot" in capsys.readouterr().out
+
+    monkeypatch.setattr(cli, "SNAPSHOTS", {"emf": None, "voip": tmp_path / "gone.md"})
+    assert cli.main(["tables", "--family", "voip", "--check"]) == 1
+    out = capsys.readouterr().out
+    assert "frozen snapshot gone.md is missing" in out and "has no frozen" not in out
+    # Write mode refuses before it writes anything (outdir would be tables/voip/).
+    assert cli.main(["tables", "--family", "voip"]) == 1
+    assert "refusing to write" in capsys.readouterr().err
+
+
 def test_every_family_has_a_snapshot_entry():
     # None until one is frozen; a family missing here would never be gated
     # and never be named as ungated either.

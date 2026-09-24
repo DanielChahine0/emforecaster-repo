@@ -343,6 +343,20 @@ def cmd_tables(args) -> int:
     # having no tripwire. The gate tolerates growth by construction -- a value
     # the archive never had is a value it cannot contradict.
     gate = run_gate(family, sections)
+    # No snapshot yet (SNAPSHOTS[family] is None) renders ungated; a frozen one
+    # whose file is gone is a failure, as in `reconcile`: its values would go
+    # ungated with nothing but a warning to say so.
+    snapshot = SNAPSHOTS.get(family)
+    if snapshot is not None and not snapshot.exists():
+        if args.check:
+            print(f"\nrendered {len(sections)} sections -- family {family!r}'s frozen "
+                  f"snapshot {snapshot.name} is missing, so no value was gated")
+            return 1
+        if not args.force:
+            print(f"\nfamily {family!r}'s frozen snapshot {snapshot} is missing, so no "
+                  f"value was gated; refusing to write. Restore it, or pass --force "
+                  f"to write anyway.", file=sys.stderr)
+            return 1
     if gate is not None and not gate.ok and not args.force:
         print(f"\nA published value changed and specs/gate.yaml does not expect it; "
               f"refusing to write. Pass --force to write anyway.", file=sys.stderr)
@@ -531,7 +545,8 @@ def main(argv: list[str] | None = None) -> int:
     tb.add_argument("--check", action="store_true",
                     help="rebuild and gate against the frozen snapshot, write nothing")
     tb.add_argument("--force", action="store_true",
-                    help="write even if a published value changed unexpectedly")
+                    help="write even if a published value changed unexpectedly, or "
+                         "the family's frozen snapshot is missing")
     tb.set_defaults(func=cmd_tables)
 
     rc = sub.add_parser(
