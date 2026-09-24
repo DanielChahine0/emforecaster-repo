@@ -187,6 +187,96 @@ def test_no_rule_forgives_a_value_that_vanished_or_turned_into_a_dash(tmp_path):
     assert len(g.unexpected) == 6 and g.n_expected == 0
 
 
+BATCH = "batch protocol (k chosen on the logged `sl_val/loss`)"
+
+
+def _recount(rows):
+    """Today's paradigm comparison re-counted: its sensitivity rows only.
+
+    rows: (comparison, variant, W, T, L, cells, median, p).
+    """
+    out = ["# Paradigm Comparison", "", "## 2 · Sensitivity", "",
+           "| Comparison | Variant | Metric | Challenger better | Tie | Baseline better "
+           "| Cells | Median gap | Wilcoxon p |",
+           "|:---|:---|:---|---:|---:|---:|---:|---:|---:|"]
+    out += [f"| {c} | {v} | MAE | {w} | {t} | {l} | {n} | {m} | {p} |"
+            for c, v, w, t, l, n, m, p in rows]
+    return "\n".join(out) + "\n"
+
+
+def _held(rules=(), **entry):
+    spec = {"comparison": "Cluster (best k) vs Cluster (k=1)", "variant": BATCH,
+            "models": ["DLinear", "PatchTST", "TSMixer"],
+            "reason": "The snapshot's rows are the batch protocol."}
+    spec.update(entry)
+    return {"held_elsewhere": [spec], "expected": list(rules)}
+
+
+def _gate_held(tmp_path, before, after, recount, spec):
+    published = tmp_path / "2026-01-01_tables.md"
+    published.write_text(before)
+    cells = tmp_path / "cells.csv"
+    frames.write_csv(cells, [], frames.CELL_FIELDS)
+    import yaml
+    path = tmp_path / "gate.yaml"
+    path.write_text(yaml.safe_dump(dict(spec, snapshot=published.name)))
+    asked = []
+
+    def render_models(models):
+        asked.append(models)
+        return recount
+
+    sections = [(f"s{i}", h, b) for i, (h, b) in enumerate(R.split_blocks(after))]
+    g = R.gate(published, cells, sections, runs_spec=tmp_path / "none.yaml",
+               gate_spec=path, render_models=None if recount is None else render_models,
+               out=io.StringIO())
+    return g, asked
+
+
+def test_a_row_held_elsewhere_is_held_against_the_recounted_row(tmp_path):
+    before = _scoreboard([(PC, "MAE", 1, 10, 10, 21, "0.0268"),
+                          (BEST, "MAE", 9, 0, 0, 9, "0.00391")])
+    # Today's scoreboard: another protocol over more models.
+    after = _scoreboard([(PC, "MAE", 1, 10, 10, 21, "0.0268"),
+                         (BEST, "MAE", 10, 1, 0, 11, "0.00195")])
+    recount = _recount([("Cluster (best k) vs Cluster (k=1)", BATCH,
+                         9, 0, 0, 9, "+1.00%", "0.00391")])
+    g, asked = _gate_held(tmp_path, before, after, recount, _held())
+    assert g.ok and not g.held["scoreboard"].changes
+    assert asked == [("DLinear", "PatchTST", "TSMixer")]
+    # Today's scoreboard values under the old name were never published: new.
+    new = {c.key["column"]: c.current for c in g.held["scoreboard"].new}
+    assert new["Cells"] == "11" and new["Wilcoxon p"] == "0.00195"
+    assert any("6 of them held against" in n for n in g.held["scoreboard"].notes)
+
+    # A recounted value that moved is a change like any other, and says where
+    # it was read.
+    moved = _recount([("Cluster (best k) vs Cluster (k=1)", BATCH,
+                       8, 1, 0, 9, "+1.00%", "0.00781")])
+    g, _ = _gate_held(tmp_path, before, after, moved, _held())
+    assert sorted(c.key["column"] for c in g.unexpected) == [
+        "Challenger better", "Tie", "Wilcoxon p"]
+    assert "held against today's 'batch protocol" in g.unexpected[0].label()
+
+
+def test_a_row_held_elsewhere_with_nothing_to_hold_it_against_fails(tmp_path):
+    before = _scoreboard([(BEST, "MAE", 9, 0, 0, 9, "0.00391")])
+    everything = {"kind": "scoreboard", "reason": "anything"}
+    g, _ = _gate_held(tmp_path, before, before, None, _held([everything]))
+    assert len(g.unexpected) == 6 and {c.current for c in g.unexpected} == {None}
+    assert any("nothing to re-count" in n for n in g.notes)
+
+
+def test_a_malformed_held_elsewhere_entry_is_dropped(tmp_path):
+    before = _scoreboard([(BEST, "MAE", 9, 0, 0, 9, "0.00391")])
+    after = _scoreboard([(BEST, "MAE", 10, 1, 0, 11, "0.00195")])
+    recount = _recount([("Cluster (best k) vs Cluster (k=1)", BATCH,
+                         9, 0, 0, 9, "+1.00%", "0.00391")])
+    g, asked = _gate_held(tmp_path, before, after, recount, _held(models=[]))
+    assert not asked and len(g.unexpected) == 4    # held under its own name again
+    assert any("held_elsewhere 1" in n for n in g.notes)
+
+
 def test_k_min_matches_only_the_clustered_ks():
     rule = {"kind": "sweep", "column": "k", "k_min": 2, "reason": "protocol."}
     key = dict(dataset="ED2022", window="L336/O96", metric="MAE", model="DLinear",

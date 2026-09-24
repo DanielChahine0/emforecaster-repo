@@ -246,30 +246,45 @@ def render_family(family: str) -> list[tuple[str, str, str]]:
     setting = WINDOWS[family][0]
     sections = (T.render_sections(runs_csv, REPO, RESULTS, family)
                 + T.render_cross_sections(runs_csv, REPO, RESULTS, family, setting))
-    # extract_results is importable here: render_sections put results/ on the path.
-    import extract_results as er
-    labels = dict(dataset_label=er.dataset_label, model_label=er.model_label,
-                  dataset_rank=er.dataset_rank, model_rank=er.model_rank)
     # Every cluster sweep of the family, at every window it ran, with k chosen
     # on validation exactly as the paradigm comparison chooses it.
-    sweep = T.render_ccm_sweep(runs_csv, family, WINDOWS[family], **labels)
+    sweep = T.render_ccm_sweep(runs_csv, family, WINDOWS[family], **_labels())
     if sweep:
         sections.append(("ccm-sweep", T.SWEEP_TITLE, sweep))
-    # The seed-aware answer to "which paradigm is best": matched seeds, a tie
-    # band at seed noise, k chosen on validation (see emfres/paradigms.py).
+    return sections + render_paradigms(family)
+
+
+def _labels() -> dict:
+    """The tables' dataset and model labels and orders (extract_results)."""
+    code = str(Path(__file__).resolve().parent.parent)
+    if code not in sys.path:
+        sys.path.insert(0, code)
+    import extract_results as er
+    return dict(dataset_label=er.dataset_label, model_label=er.model_label,
+                dataset_rank=er.dataset_rank, model_rank=er.model_rank)
+
+
+def render_paradigms(family: str, models=None) -> list[tuple[str, str, str]]:
+    """The family's paradigm comparison, one section per window, benchmark first.
+
+    The seed-aware answer to "which paradigm is best": matched seeds, a tie
+    band at seed noise, k chosen on validation (see emfres/paradigms.py). The
+    family's other windows are each their own section: the same comparison as
+    a robustness check, never pooled with the benchmark's cells. ``models``
+    re-counts it over those model ids only, for the value gate's
+    held_elsewhere rows (specs/gate.yaml).
+    """
     from . import paradigms as PG
     from .reconcile import PARADIGM_TITLE
-    paradigm_md = PG.render(runs_csv, family, setting, title=PARADIGM_TITLE, **labels)
-    if paradigm_md:
-        sections.append(("paradigms", PARADIGM_TITLE, paradigm_md))
-    # The family's other windows, each its own section: the same comparison as a
-    # robustness check, never pooled with the benchmark's cells.
-    for seq_len, pred_len in WINDOWS[family][1:]:
-        title = f"{PARADIGM_TITLE} · L{seq_len}/O{pred_len}"
-        md = PG.render(runs_csv, family, (seq_len, pred_len), title=title, **labels)
+
+    out = []
+    for i, (seq_len, pred_len) in enumerate(WINDOWS[family]):
+        title = PARADIGM_TITLE if i == 0 else f"{PARADIGM_TITLE} · L{seq_len}/O{pred_len}"
+        md = PG.render(FRAMES / "runs.csv", family, (seq_len, pred_len), title=title,
+                       models=models, **_labels())
         if md:
-            sections.append((f"paradigms-l{seq_len}", title, md))
-    return sections
+            out.append(("paradigms" if i == 0 else f"paradigms-l{seq_len}", title, md))
+    return out
 
 
 def run_gate(family: str, sections, snapshot: Path | None = None, verbose: bool = False):
@@ -285,9 +300,13 @@ def run_gate(family: str, sections, snapshot: Path | None = None, verbose: bool 
         print(f"WARNING: the frozen snapshot {snapshot} is missing -- values are not "
               f"gated", file=sys.stderr)
         return None
+
+    def render_models(models) -> str:
+        return "\n\n".join(md.strip() for _, _, md in render_paradigms(family, models))
+
     return R.gate(snapshot, FRAMES / "cells.csv", sections,
                   runs_spec=SPECS / "runs.yaml", gate_spec=SPECS / "gate.yaml",
-                  verbose=verbose)
+                  render_models=render_models, verbose=verbose)
 
 
 def cmd_tables(args) -> int:

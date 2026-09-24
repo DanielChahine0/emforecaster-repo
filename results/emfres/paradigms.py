@@ -68,7 +68,7 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Collection, Optional
 
 from .frames import complete_seeds, family_of
 from .runlogs import comparable_fixed
@@ -637,15 +637,23 @@ def render(runs_csv: Path, family: str, setting: tuple,
            dataset_rank: Callable = lambda d: d,
            model_rank: Callable = lambda m: m,
            bands_csv: Optional[Path] = None,
-           title: str = "Paradigm Comparison") -> str:
+           title: str = "Paradigm Comparison",
+           models: Optional[Collection[str]] = None) -> str:
     """The section's markdown, or "" when no two paradigms share a cell.
 
     ``bands_csv`` (default: bands.csv beside runs_csv) feeds the band-level
     sensitivity rows; without it they are left out and the note says so.
+    ``models`` keeps only those model ids, planned ones included: the value
+    gate re-counts a frozen snapshot's rows over the models it counted
+    (specs/gate.yaml held_elsewhere). None keeps every model.
     """
     seq_len, pred_len = setting
     values = seed_values(runs_csv, family, seq_len, pred_len)
     planned = CLUSTERED.get(family, ())
+    if models is not None:
+        keep = set(models)
+        values = {key: v for key, v in values.items() if key[2] in keep}
+        planned = tuple(m for m in planned if m in keep)
     board = build(values, "fixed", planned=planned)
     batch = build(values, "batch", planned=planned)
     cells = board.cells

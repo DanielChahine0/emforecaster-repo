@@ -402,6 +402,21 @@ def test_render_names_the_chosen_k_and_its_origin(tmp_path):
     assert paradigms.render(_csv(tmp_path, only_joint), "emf", (336, 96)) == ""
 
 
+def test_render_can_recount_over_some_models_only(tmp_path):
+    # TSMixer has only a joint run: a planned cluster model still to come.
+    rows = _sweep() + [_run("multivariate", s, 0.5, model="TSMixer") for s in SEEDS]
+    runs = _csv(tmp_path, rows)
+    full = paradigms.render(runs, "emf", (336, 96))
+    only = paradigms.render(runs, "emf", (336, 96), models=["DLinear"])
+    assert "| ed2022 | TSMixer |" in full and "TSMixer" not in only
+
+    def k1_pending(md):
+        row = next(line for line in md.splitlines()
+                   if line.startswith("| Cluster (k=1) vs Multivariate —") and "| MAE |" in line)
+        return row.split("|")[7].strip()
+    assert (k1_pending(full), k1_pending(only)) == ("1", "0")
+
+
 def test_other_families_and_windows_are_left_out(tmp_path):
     rows = _sweep() + [dict(_run("multivariate", 69421, 9.9), family="voip",
                             dataset="voip_mobile")]
