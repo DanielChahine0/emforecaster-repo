@@ -23,10 +23,10 @@ band -- then get_model) from a fixed seed and records sha256 digests of:
            state after the step and the RNG state after it.
 
 The cases are the six gradient-trained multivariate models and the CCM builds
-of DLinear/PatchTST/TSMixer at the cluster grids' k values, at the EMF
-benchmark shape (27 bands, L336/O96) and the VoIP one (6 channels, L48/O12,
-VOIP_OVERRIDES); the six again as one band (C=1) at both windows, the way a
-per-channel run builds them; and the six at EMF under the grids' second seed.
+of the same six at the cluster grids' k values, at the EMF benchmark shape (27
+bands, L336/O96) and the VoIP one (6 channels, L48/O12, VOIP_OVERRIDES); the
+six again as one band (C=1) at both windows, the way a per-channel run builds
+them; and the six at EMF under the grids' second seed.
 
 A failure means a change altered an existing model's numerics: fix the change,
 not the fixture. The fixture is only regenerated for a deliberate numerics
@@ -88,7 +88,8 @@ Shape = collections.namedtuple(
 
 # k: what the cluster grids sweep, degenerate ends included (k=1, and k=C=6 on
 # VoIP). VoIP also keeps k=9, more clusters than channels, which builds and was
-# pinned from the first version of the fixture.
+# pinned from the first version of the fixture; every CCM model is pinned there
+# too, so all six are held to one set of k.
 SHAPES = [
     Shape("emf", 27, 336, 96, "ED2022", None, False, [1, 2, 3, 5, 9]),
     Shape("voip", 6, 48, 12, "VOIP_MOBILE", grids.VOIP_OVERRIDES, False,
@@ -100,7 +101,11 @@ SHAPES = [
 PC_CHANNEL = 0
 MV_IDS = ["DLinear", "PatchTST", "TSMixer", "RF_EMF_Transformer", "EMForecaster",
           "LSTM"]
-CCM_IDS = ["DLinear", "PatchTST", "TSMixer"]
+# The cluster grids' six models (grids.CLUSTER_MODELS). The Transformer,
+# EMForecaster and LSTM joined after the first three were pinned, so they come
+# after them here and in the fixture.
+CCM_IDS = ["DLinear", "PatchTST", "TSMixer", "RF_EMF_Transformer", "EMForecaster",
+           "LSTM"]
 
 _JOBS = {model_id: job for _, model_id, job in grids.MV_MODELS}
 
@@ -346,6 +351,14 @@ def test_fixture_covers_exactly_the_cases():
     assert list(GOLDEN["cases"]) == list(CASES)
     fields = {field for field, _ in CHECKS}
     assert all(set(digests) == fields for digests in GOLDEN["cases"].values())
+
+
+def test_cases_pin_every_cluster_grid_model_at_every_grid_k():
+    # A model or k added to a cluster grid without a case here would train
+    # under code nothing pins.
+    assert set(CCM_IDS) == {model_id for _, model_id, _ in grids.CLUSTER_MODELS}
+    for setup, shape in (("cluster", SHAPES[0]), ("voip_cluster", SHAPES[1])):
+        assert set(grids.GRIDS[setup]["k_values"]) <= set(shape.k_values), setup
 
 
 def test_fixture_records_how_it_was_computed():
