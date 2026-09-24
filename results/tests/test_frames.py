@@ -8,6 +8,7 @@ vector off by one channel puts one frequency's error on another. So each is
 pinned here on small synthetic logs whose right answer is known.
 """
 
+import hashlib
 import json
 import statistics
 
@@ -54,7 +55,8 @@ SIDECAR = {"sl_val_fixed/loss": [0.62], "sl_test_fixed/loss": [0.44],
            "sl_test_fixed/mae": [0.34], "sl_test_fixed/mse_per_channel": [0.28, 0.6],
            "sl_test_fixed/ic": [92.0], "sl_test_fixed/jc": [12.0],
            "sl_test_fixed/interval_width_mean": [1.3],
-           "rescore": {"batch_check": {"passed": True}}}
+           "rescore": {"batch_check": {"passed": True}, "git_commit": "r" * 40,
+                       "git_dirty": False}}
 
 
 def _cluster(root, k, seed, *, fixed=None, sidecar=None, **extra):
@@ -114,6 +116,60 @@ def test_a_failed_or_unreadable_sidecar_is_not_used(tmp_path, capsys):
     err = capsys.readouterr().err
     assert err.count("does not record a passed re-score") == 2
     assert "unreadable" in err
+
+
+def test_the_fixed_numbers_carry_the_commit_that_computed_them(tmp_path):
+    stamp = {"parameters/exp/git_commit": "c" * 40, "parameters/exp/git_dirty": False}
+    _cluster(tmp_path, 3, 1, fixed=FIXED, **stamp)              # log: the run's code
+    _cluster(tmp_path, 3, 2, sidecar=SIDECAR, **stamp)          # sidecar: the re-score's
+    _cluster(tmp_path, 1, 3, **stamp)                           # k1: the run's code
+    _cluster(tmp_path, 3, 4, **stamp)                           # none
+    dirty = {**SIDECAR, "rescore": {**SIDECAR["rescore"], "git_dirty": True}}
+    _cluster(tmp_path, 3, 5, sidecar=dirty, **stamp)            # a dirty re-score
+    runs = _by_seed(tmp_path)
+    assert {s: (r.fixed_source, r.fixed_commit) for s, r in runs.items()} == {
+        1: ("log", "c" * 40), 2: ("sidecar", "r" * 40), 3: ("k1", "c" * 40),
+        4: ("none", None), 5: ("sidecar", None)}
+
+
+def test_a_sidecar_of_another_checkpoint_is_not_used(tmp_path, capsys):
+    def with_checkpoint(seed, weights, recorded):
+        sidecar = {**SIDECAR, "rescore": {**SIDECAR["rescore"],
+                                          "checkpoint": "supervised.pth",
+                                          "checkpoint_sha256": recorded}}
+        run = _cluster(tmp_path, 3, seed, sidecar=sidecar)
+        if weights is not None:
+            (run / "supervised.pth").write_bytes(weights)
+
+    same = hashlib.sha256(b"weights").hexdigest()
+    with_checkpoint(1, b"weights", same)             # the checkpoint it scored
+    with_checkpoint(2, b"retrained", same)           # retrained in place since
+    with_checkpoint(3, None, same)                   # checkpoint gone: cannot check
+    runs = _by_seed(tmp_path)
+    assert {s: r.fixed_source for s, r in runs.items()} == {
+        1: "sidecar", 2: "none", 3: "sidecar"}
+    assert "scored another checkpoint than the run's own" in capsys.readouterr().err
+
+
+def test_runs_csv_and_the_manifest_name_the_fixed_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(frames, "code_fingerprint",
+                        lambda repo, commit: commit[:3] if commit else "")
+    stamp = {"parameters/exp/git_commit": "c" * 40, "parameters/exp/git_dirty": False}
+    _cluster(tmp_path, 3, 1, fixed=FIXED, **stamp)
+    _cluster(tmp_path, 3, 2, sidecar=SIDECAR, **stamp)
+    _cluster(tmp_path, 3, 3, **stamp)
+    _write(tmp_path, "DLinear/toy/L336_O96_cp/9", _log(**stamp))
+    rows = {r.seed: frames._row(r, "cluster" if r.k else "multivariate", tmp_path)
+            for r in load_runs(tmp_path, [])}
+    assert {s: (r["fixed_source"], r["fixed_code_version"], r["code_version"])
+            for s, r in rows.items()} == {
+        "1": ("log", "ccc", "ccc"), "2": ("sidecar", "rrr", "ccc"),
+        "3": ("none", "", "ccc"), "9": ("", "", "ccc")}
+    frames.write_manifest(tmp_path / "MANIFEST.json", tmp_path, list(rows.values()),
+                          {}, [])
+    manifest = json.loads((tmp_path / "MANIFEST.json").read_text())
+    assert manifest["fixed_code_versions"] == {
+        "ccc": {"runs": 1, "sources": ["log"]}, "rrr": {"runs": 1, "sources": ["sidecar"]}}
 
 
 def test_a_non_cluster_run_has_no_fixed_source(tmp_path):

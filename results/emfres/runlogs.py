@@ -10,6 +10,7 @@ Moved verbatim out of extract_results.py (Phase 1 of the results/ restructure).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -110,6 +111,11 @@ class Run:
     interval_width_fixed: Optional[float] = None
     mse_per_channel_fixed: Optional[list] = None
     fixed_source: str = ""
+    # The commit whose code computed the fixed metrics: the run's own
+    # code_commit for "log" and "k1", the re-score's commit (eval_fixed.json
+    # rescore.git_commit) for "sidecar" -- None when that ran on a dirty tree,
+    # or on "none".
+    fixed_commit: Optional[str] = None
 
 
 @dataclass
@@ -307,6 +313,30 @@ def _fixed_block(src: dict, conf: bool) -> dict:
     return block
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sidecar_checkpoint_ok(run_dir: Path, sidecar: dict) -> bool:
+    """Whether the checkpoint a re-score hashed is still the run's own.
+
+    A run retrained in place after its re-score has a new checkpoint -- and
+    numbers -- the sidecar never saw. False only on a mismatch: a sidecar
+    that records no hash, or a run whose checkpoint is gone, cannot be
+    checked and is taken as written.
+    """
+    rescore = sidecar.get("rescore") or {}
+    want = rescore.get("checkpoint_sha256")
+    path = run_dir / str(rescore.get("checkpoint") or "supervised.pth")
+    if not want or not path.is_file():
+        return True
+    return _sha256(path) == want
+
+
 def _sidecar_passed(sidecar: dict) -> bool:
     """Whether a re-score's own self-checks passed (ccm_rescore writes only then)."""
     rescore = sidecar.get("rescore") or {}
@@ -321,7 +351,9 @@ def fixed_metrics(d: dict, run_dir: Path, k: Optional[int], conf: bool,
 
     log.json's own sl_test_fixed/* win: those were computed on the device the
     run trained on. Otherwise the run dir's eval_fixed.json, if its re-score
-    passed its self-checks. Otherwise, at k = 1, the batch metrics themselves:
+    passed its self-checks and scored the checkpoint the run holds now; its
+    fields then carry ``fixed_commit``, the re-score's commit (None if that
+    ran on a dirty tree). Otherwise, at k = 1, the batch metrics themselves:
     with one cluster every channel is in it whatever the batch, so the two
     protocols are the same forecast (``batch`` holds the run's batch values
     under the fixed field names). A k > 1 run with neither has no fixed
@@ -337,10 +369,17 @@ def fixed_metrics(d: dict, run_dir: Path, k: Optional[int], conf: bool,
         except (OSError, json.JSONDecodeError) as exc:
             print(f"WARNING: unreadable {path} ({exc}); ignoring it", file=sys.stderr)
         else:
-            if _sidecar_passed(sidecar):
-                return _fixed_block(sidecar, conf), "sidecar"
-            print(f"WARNING: {path} does not record a passed re-score; ignoring it",
-                  file=sys.stderr)
+            if not _sidecar_passed(sidecar):
+                print(f"WARNING: {path} does not record a passed re-score; ignoring it",
+                      file=sys.stderr)
+            elif not _sidecar_checkpoint_ok(run_dir, sidecar):
+                print(f"WARNING: {path} scored another checkpoint than the run's own "
+                      f"(retrained since?); ignoring it", file=sys.stderr)
+            else:
+                rescore = sidecar.get("rescore") or {}
+                commit = None if rescore.get("git_dirty") else rescore.get("git_commit")
+                return {**_fixed_block(sidecar, conf), "fixed_commit": commit or None}, \
+                    "sidecar"
     if k == 1:
         return dict(batch), "k1"
     return {}, "none"
@@ -462,6 +501,8 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
             if conf:
                 batch.update(ic_fixed=ic, jc_fixed=jc, interval_width_fixed=interval_width)
             fixed, fixed_source = fixed_metrics(d, log_path.parent, k, conf, batch)
+            if fixed_source in ("log", "k1"):
+                fixed["fixed_commit"] = code_commit
 
         runs.append(Run(model, dataset, seq_len, pred_len, conf, mse, mae,
                          running_time, per_epoch, num_params, ic, jc, interval_width,

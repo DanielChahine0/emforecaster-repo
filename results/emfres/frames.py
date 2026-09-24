@@ -143,10 +143,13 @@ RUN_FIELDS = [
     # (the primary cluster protocol; mse, mae, val_loss, ic, jc and
     # interval_width above stay the logged batch protocol), and where they
     # came from -- runlogs.FIXED_SOURCES: log, sidecar (eval_fixed.json), k1
-    # (the batch values: one cluster has no membership to fix) or none.
-    # Blank on every other setup.
+    # (the batch values: one cluster has no membership to fix) or none -- and
+    # the fingerprint of the code that computed them: the run's own for log
+    # and k1, the re-score's commit for a sidecar (blank when unknown, e.g. a
+    # re-score on a dirty tree). Blank on every other setup.
     "mse_fixed", "mae_fixed", "val_loss_fixed",
     "ic_fixed", "jc_fixed", "interval_width_fixed", "fixed_source",
+    "fixed_code_version",
     # Provenance (forecasting/provenance.py): the commit the run was stamped
     # with or dated to, whether the tree was dirty, how that commit was
     # established (see runlogs.Run.commit_source), the fingerprint of the
@@ -292,6 +295,8 @@ def _row(run: Run, setup: str, repo: Path,
         "jc_fixed": _num(run.jc_fixed),
         "interval_width_fixed": _num(run.interval_width_fixed),
         "fixed_source": run.fixed_source,
+        "fixed_code_version": (code_fingerprint(repo, run.fixed_commit)
+                               if run.fixed_source else ""),
         "git_commit": run.git_commit or "",
         "git_dirty": "" if run.git_dirty is None else int(run.git_dirty),
         "commit_source": run.commit_source,
@@ -673,9 +678,15 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
         return entry
 
     fixed_sources: dict = {}
+    fixed_versions: dict = {}
     for r in runs:
         if r.get("fixed_source"):
             fixed_sources[r["fixed_source"]] = fixed_sources.get(r["fixed_source"], 0) + 1
+        if r.get("fixed_source") not in (None, "", "none"):
+            v = fixed_versions.setdefault(r.get("fixed_code_version") or "?",
+                                          {"runs": 0, "sources": set()})
+            v["runs"] += 1
+            v["sources"].add(r["fixed_source"])
     payload = {
         "logs_commit": _logs_commit(repo),
         # The training-code versions behind the runs, each with the commit ids
@@ -690,8 +701,12 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
                              for fp, e in sorted(equivalents.items())},
         "unknown_code_runs": sum(1 for r in runs if not r.get("code_version")),
         # Where the cluster runs' fixed-membership metrics came from
-        # (runlogs.FIXED_SOURCES).
+        # (runlogs.FIXED_SOURCES), and the code versions that computed them
+        # ("?" where that is unknown): a sidecar written later by other
+        # re-score code shows up here as a second version.
         "fixed_sources": dict(sorted(fixed_sources.items())),
+        "fixed_code_versions": {fp: {"runs": v["runs"], "sources": sorted(v["sources"])}
+                                for fp, v in sorted(fixed_versions.items())},
         "provenance": sources,
         "n_runs": len(runs),
         "runs_digest": digest.hexdigest(),

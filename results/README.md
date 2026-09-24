@@ -161,8 +161,13 @@ reported as a `NOTE`; only a changed value is fatal.
   where they came from: `log` (the run logged `sl_test_fixed/*` itself, and
   that wins), `sidecar` (the `eval_fixed.json` re-score
   `forecasting/ccm_rescore.py` writes beside an older run, used only if its
-  self-check passed), `k1` (neither, at k = 1, where one cluster leaves nothing
+  self-check passed and the checkpoint it hashed is still the run's
+  `supervised.pth`), `k1` (neither, at k = 1, where one cluster leaves nothing
   to fix and the batch values are the fixed ones by construction) or `none`.
+  `fixed_code_version` is the fingerprint of the code that computed them — the
+  run's own for `log` and `k1`, the re-score's commit for a `sidecar` — and
+  `MANIFEST.json` totals them under `fixed_code_versions`, so a sidecar written
+  later by other re-score code shows up as a second version.
   Other setups leave these blank. A cell's fixed means are blank unless every
   run of it has one; `fixed_sources` lists what went in.
 - **`mse_std` / `mae_std` are the seed standard deviation in every setup.** For

@@ -158,12 +158,19 @@ def cmd_extract(args) -> int:
     # (a CPU re-score sits at most 9.2e-5 from a GPU run's logged test metrics,
     # forecasting/ccm_rescore.py).
     fixed: dict = {}
+    scored: dict = {}
     for r in runs:
         if r["fixed_source"]:
             fixed[r["fixed_source"]] = fixed.get(r["fixed_source"], 0) + 1
+        if r["fixed_source"] not in ("", "none"):
+            fp = r["fixed_code_version"] or "?"
+            scored[fp] = scored.get(fp, 0) + 1
     if fixed:
         print("cluster fixed-membership metrics: "
-              + ", ".join(f"{n} {s}" for s, n in sorted(fixed.items())), file=sys.stderr)
+              + ", ".join(f"{n} {s}" for s, n in sorted(fixed.items()))
+              + ("; computed by code " + ", ".join(f"{fp} ({n})"
+                                                   for fp, n in sorted(scored.items()))
+                 if scored else ""), file=sys.stderr)
     off = [r for r in runs if r["k"] == 1 and r["fixed_source"] in ("log", "sidecar")
            and r["mse"] and r["mse_fixed"]
            and abs(float(r["mse_fixed"]) - float(r["mse"])) > 1e-3 * abs(float(r["mse"]))]
