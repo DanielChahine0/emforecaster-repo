@@ -1,6 +1,7 @@
 """P5: what clustering gains as k grows, per model.
 
-One facet per clustered model, one line per dataset: each k's change against
+One facet per clustered model, one line per dataset (the dataset palette,
+never a paradigm's hue): each k's change against
 the same network at k = 1 (the controlled baseline), as the mean of the
 per-seed relative changes with a +-1 seed standard deviation ribbon. The k
 chosen on validation is ringed; the k the test split would pick is marked
@@ -24,7 +25,7 @@ from matplotlib.lines import Line2D
 
 from . import figdata as FD
 from .figkit import (
-    INK_MUTED, INK_PRIMARY, INK_SECONDARY, SERIES_COLORS, SURFACE, dataset_name,
+    INK_MUTED, INK_PRIMARY, INK_SECONDARY, SURFACE, dataset_colors, dataset_name,
     layout, legend, model_name, panel_title, style_axes, title, window_label, write,
     xlabel,
 )
@@ -48,7 +49,7 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     height = 1.25 + 1.55 * nrow
     fig, axes = plt.subplots(nrow, ncol, figsize=(WIDTH, height), squeeze=False,
                              sharex=True, sharey=True)
-    hue = {ds: SERIES_COLORS[i % len(SERIES_COLORS)] for i, ds in enumerate(datasets)}
+    hue = dataset_colors(datasets)
     oracle_any = False
     partial_any = False
     for idx, model in enumerate(models):

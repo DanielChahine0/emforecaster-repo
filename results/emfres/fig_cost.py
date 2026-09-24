@@ -27,7 +27,7 @@ from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator, NullLoca
 from . import figdata as FD
 from . import paradigms as PG
 from .figkit import (
-    INK_PRIMARY, INK_SECONDARY, PARTIAL_ALPHA, SERIES_COLORS, SURFACE, dataset_name,
+    INK_PRIMARY, INK_SECONDARY, PARTIAL_ALPHA, SURFACE, dataset_colors, dataset_name,
     footnote, layout, legend, mark_kwargs, model_name, pad_range, panel_title,
     paradigm_handles, style_axes, title, window_label, write, xlabel,
 )
@@ -46,7 +46,8 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
     One facet per model, the multivariate run at the origin: x is the
     pipeline's training cost as a multiple of the multivariate run's (log),
     y its error relative to the multivariate seed mean, on the seeds both
-    have (paradigms.compare). Dataset by hue, paradigm by shape.
+    have (paradigms.compare). Dataset by hue (the dataset palette, so the
+    multivariate origin's Charcoal is never also a dataset), paradigm by shape.
     """
     if not Path(timing_csv).exists():
         return []
@@ -59,7 +60,7 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
     if not models:
         return []
     datasets = corpus.datasets
-    hue = {ds: SERIES_COLORS[i % len(SERIES_COLORS)] for i, ds in enumerate(datasets)}
+    hue = dataset_colors(datasets)
     ncol = min(3, len(models))
     nrow = -(-len(models) // ncol)
     height = 1.25 + 1.6 * nrow
@@ -127,8 +128,11 @@ def fig_cost(corpus: FD.Corpus, runs_csv: Path, timing_csv: Path, metric: str, s
     handles += [Line2D([], [], color=hue[ds], lw=2.2, label=dataset_name(ds)) for ds in datasets]
     handles.append(Line2D([], [], color=INK_SECONDARY, lw=0.8, label="Fastest–slowest band"))
     if partial:
-        handles.append(Line2D([], [], label="Still training",
-                              **mark_kwargs(PG.BEST, style, alpha=PARTIAL_ALPHA)))
+        # Grey, not Verdigris: in this figure a hue names a dataset.
+        handles.append(Line2D([], [], marker="D", linestyle="None", alpha=PARTIAL_ALPHA,
+                              markersize=style.marker * 0.9, markerfacecolor=INK_SECONDARY,
+                              markeredgecolor=INK_SECONDARY,
+                              markeredgewidth=style.line_width * 0.5, label="Still training"))
     legend(fig, handles, style, y=1 - 0.24 / height)
     layout(fig, style, top=0.84, bottom=0.42, left=0.09, wspace=0.08, hspace=0.42)
     xlabel(fig, list(axes.flat), "Training time, × the multivariate run", style)

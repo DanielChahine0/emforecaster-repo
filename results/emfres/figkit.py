@@ -7,7 +7,9 @@ or facets, always named in text, so no figure asks the reader to tell seven
 models apart by hue. Outcomes of a comparison use Verdigris (challenger
 better) and Burnt Peach (baseline better), with a tie drawn hollow in muted
 ink -- a shape difference as well as a hue one, since Verdigris and the muted
-ink are too close under colour-vision deficiency to carry it alone.
+ink are too close under colour-vision deficiency to carry it alone. A figure
+that colours by dataset (k-gain, cost) takes style.DATASET_COLORS, whose hues
+are none of these, so no dataset reads as a paradigm or an outcome.
 
 Type comes from style.rc_fonts (IBM Plex Sans); sizes from a style.Style
 preset, "paper" (IEEEtran) by default.
@@ -32,8 +34,8 @@ from . import paradigms as PG  # noqa: E402
 from .chrome import frame_legend, save  # noqa: E402
 from .naming import artifact_path  # noqa: E402
 from .style import (  # noqa: E402
-    AXIS_RULE, GRIDLINE, INK_MUTED, INK_PRIMARY, INK_SECONDARY, MUTED_COLOR,
-    SERIES_COLORS, STYLES, SURFACE, Style, label_color, rc_fonts,
+    AXIS_RULE, DATASET_COLORS, GRIDLINE, INK_MUTED, INK_PRIMARY, INK_SECONDARY,
+    MUTED_COLOR, SERIES_COLORS, STYLES, SURFACE, Style, label_color, rc_fonts,
 )
 
 VERDIGRIS, BURNT_PEACH, CHARCOAL = SERIES_COLORS[0], SERIES_COLORS[1], SERIES_COLORS[2]
@@ -117,6 +119,15 @@ def mark_kwargs(pipe: str, style: Style, *, alpha: float = 1.0, scale: float = 1
     return dict(marker=marker, markersize=style.marker * size * scale, linestyle="None",
                 markerfacecolor=color if filled else SURFACE, markeredgecolor=color,
                 markeredgewidth=style.line_width * 0.5, alpha=alpha)
+
+
+def dataset_colors(datasets) -> dict:
+    """{dataset: colour} in the given order, from the dataset palette.
+
+    Never the paradigm or outcome hues, so a figure that colours by dataset
+    keeps them free for what they mean elsewhere.
+    """
+    return {ds: DATASET_COLORS[i % len(DATASET_COLORS)] for i, ds in enumerate(datasets)}
 
 
 def paradigm_handles(style: Style, pipes, *, partial: bool = False, seeds: bool = True) -> list:
@@ -266,11 +277,11 @@ def fit_texts(ax, texts, pad: float = 2.0, rounds: int = 4) -> None:
 
 
 __all__ = [
-    "AXIS_RULE", "BAND_FILL", "BURNT_PEACH", "CHARCOAL", "FAMILY_DIR", "GRIDLINE",
-    "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "MUTED_COLOR", "OUTCOME",
-    "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS",
-    "dataset_name", "diverging_cmap", "fit_texts", "footnote", "label_color", "legend",
-    "mark_kwargs", "model_name", "layout", "outcome_handles", "pad_range",
-    "panel_title", "paradigm_handles", "ranks", "seed_ticks", "setup", "style_axes",
-    "title", "window_label", "write", "xlabel",
+    "AXIS_RULE", "BAND_FILL", "BURNT_PEACH", "CHARCOAL", "DATASET_COLORS", "FAMILY_DIR",
+    "GRIDLINE", "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "MUTED_COLOR",
+    "OUTCOME", "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS",
+    "dataset_colors", "dataset_name", "diverging_cmap", "fit_texts", "footnote",
+    "label_color", "legend", "mark_kwargs", "model_name", "layout", "outcome_handles",
+    "pad_range", "panel_title", "paradigm_handles", "ranks", "seed_ticks", "setup",
+    "style_axes", "title", "window_label", "write", "xlabel",
 ]

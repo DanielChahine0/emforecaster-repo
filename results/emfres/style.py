@@ -29,6 +29,14 @@ from matplotlib import colors as mcolors
 SERIES_COLORS = [
     "#2a9d8f", "#e76f51", "#264653", "#f4a261", "#e9c46a",
 ]
+# Datasets, where a figure colours by dataset (the paradigm figures' k-gain
+# and cost facets). The three hues stay clear of the ones those figures give
+# meaning to - Verdigris (cluster, challenger better), Burnt Peach (baseline
+# better) and Charcoal (multivariate) - so a dataset never reads as a
+# paradigm or an outcome: Bronze, Cobalt, Orchid. All pairs hold OKLab deltaE
+# >= 23.2 normal-vision and >= 13.5 under simulated protan/deutan, each is
+# >= 3:1 on white, and Cobalt, the closest to Charcoal, keeps deltaE 14.
+DATASET_COLORS = ["#8a6508", "#1f5aa6", "#b474c8"]
 # A deliberately recessive mist step for a series named with --mute: it stays
 # legible and keeps its legend entry, but stops competing for attention.
 MUTED_COLOR = "#d7e0e4"
