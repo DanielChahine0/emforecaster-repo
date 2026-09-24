@@ -294,6 +294,20 @@ def test_ccm_vs_base_takes_the_k_validation_chose_never_the_test_one():
     assert _ccm_md(er, mv, cl, choices=choices) == md
 
 
+def test_ccm_vs_base_leaves_a_pair_that_prints_the_same_unbolded():
+    import extract_results as er
+    from dataclasses import replace
+    mv = [_er_run("DLinear", s, 0.5020) for s in SEEDS]
+    # k=2 validates best, and its fixed MSE rounds to the base's 0.5020.
+    cl = [replace(_fixed(_er_run("DLinear", s, 0.49, k=k), fx), val_loss=v, val_loss_fixed=v)
+          for s in SEEDS for k, fx, v in ((1, 0.5100, 0.5), (2, 0.50203, 0.4))]
+    t = _section_tables(_ccm_md(er, mv, cl))
+    fixed = next(v for h, v in t.items() if h.startswith("Long-horizon"))
+    assert fixed[1][2:4] == ["<u>0.5020</u>", "0.5020 (k=2)"]      # a tie: neither bold
+    assert fixed[1][4] == "-0.01"                                 # IMP keeps the true gap
+    assert fixed[2][2:4] == ["<u>0.3514</u>", "0.3514 (k=2)"]      # MAE, the same tie
+
+
 def test_the_cross_tables_take_the_paradigm_comparisons_k(tmp_path):
     import extract_results as er
     from emfres import paradigms as PG

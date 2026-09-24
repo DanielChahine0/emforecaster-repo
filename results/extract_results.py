@@ -1133,9 +1133,9 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     doc = Doc(title)
     doc.preamble([
         ("Format", "the CCM paper's Table 4 - per backbone a base | + CCM column "
-                   "pair, **bold** = better of the pair, <u>underline</u> = best in "
-                   "the row, last column the mean % improvement of CCM over the "
-                   "base models"),
+                   "pair, **bold** = better of the pair (neither when the two print "
+                   "the same), <u>underline</u> = best in the row, last column the "
+                   "mean % improvement of CCM over the base models"),
         ("Base", f"the plain multivariate cell from '# {MULTIVARIATE_TITLE}' - same "
                  f"job config and training hyperparameters, no CCM"),
         ("Configuration", f"{setting_label(sl, pl)}"
@@ -1197,9 +1197,11 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
                     if base is not None and ccm is not None:
                         pairs += 1
                         if not (short or lacks):
-                            if ccm < base:
+                            # Better of the pair as printed: two values that
+                            # round alike at 4 decimals are a tie, unmarked.
+                            if round(ccm, 4) < round(base, 4):
                                 cs = f"**{cs}**"
-                            elif base < ccm:
+                            elif round(base, 4) < round(ccm, 4):
                                 bs = f"**{bs}**"
                             imps.append((base - ccm) / base * 100.0)
                     strs += [bs, cs]
