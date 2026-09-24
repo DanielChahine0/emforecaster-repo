@@ -1,0 +1,112 @@
+{
+  "sl_val_fixed/loss": [
+    0.32238607993282814
+  ],
+  "sl_val_fixed/mse": [
+    0.32238590717315674
+  ],
+  "sl_val_fixed/mae": [
+    0.3398709276715062
+  ],
+  "sl_test_fixed/loss": [
+    0.2834501720610119
+  ],
+  "sl_test_fixed/mse": [
+    0.2834501564502716
+  ],
+  "sl_test_fixed/mse_per_channel": [
+    0.0122820055,
+    0.0816919878,
+    0.3019669056,
+    0.105969198,
+    0.6071228385,
+    0.5916680694
+  ],
+  "sl_test_fixed/mae": [
+    0.3222028503858338
+  ],
+  "sl_test_fixed/ic": [
+    91.42416381835938
+  ],
+  "sl_test_fixed/jc": [
+    74.91582489013672
+  ],
+  "sl_test_fixed/interval_width_mean": [
+    1.4519797563552856
+  ],
+  "sl_test_fixed/interval_width_std": [
+    1.2546476125717163
+  ],
+  "fixed_prob": [
+    [
+      0.016232062131166458,
+      2.953141574835172e-06,
+      0.9837650060653687
+    ],
+    [
+      0.45213285088539124,
+      0.21156999468803406,
+      0.3362971246242523
+    ],
+    [
+      0.6124874949455261,
+      0.287206768989563,
+      0.10030577331781387
+    ],
+    [
+      0.3527778089046478,
+      0.5577785968780518,
+      0.08944360911846161
+    ],
+    [
+      0.3709479868412018,
+      0.464062362909317,
+      0.16498963534832
+    ],
+    [
+      0.4043049216270447,
+      0.1631898283958435,
+      0.4325053095817566
+    ]
+  ],
+  "rescore": {
+    "tool": "forecasting.ccm_rescore",
+    "git_commit": "f139f7ecf6d84fc900e5d3cdb4ce7c3cf19a262f",
+    "git_dirty": false,
+    "hostname": "ngwn06",
+    "torch_version": "2.11.0+cu129",
+    "device": "cpu",
+    "created": "2026-09-24_10-58-19",
+    "checkpoint": "supervised.pth",
+    "checkpoint_sha256": "2de582e1ff83cad08664211b54a5ee0e72b3695eae016dca823f26d55344b9fe",
+    "batch_check": {
+      "tolerance": 0.0001,
+      "passed": true,
+      "max_rel_dev": 1.1735548450990688e-05,
+      "worst_key": "sl_test/mse",
+      "missing": [],
+      "gated": {
+        "sl_test/loss": 1.1662865237558112e-05,
+        "sl_test/mse": 1.1735548450990688e-05,
+        "sl_test/mae": 9.569972607056758e-06
+      },
+      "recorded": {
+        "sl_test/mse_per_channel": 0.000181307807120383,
+        "sl_test/ic": 0.0015802552319793498,
+        "sl_test/jc": 0.0031153126880774915,
+        "sl_test/interval_width_mean": 0.0002900386603411944,
+        "sl_test/interval_width_std": 0.0017950392888747963
+      }
+    },
+    "val_check": {
+      "val_loss": 0.3278741577323073,
+      "logged_best_val_loss": 0.3226227112252995,
+      "rel_dev": 0.01627736152567553,
+      "windows": {
+        "train": 1888,
+        "val": 699,
+        "test": 693
+      }
+    }
+  }
+}

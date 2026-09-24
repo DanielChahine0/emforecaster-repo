@@ -1,0 +1,100 @@
+{
+  "sl_val_fixed/loss": [
+    0.3141289139339682
+  ],
+  "sl_val_fixed/mse": [
+    0.3141288459300995
+  ],
+  "sl_val_fixed/mae": [
+    0.34286348400197825
+  ],
+  "sl_test_fixed/loss": [
+    0.28302774800882713
+  ],
+  "sl_test_fixed/mse": [
+    0.28302767872810364
+  ],
+  "sl_test_fixed/mse_per_channel": [
+    0.0112001123,
+    0.0846446902,
+    0.3084181547,
+    0.1041084602,
+    0.5928197503,
+    0.5969749093
+  ],
+  "sl_test_fixed/mae": [
+    0.3277029062246347
+  ],
+  "sl_test_fixed/ic": [
+    91.73480987548828
+  ],
+  "sl_test_fixed/jc": [
+    76.35882568359375
+  ],
+  "sl_test_fixed/interval_width_mean": [
+    1.4251158237457275
+  ],
+  "sl_test_fixed/interval_width_std": [
+    1.193465232849121
+  ],
+  "fixed_prob": [
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ]
+  ],
+  "rescore": {
+    "tool": "forecasting.ccm_rescore",
+    "git_commit": "f139f7ecf6d84fc900e5d3cdb4ce7c3cf19a262f",
+    "git_dirty": false,
+    "hostname": "ngwn06",
+    "torch_version": "2.11.0+cu129",
+    "device": "cpu",
+    "created": "2026-09-24_10-58-19",
+    "checkpoint": "supervised.pth",
+    "checkpoint_sha256": "4f617e4995f97dc63a116df62db6adfec16878f1e883fc5dc4eb476767e219ab",
+    "batch_check": {
+      "tolerance": 0.0001,
+      "passed": true,
+      "max_rel_dev": 1.4983660083445336e-05,
+      "worst_key": "sl_test/mae",
+      "missing": [],
+      "gated": {
+        "sl_test/loss": 1.3225511700921831e-05,
+        "sl_test/mse": 1.2846552874990088e-05,
+        "sl_test/mae": 1.4983660083445336e-05
+      },
+      "recorded": {
+        "sl_test/mse_per_channel": 0.00014104526264380708,
+        "sl_test/ic": 0.0,
+        "sl_test/jc": 0.00031503139519729043,
+        "sl_test/interval_width_mean": 3.847861576023874e-06,
+        "sl_test/interval_width_std": 7.791091665789336e-06
+      }
+    },
+    "val_check": {
+      "val_loss": 0.31412895759287823,
+      "logged_best_val_loss": 0.3141262289110001,
+      "rel_dev": 8.68657764611572e-06,
+      "windows": {
+        "train": 1888,
+        "val": 699,
+        "test": 693
+      }
+    }
+  }
+}

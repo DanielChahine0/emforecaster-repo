@@ -1,0 +1,100 @@
+{
+  "sl_val_fixed/loss": [
+    0.2874589994090947
+  ],
+  "sl_val_fixed/mse": [
+    0.28745904564857483
+  ],
+  "sl_val_fixed/mae": [
+    0.3475936624100569
+  ],
+  "sl_test_fixed/loss": [
+    0.27058635099053224
+  ],
+  "sl_test_fixed/mse": [
+    0.2705862820148468
+  ],
+  "sl_test_fixed/mse_per_channel": [
+    0.0337486751,
+    0.1082963049,
+    0.3144337535,
+    0.0958077982,
+    0.4681489766,
+    0.6030822992
+  ],
+  "sl_test_fixed/mae": [
+    0.3312208868070492
+  ],
+  "sl_test_fixed/ic": [
+    91.92157745361328
+  ],
+  "sl_test_fixed/jc": [
+    79.55465698242188
+  ],
+  "sl_test_fixed/interval_width_mean": [
+    1.313111662864685
+  ],
+  "sl_test_fixed/interval_width_std": [
+    0.9518277645111084
+  ],
+  "fixed_prob": [
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ],
+    [
+      1.0
+    ]
+  ],
+  "rescore": {
+    "tool": "forecasting.ccm_rescore",
+    "git_commit": "f139f7ecf6d84fc900e5d3cdb4ce7c3cf19a262f",
+    "git_dirty": false,
+    "hostname": "ngwn06",
+    "torch_version": "2.11.0+cu129",
+    "device": "cpu",
+    "created": "2026-09-24_10-58-17",
+    "checkpoint": "supervised.pth",
+    "checkpoint_sha256": "55c8ef00cbb4fdb76616509024509ec58261c1fd2ab5cf70adcda3d8afacd1aa",
+    "batch_check": {
+      "tolerance": 0.0001,
+      "passed": true,
+      "max_rel_dev": 2.275490954271059e-05,
+      "worst_key": "sl_test/mae",
+      "missing": [],
+      "gated": {
+        "sl_test/loss": 5.707681329162541e-06,
+        "sl_test/mse": 5.396879942550764e-06,
+        "sl_test/mae": 2.275490954271059e-05
+      },
+      "recorded": {
+        "sl_test/mse_per_channel": 0.0001355647529963408,
+        "sl_test/ic": 0.002985895415242002,
+        "sl_test/jc": 0.020779185689926878,
+        "sl_test/interval_width_mean": 5.447058719928491e-06,
+        "sl_test/interval_width_std": 3.9074133399592376e-05
+      }
+    },
+    "val_check": {
+      "val_loss": 0.2874589789823356,
+      "logged_best_val_loss": 0.28745924453020416,
+      "rel_dev": 9.237757130306001e-07,
+      "windows": {
+        "train": 2128,
+        "val": 747,
+        "test": 741
+      }
+    }
+  }
+}
