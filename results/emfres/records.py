@@ -140,26 +140,37 @@ def records_from_cells(cells_csv: Path, results: Path, metrics=None,
     return records
 
 
-def contended_cells(cells_csv: Path, family: str = "emf") -> dict:
-    """{section: {(dataset label, model label, k)}} of the cells whose time may
-    be inflated: a run of theirs overlapped another user's GPU process
-    (cells.csv n_foreign > 0, from specs/contention.yaml). Keyed as the
-    records are, so a plotter can name the flagged points it draws."""
+def foreign_counts(cells_csv: Path, family: str = "emf") -> dict:
+    """{section: {(dataset label, model label, k): (n_foreign, n_runs)}} for
+    every cell the figures plot: how many of its runs overlapped another
+    user's GPU process (cells.csv n_foreign, from specs/contention.yaml), of
+    how many. A cell with n_foreign > 0 is one whose time may be inflated.
+    Keyed as the records are, and from the same conformal block
+    (records_from_cells), so a plotter can name and count the flagged points
+    it draws."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import extract_results as er
 
     from .frames import family_of
 
-    out: dict = {}
+    rows: dict = {}
     with open(cells_csv) as f:
         for r in csv.DictReader(f):
-            if r["setup"] not in SETUP_SECTIONS or not _f(r.get("n_foreign", "")):
+            if r["setup"] not in SETUP_SECTIONS:
                 continue
             if family is not None and (r.get("family") or family_of(r["dataset"])) != family:
                 continue
-            out.setdefault(SETUP_SECTIONS[r["setup"]], set()).add(
+            rows.setdefault(r["setup"], []).append(r)
+    out: dict = {}
+    for setup, mine in rows.items():
+        conf = "1" if any(r["conf"] == "1" for r in mine) else "0"
+        for r in mine:
+            if r["conf"] != conf:
+                continue
+            out.setdefault(SETUP_SECTIONS[setup], {})[
                 (er.dataset_label(r["dataset"]), er.model_label(r["model"]),
-                 None if r["k"] == "" else int(r["k"])))
+                 None if r["k"] == "" else int(r["k"]))] = (
+                int(_f(r.get("n_foreign", "")) or 0), int(_f(r.get("n_runs", "")) or 0))
     return out
 
 

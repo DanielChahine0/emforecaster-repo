@@ -314,20 +314,21 @@ def test_the_legacy_figures_read_a_cluster_cells_fixed_protocol(tmp_path):
 
 def test_the_legacy_figures_sum_a_per_channel_time_over_its_bands(tmp_path):
     """A per-channel cell's running_time is one band's; its plotted time is the
-    sum over its bands, titled so, and a foreign-contended cell is named."""
+    sum over its bands, titled so, and a foreign-contended cell is named with
+    how many of its band runs overlapped."""
     from pathlib import Path
 
     import plot_metrics as pm
-    from emfres.records import contended_cells, records_from_cells, records_match_tables
+    from emfres.records import foreign_counts, records_from_cells, records_match_tables
 
     results = Path(__file__).resolve().parents[1]
     base = {f: "" for f in frames.CELL_FIELDS}
     pc = dict(base, setup="perchannel", family="emf", model="EMForecaster", dataset="ed2022",
               seq_len=336, pred_len=96, conf=1, mse="0.50", mae="0.40", running_time="60",
-              n_channels="27", n_foreign="8", contended="concurrent;foreign")
+              n_channels="27", n_runs="81", n_foreign="8", contended="concurrent;foreign")
     mv = dict(base, setup="multivariate", family="emf", model="DLinear", dataset="ed2022",
               seq_len=336, pred_len=96, conf=1, mse="0.55", mae="0.42", running_time="50",
-              n_foreign="0", contended="none")
+              n_runs="3", n_foreign="0", contended="none")
     path = tmp_path / "cells.csv"
     frames.write_csv(path, [pc, mv], frames.CELL_FIELDS)
     records = records_from_cells(path, results)
@@ -337,11 +338,13 @@ def test_the_legacy_figures_sum_a_per_channel_time_over_its_bands(tmp_path):
     assert pm.time_title(pm.PER_CHANNEL_SECTION) == "Training time, Σ bands"
     assert pm.time_title("Multivariate") == "Training time"
 
-    contended = contended_cells(path)
-    assert contended == {pm.PER_CHANNEL_SECTION: {("ED2022", "EMForecaster (2025)", None)}}
+    contended = foreign_counts(path)
+    assert contended == {pm.PER_CHANNEL_SECTION: {("ED2022", "EMForecaster (2025)", None): (8, 81)},
+                         "Multivariate": {("ED2022", "DLinear (2023)", None): (0, 3)}}
     notes = pm.time_notes(records, pm.PER_CHANNEL_SECTION, "336/96", contended)
     assert notes[0] == pm.PER_CHANNEL_TIME_NOTE
-    assert "while EMForecaster trained: its time may be inflated" in notes[1]
+    assert notes[1] == ("another user's process was on the GPU during 8 of EMForecaster's "
+                        "81 band runs, so its time may be inflated")
     assert pm.time_notes(records, "Multivariate", "336/96", contended) == []
     points, _ = pm.tradeoff_points(records, pm.PER_CHANNEL_SECTION, "MAE", "336/96",
                                    contended)
@@ -385,7 +388,7 @@ def test_the_tables_path_reads_a_flagged_time_and_titles_a_per_channel_time_per_
     from pathlib import Path
 
     import plot_metrics as pm
-    from emfres.records import contended_cells
+    from emfres.records import foreign_counts
 
     md = tmp_path / "tables.md"
     md.write_text(LEGACY_TABLES)
@@ -397,15 +400,18 @@ def test_the_tables_path_reads_a_flagged_time_and_titles_a_per_channel_time_per_
     assert math.isnan(got[("Cluster", "EMForecaster", 9)])
     flagged = pm.tables_contended(md)
     assert flagged == {
-        pm.PER_CHANNEL_SECTION: {("ED2022", "EMForecaster (2025)", None)},
-        pm.CLUSTER_SECTION: {("ED2022", "EMForecaster (2025)", 9),
-                             ("ED2022", "LSTM (1997)", 9)}}
+        pm.PER_CHANNEL_SECTION: {("ED2022", "EMForecaster (2025)", None): None},
+        pm.CLUSTER_SECTION: {("ED2022", "EMForecaster (2025)", 9): None,
+                             ("ED2022", "LSTM (1997)", 9): None}}
 
     assert pm.time_title(pm.PER_CHANNEL_SECTION, summed=False) == "Training time, per band"
     assert pm.time_title("Multivariate", summed=False) == "Training time"
     records = pm.parse_tables(md)
     notes = pm.time_notes(records, pm.PER_CHANNEL_SECTION, "336/96", flagged, summed=False)
-    assert notes[0] == pm.PER_BAND_TIME_NOTE and "EMForecaster" in notes[1]
+    assert notes[0] == pm.PER_BAND_TIME_NOTE
+    # A table does not say how many runs overlapped.
+    assert notes[1] == ("another user's process was on the GPU during some of "
+                        "EMForecaster's band runs, so its time may be inflated")
 
     # main hands each source's reading to the builders.
     seen = []
@@ -426,11 +432,42 @@ def test_the_tables_path_reads_a_flagged_time_and_titles_a_per_channel_time_per_
     frames.write_csv(cells, [dict(base, setup="perchannel", family="emf",
                                   model="EMForecaster", dataset="ed2022", seq_len=336,
                                   pred_len=96, conf=1, mse="0.5", mae="0.4",
-                                  running_time="60", n_channels="27", n_foreign="8")],
+                                  running_time="60", n_channels="27", n_runs="81",
+                                  n_foreign="8")],
                      frames.CELL_FIELDS)
     seen.clear()
     assert pm.main(["--frames", str(cells)] + args) == 0
-    assert seen and all(s == (True, contended_cells(cells)) for s in seen)
+    assert seen and all(s == (True, foreign_counts(cells)) for s in seen)
+
+
+def test_the_time_note_counts_the_runs_that_overlapped_over_every_plotted_cell():
+    """A cluster sweep whose k=1 control trained clean and whose other k's
+    overlapped: the note counts both, rather than saying the model trained
+    beside another user's process."""
+    import plot_metrics as pm
+
+    def rec(model, k, value=60.0):
+        return pm.Record(section=pm.CLUSTER_SECTION, metric="Training time", dataset="ED2022",
+                         lookback=336, horizon=96, model=model, model_order=(0, 0),
+                         value=value, cluster=k)
+
+    records = [rec("EMForecaster (2025)", k) for k in (1, 2, 3)]
+    records += [rec("LSTM (1997)", k) for k in (1, 2)] + [rec("DLinear (2023)", 1)]
+    records.append(rec("LSTM (1997)", 3, float("nan")))       # not plotted, not counted
+    counts = {pm.CLUSTER_SECTION: {
+        ("ED2022", "EMForecaster (2025)", 1): (0, 3), ("ED2022", "EMForecaster (2025)", 2): (1, 1),
+        ("ED2022", "EMForecaster (2025)", 3): (1, 1), ("ED2022", "LSTM (1997)", 1): (1, 3),
+        ("ED2022", "LSTM (1997)", 2): (2, 3), ("ED2022", "LSTM (1997)", 3): (3, 3),
+        ("ED2022", "DLinear (2023)", 1): (0, 3)}}
+    assert pm.flagged_counts(records, pm.CLUSTER_SECTION, None, counts) == [
+        ("EMForecaster", 2, 5), ("LSTM", 3, 6)]
+    (note,) = pm.time_notes(records, pm.CLUSTER_SECTION, None, counts, marked=True)
+    assert note == ("‡ another user's process was on the GPU during some runs "
+                    "(EMForecaster 2 of 5, LSTM 3 of 6), so their times may be inflated")
+    # Nothing overlapped: no note.
+    clean = {pm.CLUSTER_SECTION: {key: (0, n) for key, (_, n)
+                                  in counts[pm.CLUSTER_SECTION].items()}}
+    assert pm.time_notes(records, pm.CLUSTER_SECTION, None, clean) == []
 
 
 def test_p7_counts_and_notes_a_cost_another_users_gpu_process_may_have_inflated(

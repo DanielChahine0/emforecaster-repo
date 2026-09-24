@@ -178,7 +178,7 @@ PER_BAND_TIME_NOTE = ("per-channel time = one band's training (the mean over the
                       "each band trained alongside others (contended)")
 
 # A time point whose cell had a run overlap another user's process on the
-# GPU (emfres.records.contended_cells, specs/contention.yaml).
+# GPU (emfres.records.foreign_counts, specs/contention.yaml).
 TIME_FLAG = "‡"
 
 
@@ -190,17 +190,46 @@ def time_title(section: str, summed: bool = True) -> str:
     return "Training time, Σ bands" if summed else "Training time, per band"
 
 
-def flagged_models(records, section: str, grid: str | None, contended: dict | None) -> list:
-    """The models of a section whose plotted time has a foreign-contended cell."""
-    marked = (contended or {}).get(section, set())
-    if not marked:
+def flagged_counts(records, section: str, grid: str | None, contended: dict | None) -> list:
+    """(model, runs that overlapped, runs) for each model of a section whose
+    plotted time has a foreign-contended cell, in model order.
+
+    ``contended`` is {section: {(dataset, model, k): (n_foreign, n_runs) or
+    None}}: emfres.records.foreign_counts gives every cell's counts (the
+    frames), tables_contended only the flagged cells, with None (a tables.md
+    does not say how many runs overlapped). Both counts run over every
+    plotted cell of the model, clean ones included; they are None where the
+    source does not give them.
+    """
+    cells = (contended or {}).get(section, {})
+    if not cells:
         return []
     window = parse_grid(grid) if grid else None
-    hits = {r.model for r in records
-            if r.section == section and r.metric == "Training time"
-            and (window is None or (r.lookback, r.horizon) == window)
-            and not np.isnan(r.value) and (r.dataset, r.model, r.cluster) in marked}
-    return [short_model(m) for m in sorted(hits, key=model_rank)]
+    tally: dict = {}
+    for r in records:
+        if (r.section != section or r.metric != "Training time" or np.isnan(r.value)
+                or (window is not None and (r.lookback, r.horizon) != window)):
+            continue
+        t = tally.setdefault(r.model, {"flagged": False, "foreign": 0, "runs": 0,
+                                       "known": True})
+        counts = cells.get((r.dataset, r.model, r.cluster), False)
+        if counts is None:                 # flagged, counts not known
+            t["flagged"], t["known"] = True, False
+        elif counts is False:              # not listed: clean, runs not known
+            t["known"] = False
+        else:
+            t["foreign"] += counts[0]
+            t["runs"] += counts[1]
+            t["flagged"] |= counts[0] > 0
+    return [(short_model(m), t["foreign"] if t["known"] else None,
+             t["runs"] if t["known"] else None)
+            for m, t in sorted(tally.items(), key=lambda kv: model_rank(kv[0]))
+            if t["flagged"]]
+
+
+def flagged_models(records, section: str, grid: str | None, contended: dict | None) -> list:
+    """The models of a section whose plotted time has a foreign-contended cell."""
+    return [name for name, _, _ in flagged_counts(records, section, grid, contended)]
 
 
 def time_notes(records, section: str, grid: str | None, contended: dict | None,
@@ -209,14 +238,29 @@ def time_notes(records, section: str, grid: str | None, contended: dict | None,
 
     ``marked``: the figure labels the flagged models with TIME_FLAG (the
     trade-off view), so the note leads with it. ``summed``: as time_title.
+    The contention note counts the runs behind each flagged time that
+    overlapped another user's process, as the tables' note speaks of a cell
+    with such a run: the time is not wholly contended.
     """
     notes = ([PER_CHANNEL_TIME_NOTE if summed else PER_BAND_TIME_NOTE]
              if section == PER_CHANNEL_SECTION else [])
-    flagged = flagged_models(records, section, grid, contended)
+    flagged = flagged_counts(records, section, grid, contended)
     if flagged:
-        notes.append(f"{TIME_FLAG + ' ' if marked else ''}another user's process was on "
-                     f"the GPU while {', '.join(flagged)} trained: "
-                     f"{'its time' if len(flagged) == 1 else 'their times'} may be inflated")
+        runs = "band runs" if section == PER_CHANNEL_SECTION else "runs"
+        lead = f"{TIME_FLAG} " if marked else ""
+        if len(flagged) == 1:
+            name, k, n = flagged[0]
+            during = (f"{k} of {name}'s {n} {runs}" if k is not None
+                      else f"some of {name}'s {runs}")
+            tail = "its time"
+        elif all(k is not None for _, k, _ in flagged):
+            during = f"some {runs} ({', '.join(f'{name} {k} of {n}' for name, k, n in flagged)})"
+            tail = "their times"
+        else:
+            during = f"some {runs} of {', '.join(name for name, _, _ in flagged)}"
+            tail = "their times"
+        notes.append(f"{lead}another user's process was on the GPU during {during}, "
+                     f"so {tail} may be inflated")
     return notes
 
 # The clustering study reads on one dataset: its figures default to ED2022
@@ -230,13 +274,14 @@ def parse_tables(path: Path) -> list[Record]:
 
 
 def tables_contended(path: Path) -> dict:
-    """{section: {(dataset, model, k)}} of the times a tables.md printed with
-    TIME_FLAG, keyed as parse_tables' records: what
-    emfres.records.contended_cells gives the frames path."""
+    """{section: {(dataset, model, k): None}} of the times a tables.md printed
+    with TIME_FLAG, keyed as parse_tables' records: emfres.records.
+    foreign_counts' shape, but only the flagged cells, and None for their
+    counts, which a table does not print (flagged_counts)."""
     out: dict = {}
     for r, raw in _table_cells(path):
         if r.metric == "Training time" and raw.rstrip().endswith(TIME_FLAG):
-            out.setdefault(r.section, set()).add((r.dataset, r.model, r.cluster))
+            out.setdefault(r.section, {})[(r.dataset, r.model, r.cluster)] = None
     return out
 
 
@@ -978,9 +1023,9 @@ def main(argv: list[str] | None = None) -> int:
     # one band's (time_title).
     summed = args.source == "frames"
     if args.source == "frames":
-        from emfres.records import contended_cells, records_from_cells
+        from emfres.records import foreign_counts, records_from_cells
         records = records_from_cells(args.frames, here)
-        contended = contended_cells(args.frames)
+        contended = foreign_counts(args.frames)
         where = args.frames
     else:
         records = parse_tables(args.tables)

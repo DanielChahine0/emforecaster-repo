@@ -415,7 +415,9 @@ declare is fatal.
   their stamps alone. On the 2026-09-24 logs, 282 of the sweep's 309
   finished runs overlapped another user's jobs, which held the GPU for 5.6 of
   its first 7.3 hours. The timing tables print ‡ after such a cell's time;
-  P7 draws it hollow; the legacy figures name its models in a note. The flag
+  P7 draws it hollow; the legacy figures' note gives, per model, how many of
+  the runs behind the plotted time overlapped (e.g. 15 of EMForecaster's 249
+  per-channel band runs; a tables.md does not say, so "some"). The flag
   says the time may be inflated: accuracy is unaffected. Sharing the card
   only adds wall time, so a ‡ time is an upper bound and the tables rank it
   as logged: a place it wins it would keep uncontended, and one it loses
