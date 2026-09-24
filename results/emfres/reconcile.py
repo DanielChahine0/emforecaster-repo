@@ -86,6 +86,13 @@ KIND_WHERE = {
     "sweep": "plain, per-k and chosen-k values vs today's render",
 }
 
+# What a section held by each kind has that no kind holds, for the same notes:
+# a section partly gated says so, rather than read as held throughout.
+KIND_TEXT_ONLY = {
+    "cells": "its tables other than MSE/MAE are text only",
+    "scoreboard": "its per-cell tables are text only",
+}
+
 
 @dataclass
 class Change:
@@ -693,12 +700,15 @@ class Gate:
             if title not in held.by_section:
                 continue
             n, changed = held.by_section[title]
-            where = f"({KIND_WHERE[kind]})"
+            where = "(" + KIND_WHERE[kind] + "".join(
+                f"; {m} of them against {via}"
+                for via, m in held.elsewhere.get(title, {}).items()) + ")"
+            rest = f"; {KIND_TEXT_ONLY[kind]}" if kind in KIND_TEXT_ONLY else ""
             if not changed:
-                return f"its {n} gated values {where} all reproduce"
+                return f"its {n} gated values {where} all reproduce{rest}"
             bad = sum(1 for c in self.unexpected if _section(c) == title)
             return (f"{changed} of its {n} gated values {where} changed: "
-                    f"{changed - bad} expected, {bad} unexpected")
+                    f"{changed - bad} expected, {bad} unexpected{rest}")
         return "text only -- none of its values is gated"
 
 

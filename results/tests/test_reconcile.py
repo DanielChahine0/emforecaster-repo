@@ -248,6 +248,7 @@ def test_a_row_held_elsewhere_is_held_against_the_recounted_row(tmp_path):
     new = {c.key["column"]: c.current for c in g.held["scoreboard"].new}
     assert new["Cells"] == "11" and new["Wilcoxon p"] == "0.00195"
     assert any("6 of them held against" in n for n in g.held["scoreboard"].notes)
+    assert "; 6 of them against today's 'batch protocol" in g.coverage("Paradigm Comparison")
 
     # A recounted value that moved is a change like any other, and says where
     # it was read.
@@ -324,7 +325,9 @@ def test_a_section_says_what_the_gate_held_of_it(tmp_path):
     rule = {"kind": "scoreboard", "column": "Tie", "reason": "declared."}
     g = _gate(tmp_path, before, after, [rule])
     assert "2 of its 6 gated values" in g.coverage("Paradigm Comparison")
-    assert "1 expected, 1 unexpected" in g.coverage("Paradigm Comparison")
+    # Partly gated: the section says which part is not.
+    assert g.coverage("Paradigm Comparison").endswith(
+        "1 expected, 1 unexpected; its per-cell tables are text only")
     assert g.coverage("CCM vs Base (No Clustering)") == (
         "text only -- none of its values is gated")
 
@@ -348,7 +351,9 @@ def test_a_dash_that_now_has_a_value_is_new_not_a_change(tmp_path):
                gate_spec=tmp_path / "none.yaml", out=io.StringIO())
     held = g.held["cells"]
     assert g.ok and held.published == 1 and len(held.new) == 1
-    assert g.coverage("Multivariate").startswith("its 1 gated values")
+    assert g.coverage("Multivariate") == (
+        "its 1 gated values (MSE/MAE tables vs frames/cells.csv) all reproduce; "
+        "its tables other than MSE/MAE are text only")
 
 
 # --------------------------------------------------------------------- the spec
