@@ -73,6 +73,26 @@ def test_a_k_still_training_shows_its_n_and_is_not_ranked(tmp_path):
     row = next(line for line in md.splitlines() if line.startswith("| DLinear"))
     assert "0.1000 (n=1)" in row
     assert "k=2, sidecar; ranked 1,2,3 of 1,2,3,5" in row
+    # The choice can still move while k=5 trains: nothing is underlined yet.
+    assert "<u>" not in row
+
+
+def test_a_short_val_k_cell_is_not_underlined(tmp_path):
+    """A k chosen on the seeds that finished is not underlined while its cell is short."""
+    rows = []
+    for s in SEEDS:
+        rows.append(_run("multivariate", s, 0.40 + 0.001 * s))
+    # Only seed 1 has finished its sweep, as LSTM's did early in the CCM sweep.
+    for k, mae, val in ((1, 0.40, 0.5), (2, 0.38, 0.3), (3, 0.36, 0.4)):
+        rows.append(_run("cluster", 1, mae, k=k, val=val))
+    path = tmp_path / "runs.csv"
+    frames.write_csv(path, rows, frames.RUN_FIELDS)
+    md = tables.render_ccm_sweep(path, "emf", [(336, 96)])
+    row = next(line for line in md.splitlines() if line.startswith("| DLinear"))
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert cells[3] == "0.3800 (n=1)"                        # k=2, not underlined
+    assert cells[5].startswith("k=2, sidecar; ranked 1,2,3 of 1,2,3, 1/3 seeds")
+    assert "<u>" not in row
 
 
 def test_per_channel_times_are_labelled_contended_per_band():

@@ -377,7 +377,9 @@ def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
            "seeds than the family's, still training",
            "- Val k: the k with the lowest seed-mean `sl_val_fixed/loss`, ranked over the "
            "k values that have every seed of the sweep (paradigms.choose_k, the same "
-           "choice as the Paradigm Comparison); its cell is <u>underlined</u>",
+           "choice as the Paradigm Comparison); its cell is <u>underlined</u> once the "
+           "choice is final, every k of the sweep with every seed of the family. Until "
+           "then nothing is underlined and Val k says what the choice was ranked over",
            "- Oracle k: the k with the lowest test value. It is chosen on the test split, "
            "so it is an upper bound, reported only to show how far validation lands from "
            "it; nothing here is selected on it",
@@ -408,9 +410,13 @@ def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
                     choice = board.choices[c]
                     row = [model_label(c[1]),
                            cell_txt(board.cells.get(c, {}).get(PG.MV), metric, n_family)]
+                    # Underlined only once the choice is final (the paradigm
+                    # comparison's complete best-k cell): a k chosen while the
+                    # sweep still trains can move, and its own cell can be short.
+                    final = board.complete(c, PG.BEST)
                     for k in ks:
                         txt = cell_txt(sweep.get(k), metric, n_family)
-                        row.append(f"<u>{txt}</u>" if k == choice.k else txt)
+                        row.append(f"<u>{txt}</u>" if final and k == choice.k else txt)
                     scored = {k: statistics.fmean(v[metric] for v in s.values())
                               for k, s in sweep.items()
                               if set(s) == set(choice.seeds) and s}
