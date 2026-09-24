@@ -11,7 +11,7 @@ regenerated on demand and git-ignored. `results/` tracks about 2.3 MB.
 ```bash
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
-python results/make.py reconcile    # check the frozen report against frames/
+python results/make.py reconcile    # hold the frozen report's values against frames/
 python -m pytest results/tests      # provenance, paradigm comparison, baselines
 
 python results/plot_metrics.py          # the benchmark families
@@ -35,7 +35,7 @@ so extracting mid-sweep never publishes half a run.
 | Path | What lives here | Tracked |
 | :--- | :--- | :--- |
 | `emfres/` | All the code. One flat package. | yes |
-| `specs/` | Declared run exclusions and provenance rules, with the reason for each; the solo timing pass | yes |
+| `specs/` | Declared run exclusions, provenance rules and the gate's expected changes, with the reason for each; the solo timing pass | yes |
 | `frames/` | `runs.csv`, `cells.csv`, `bands.csv`, `timing.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
@@ -140,11 +140,49 @@ after the rules. Today `bb6be0a379d9`, the code the 2026-09-24 CCM sweep trains
 on, counts as `21e1374ddc2c`; the August per-channel runs (`21edc003e04e`) are
 not declared equivalent and still show as a second version.
 
-`make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
-compares it with the frozen snapshot named by `PUBLISHED` in `emfres/cli.py`,
-currently `archive/2026-09-22_tables.md` — 342 of 342 match. `make.py tables`
-runs that same check before writing and refuses if any published value fails to
-reproduce, so the CSV path and the frozen report cannot silently diverge.
+`make.py reconcile` holds every value the frozen snapshot publishes (`PUBLISHED`
+in `emfres/cli.py`, currently `archive/2026-09-22_tables.md`) against the value
+today's frames give, and `make.py tables` runs the same gate before writing.
+Three kinds of value are held (`emfres/reconcile.py`); the counts are from
+frames re-extracted mid-sweep on 2026-09-24:
+
+| Kind | What | Held against | Published: reproduce / changed |
+| :--- | :--- | :--- | :--- |
+| `cells` | the MSE/MAE tables of Multivariate, Univariate Series, Per Channel and Cluster | `frames/cells.csv` | 342: 338 / 4 |
+| `scoreboard` | the Paradigm Comparison's scoreboard and sensitivity rows: the three counts, cells, median gap, Wilcoxon p | today's render | 48: 33 / 15 |
+| `sweep` | the CCM sweep: each model's plain cell, its cell at every k, its val k and oracle k | today's render | 21: 7 / 14 |
+
+A value is compared at the precision the snapshot printed it, and the text
+around it counts: a tie mark (≈) that appears, or an `(n=…)` marking a cell
+still training, is a change. A scoreboard row is keyed by its comparison
+("Per-channel vs Multivariate"), not by its question's wording. The sweep is
+read in both layouts it has had: the snapshot's one section per dataset and
+metric, which underlined the k with the best *test* value, and today's single
+section, whose oracle k is that same choice. A snapshot section is found by
+its heading, or by its heading plus a ` · ` suffix (the old sweep's
+`… vs. plain · ED2022 · MAE`).
+
+A changed value is **expected** when a rule in `specs/gate.yaml` matches it.
+Each rule names the kind and fields it covers and why they changed, and the
+file names the snapshot its rules were written for: against any other they
+do not apply. All 33 changes above are declared: the per-channel EMForecaster
+cells (16 bands retrained at 128x4), ARIMA's cells moving from Tie to the
+Identical column, and the cluster comparisons and the sweep's k ≥ 2 values
+under the fixed protocol. The sweep's plain and k = 1 values, the Cluster
+section's batch-protocol cells and the per-channel vs multivariate wins,
+losses and p are deliberately not declared. A change no rule declares fails
+the gate; a value the snapshot never had is counted as new and never fails
+it. `make.py reconcile --all` lists every change and every new value. A
+changed section's `NOTE` says what the gate held of it, or that it is text
+only: Multivariate vs Univariate, CCM vs Base and the Ultimate Comparison
+are, and so are the paradigm comparison's per-cell tables. The same
+multivariate and per-channel cells are held in their own sections, and the
+cluster cells in the sweep, which in this snapshot covers ED2022 MAE only.
+
+On the tracked frames the gate fails until they are re-extracted: they
+predate the fixed-protocol columns, so the sweep cannot render and its plain
+and k = 1 values read as no longer published.
+
 Earlier snapshots are kept as provenance: `2026-09-19_tables.md` holds the
 single-seed EMF benchmark that the three-seed Phase 2 rerun replaced, and
 `2026-08-11_tables.md` the upstream-wrapper cluster runs retired on 2026-08-25.
@@ -155,7 +193,8 @@ the moment a section legitimately grows: restoring the cluster lookback ladder
 added nine windows and reshaped the parameter table from one column to ten,
 changing 131 lines while leaving every published number identical. A tripwire
 that fires on correct work only teaches you to pass `--force`. Growth is now
-reported as a `NOTE`; only a changed value is fatal.
+reported as a `NOTE`; only a changed value that `specs/gate.yaml` does not
+declare is fatal.
 
 ## What the frames hold
 
@@ -276,11 +315,15 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
 
 - The frozen snapshot (`PUBLISHED` in `emfres/cli.py`, currently
   `archive/2026-09-22_tables.md`) is what `make.py tables --check` and
-  `make.py reconcile` compare against. It covers only the cells published when
-  it was frozen; anything added since is unguarded, which is the cost of
-  checking against a snapshot rather than a second implementation. Re-freeze
-  it (copy `tables/all.md` into `archive/` and repoint `PUBLISHED`) whenever a
-  new set of numbers is accepted as published.
+  `make.py reconcile` compare against. It covers only the values published
+  when it was frozen; anything added since is counted as new but unguarded,
+  which is the cost of checking against a snapshot rather than a second
+  implementation. Re-freeze it once the CCM sweep has ended and the
+  expected changes (`make.py reconcile --all`) are reviewed: copy
+  `tables/all.md` into `archive/`, repoint `PUBLISHED`, and set
+  `specs/gate.yaml`'s `snapshot` to the new file with an empty `expected`
+  list. The VoIP tables have no snapshot yet (`SNAPSHOTS` in
+  `emfres/cli.py`) and are rendered ungated.
 - `specs/provenance.yaml` holds three kinds of evidenced rule. `inferred` dates
   runs logged before stamping (2026-09-19) by setup and `exp/time` window;
   `attested` resolves runs stamped on a dirty tree to the commit whose code they
