@@ -171,6 +171,43 @@ def attest_commit(rules: list[dict], stamped: str,
     return None
 
 
+def valid_equivalence(rule) -> bool:
+    """Whether an ``equivalent_code`` rule is usable: from, to and evidence.
+
+    A rule with no evidence written next to it vouches for nothing -- the
+    whole point of the rule kind is that merging two code versions is a
+    claim somebody checked.
+    """
+    if not isinstance(rule, dict):
+        return False
+    evidence = rule.get("evidence")
+    if isinstance(evidence, str):
+        evidence = [evidence]
+    return (bool(str(rule.get("from") or "").strip())
+            and bool(str(rule.get("to") or "").strip())
+            and bool(evidence) and all(str(e).strip() for e in evidence))
+
+
+def equivalent_code(rules: list[dict], fingerprint: str) -> str:
+    """The code version a training-code fingerprint is counted as.
+
+    An ``equivalent_code`` rule in specs/provenance.yaml maps one fingerprint
+    (frames.code_fingerprint) onto another whose runs it is shown to
+    reproduce, with the evidence beside it: the code changed on disk -- a new
+    fingerprint -- but not in anything a run computes. Rules chain (a -> b,
+    b -> c counts a as c); a cycle stops where it would repeat. Fingerprints
+    match exactly, and a rule without evidence is ignored (valid_equivalence).
+    A fingerprint no rule names is its own version; "" stays "".
+    """
+    table = {str(r["from"]).strip(): str(r["to"]).strip()
+             for r in rules or [] if valid_equivalence(r)}
+    seen = {fingerprint}
+    while fingerprint in table and table[fingerprint] not in seen:
+        fingerprint = table[fingerprint]
+        seen.add(fingerprint)
+    return fingerprint
+
+
 def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = None,
               inferred: Optional[list[dict]] = None,
               attested: Optional[list[dict]] = None) -> list[Run]:

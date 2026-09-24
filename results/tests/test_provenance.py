@@ -6,14 +6,17 @@ evidenced rule. Getting either wrong would silently merge two code versions into
 one seed mean, or split one version across several, so both are pinned here.
 """
 
+import argparse
+import csv
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from emfres import frames
-from emfres.runlogs import attest_commit, infer_commit, load_runs
+from emfres import cli, frames
+from emfres.runlogs import (attest_commit, equivalent_code, infer_commit, load_runs,
+                            valid_equivalence)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -178,3 +181,136 @@ def test_each_way_a_run_can_be_stamped_resolves_to_the_right_code(tmp_path):
     }
     # The stamp is kept as recorded even when the code resolves elsewhere.
     assert runs[2].git_commit == STAMP
+
+
+# --------------------------------------------------------------- equivalence
+
+EQUIV = [
+    {"from": "bbbbbbbbbbbb", "to": "aaaaaaaaaaaa", "evidence": ["golden hashes"]},
+    {"from": "cccccccccccc", "to": "bbbbbbbbbbbb", "evidence": "gate"},
+]
+
+
+def test_an_equivalence_maps_a_version_and_chains():
+    assert equivalent_code(EQUIV, "bbbbbbbbbbbb") == "aaaaaaaaaaaa"
+    assert equivalent_code(EQUIV, "cccccccccccc") == "aaaaaaaaaaaa"
+    # A version no rule names is its own; an unknown one stays unknown.
+    assert equivalent_code(EQUIV, "aaaaaaaaaaaa") == "aaaaaaaaaaaa"
+    assert equivalent_code(EQUIV, "dddddddddddd") == "dddddddddddd"
+    assert equivalent_code(EQUIV, "") == ""
+    assert equivalent_code([], "bbbbbbbbbbbb") == "bbbbbbbbbbbb"
+    # Exact match only: a prefix is not the version.
+    assert equivalent_code(EQUIV, "bbbbbb") == "bbbbbb"
+
+
+def test_a_cycle_stops_instead_of_looping():
+    loop = [{"from": "a", "to": "b", "evidence": ["x"]},
+            {"from": "b", "to": "a", "evidence": ["x"]}]
+    assert equivalent_code(loop, "a") == "b"
+    assert equivalent_code(loop, "b") == "a"
+
+
+def test_an_equivalence_without_evidence_vouches_for_nothing():
+    for rule in ({"from": "b", "to": "a"}, {"from": "b", "to": "a", "evidence": []},
+                 {"from": "b", "to": "a", "evidence": ["  "]},
+                 {"from": "", "to": "a", "evidence": ["x"]},
+                 {"from": "b", "to": None, "evidence": ["x"]}, "b -> a"):
+        assert not valid_equivalence(rule)
+        assert equivalent_code([rule], "b") == "b"
+    assert valid_equivalence({"from": "b", "to": "a", "evidence": "one line"})
+
+
+def test_the_declared_equivalences_carry_evidence():
+    rules = cli._provenance_rules("equivalent_code")
+    assert rules, "specs/provenance.yaml declares no equivalent_code rule"
+    assert all(valid_equivalence(r) for r in rules)
+    assert equivalent_code(rules, "bb6be0a379d9") == "21e1374ddc2c"
+
+
+# A tiny repo whose two commits differ in training code, so they fingerprint
+# as two versions, with a run stamped on each (_git and _commit are above).
+
+def _log(**extra):
+    log = {
+        "parameters/exp/model_id": "DLinear",
+        "parameters/data/dataset": "TOY",
+        "parameters/data/seq_len": 336,
+        "parameters/data/pred_len": 96,
+        "parameters/conf/conf": True,
+        "sl_train/loss": [1.0, 0.9],
+        "sl_val/loss": [0.8, 0.7],
+        "sl_test/loss": [0.5],
+        "sl_test/mae": [0.4],
+        "sl_test/interval_width_mean": [1.5],
+    }
+    log.update(extra)
+    return log
+
+
+def _write(root, rel, log):
+    run = root / rel
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "log.json").write_text(json.dumps(log))
+    return run
+
+
+def _extract(tmp_path, monkeypatch, capsys, rules):
+    specs = tmp_path / "specs"
+    specs.mkdir(exist_ok=True)
+    (specs / "provenance.yaml").write_text(json.dumps({"equivalent_code": rules}))
+    monkeypatch.setattr(cli, "REPO", tmp_path)
+    monkeypatch.setattr(cli, "SPECS", specs)
+    monkeypatch.setattr(cli, "FRAMES", tmp_path / "frames")
+    args = argparse.Namespace(logs=tmp_path / "logs", exclude=[], no_spec=True,
+                              dry_run=False, epochs=False)
+    assert cli.cmd_extract(args) == 0
+    err = capsys.readouterr().err
+    manifest = json.loads((tmp_path / "frames" / "MANIFEST.json").read_text())
+    with open(tmp_path / "frames" / "runs.csv") as f:
+        runs = list(csv.DictReader(f))
+    return err, manifest, runs
+
+
+def test_declared_versions_are_listed_but_not_warned_about(tmp_path, monkeypatch, capsys):
+    _git(tmp_path, "init", "-q")
+    old = _commit(tmp_path, {"forecasting/model.py": "W = 1\n"})
+    new = _commit(tmp_path, {"forecasting/model.py": "W = 1  # same numerics\n"})
+    fp_old, fp_new = (frames.code_fingerprint(tmp_path, c) for c in (old, new))
+    assert fp_old and fp_new and fp_old != fp_new
+    for seed, commit in ((1, old), (2, new)):
+        _write(tmp_path, f"logs/multivariate/DLinear/toy/L336_O96_cp/{seed}",
+               _log(**{"parameters/exp/git_commit": commit,
+                       "parameters/exp/git_dirty": False}))
+
+    err, manifest, runs = _extract(tmp_path, monkeypatch, capsys, [])
+    assert "WARNING: the published runs span 2 training-code versions" in err
+    assert {r["code_equivalent"] for r in runs} == {fp_old, fp_new}
+
+    rule = {"from": fp_new, "to": fp_old, "evidence": ["a comment-only diff"]}
+    err, manifest, runs = _extract(tmp_path, monkeypatch, capsys, [rule])
+    assert "training-code versions" not in err
+    assert f"(equivalent to {fp_old})" in err
+    # runs.csv keeps the raw fingerprint beside the version it counts as.
+    assert {(r["code_version"], r["code_equivalent"]) for r in runs} == {
+        (fp_old, fp_old), (fp_new, fp_old)}
+    # The manifest still lists both, and says which counts as which.
+    assert set(manifest["code_versions"]) == {fp_old, fp_new}
+    assert manifest["code_versions"][fp_new]["equivalent_to"] == fp_old
+    assert "equivalent_to" not in manifest["code_versions"][fp_old]
+    assert manifest["code_equivalents"] == {
+        fp_old: {"runs": 2, "versions": sorted([fp_old, fp_new])}}
+    # And the one cell reads as one version under the rule, two without it.
+    with open(tmp_path / "frames" / "cells.csv") as f:
+        (cell,) = list(csv.DictReader(f))
+    assert cell["code_versions"] == ";".join(sorted([fp_old, fp_new]))
+    assert cell["code_equivalents"] == fp_old
+
+
+def test_a_rule_without_evidence_is_warned_about_and_ignored(tmp_path, monkeypatch, capsys):
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    (specs / "provenance.yaml").write_text(json.dumps({"equivalent_code": [
+        {"from": "b", "to": "a"}, {"from": "c", "to": "a", "evidence": ["x"]}]}))
+    monkeypatch.setattr(cli, "SPECS", specs)
+    assert cli.spec_equivalent() == [{"from": "c", "to": "a", "evidence": ["x"]}]
+    assert "needs from, to and evidence" in capsys.readouterr().err

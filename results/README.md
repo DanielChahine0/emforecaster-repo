@@ -32,7 +32,7 @@ downstream reads a log file, and nothing downstream parses markdown.
 | Path | What lives here | Tracked |
 | :--- | :--- | :--- |
 | `emfres/` | All the code. One flat package. | yes |
-| `specs/` | Declared run exclusions, with the reason for each | yes |
+| `specs/` | Declared run exclusions and provenance rules, with the reason for each | yes |
 | `frames/` | `runs.csv`, `cells.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
@@ -116,6 +116,19 @@ measure and not a collapse flag). `cells.csv` carries
 `code_versions`, the distinct versions behind a cell (`?` for a run whose code
 is unknown); more than one means the cell is not a single-code seed mean.
 
+A training-code edit that provably leaves every run's numbers alone still makes
+a new fingerprint. An `equivalent_code` rule in `specs/provenance.yaml` counts
+such a version as another — `from`, `to`, and the `evidence` that shows it
+(golden hashes, a bit-exact GPU rerun); a rule without evidence is ignored.
+`runs.csv` keeps the raw fingerprint in `code_version` and adds the version it
+counts as in `code_equivalent` (`cells.csv`: `code_equivalents`);
+`MANIFEST.json` lists every raw version under `code_versions`, with
+`equivalent_to` on the mapped ones, and the grouping under `code_equivalents`.
+`extract` warns about a code split only across versions that remain distinct
+after the rules. Today `bb6be0a379d9`, the code the 2026-09-24 CCM sweep trains
+on, counts as `21e1374ddc2c`; the August per-channel runs (`21edc003e04e`) are
+not declared equivalent and still show as a second version.
+
 `make.py reconcile` recomputes every published MSE/MAE cell from the CSVs and
 compares it with the frozen snapshot named by `PUBLISHED` in `emfres/cli.py`,
 currently `archive/2026-09-22_tables.md` — 342 of 342 match. `make.py tables`
@@ -160,11 +173,12 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
   checking against a snapshot rather than a second implementation. Re-freeze
   it (copy `tables/all.md` into `archive/` and repoint `PUBLISHED`) whenever a
   new set of numbers is accepted as published.
-- `specs/provenance.yaml` holds two kinds of evidenced rule. `inferred` dates
+- `specs/provenance.yaml` holds three kinds of evidenced rule. `inferred` dates
   runs logged before stamping (2026-09-19) by setup and `exp/time` window;
   `attested` resolves runs stamped on a dirty tree to the commit whose code they
-  ran. The 168 single-series runs have neither and stay unknown. The per-channel
-  runs kept from August are a different code version from everything run since
+  ran; `equivalent_code` counts one training-code version as another. The 168
+  single-series runs have none and stay unknown. The per-channel runs kept from
+  August are a different code version from everything run since
   (the Phase 0/1 changes), so their cells show two versions once newer seeds
   join them; `.personal/PLAN.md` records the bit-exact reproduction that shows
   those runs behave identically under the current code.

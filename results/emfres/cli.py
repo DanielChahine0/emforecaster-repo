@@ -54,6 +54,18 @@ def spec_attested() -> list[dict]:
     return _provenance_rules("attested")
 
 
+def spec_equivalent() -> list[dict]:
+    """Code-version equivalences, from specs/provenance.yaml; unusable ones warned about."""
+    from .runlogs import valid_equivalence
+
+    rules = _provenance_rules("equivalent_code")
+    for rule in rules:
+        if not valid_equivalence(rule):
+            print(f"WARNING: specs/provenance.yaml equivalent_code rule {rule!r} "
+                  f"needs from, to and evidence; ignoring it", file=sys.stderr)
+    return [r for r in rules if valid_equivalence(r)]
+
+
 def cmd_extract(args) -> int:
     logs = args.logs or LOGS
     if not logs.is_dir():
@@ -68,7 +80,7 @@ def cmd_extract(args) -> int:
         exclude += spec
 
     runs = frames.build_runs(logs, REPO, exclude, inferred=spec_inferred(),
-                             attested=spec_attested())
+                             attested=spec_attested(), equivalent=spec_equivalent())
     if not runs:
         print(f"no usable log.json under {logs}", file=sys.stderr)
         return 1
@@ -79,11 +91,15 @@ def cmd_extract(args) -> int:
     # whether the stamped ones span more than one commit.
     # Judged on the training code, not the commit id: commits that differ only
     # in results/, logs/ or docs share a code version (frames.code_fingerprint),
-    # so committing results work while a sweep runs does not split it.
+    # so committing results work while a sweep runs does not split it. And
+    # judged after specs/provenance.yaml's equivalent_code rules: a version
+    # declared equivalent, with evidence, to another is not a split -- it is
+    # listed, and MANIFEST.json records it, but it is not warned about.
     versions: dict = {}
     for r in runs:
         if r["code_version"]:
-            versions.setdefault(r["code_version"], set()).add(r["git_commit"][:8])
+            versions.setdefault(r["code_equivalent"], {}).setdefault(
+                r["code_version"], set()).add(r["git_commit"][:8])
     unknown = [r for r in runs if not r["code_version"]]
     by_source: dict = {}
     for r in runs:
@@ -91,12 +107,24 @@ def cmd_extract(args) -> int:
         by_source[src] = by_source.get(src, 0) + 1
     print("provenance: " + ", ".join(f"{n} {s}" for s, n in sorted(by_source.items())),
           file=sys.stderr)
+
+    def describe(target: str, raw: dict) -> None:
+        for fp, cs in sorted(raw.items(), key=lambda kv: kv[0] != target):
+            n = sum(1 for r in runs if r["code_version"] == fp)
+            via = "" if fp == target else f"  (equivalent to {target})"
+            print(f"    {fp}  {n:>5} runs  commits {', '.join(sorted(cs))}{via}",
+                  file=sys.stderr)
+
     if len(versions) > 1:
         print(f"WARNING: the published runs span {len(versions)} training-code versions:",
               file=sys.stderr)
-        for fp, cs in sorted(versions.items()):
-            n = sum(1 for r in runs if r["code_version"] == fp)
-            print(f"    {fp}  {n:>5} runs  commits {', '.join(sorted(cs))}", file=sys.stderr)
+        for target, raw in sorted(versions.items()):
+            describe(target, raw)
+    elif any(len(raw) > 1 or target not in raw for target, raw in versions.items()):
+        print("NOTE: every run's training code counts as one version under "
+              "specs/provenance.yaml equivalent_code:", file=sys.stderr)
+        for target, raw in versions.items():
+            describe(target, raw)
     if unknown:
         print(f"NOTE: {len(unknown)} runs have no establishable code version "
               f"(unstamped with no rule, or stamped dirty with no attestation)",

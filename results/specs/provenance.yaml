@@ -81,3 +81,59 @@ attested:
       every run in the window used the training code bc3bc57c records. The 246
       runs after the commit are stamped bc3bc57c on a clean tree and need no
       rule.
+
+# Training-code versions counted as another version. A version is the
+# fingerprint of the training paths (frames.code_fingerprint), so ANY edit there
+# -- a comment, a new model the grid never reaches, an extra logged key --
+# starts a new one, and a sweep trained after it would split every cell it
+# joins into two code versions. A rule here says the edit did not change what
+# the runs compute: `from` is the new fingerprint, `to` the version its runs
+# count as, and `evidence` how that was shown -- a rule without evidence is
+# ignored. runs.csv keeps the raw fingerprint in code_version and the version
+# it counts as in code_equivalent (cells.csv: code_versions / code_equivalents);
+# MANIFEST.json lists every raw version with its equivalent_to, and `make.py
+# extract` warns about a split only across versions that are still distinct
+# after these rules. Rules chain; fingerprints match exactly.
+#
+# 2414d9334cd4 (HEAD from 26d30764 to 51af0718e: the only fingerprinted change
+# from 21e1374ddc2c is GIT_OPTIONAL_LOCKS=0 in forecasting/provenance.py, which
+# stamps metadata only) needs no rule: no run in logs/ was trained there.
+equivalent_code:
+  - from: bb6be0a379d9
+    to: 21e1374ddc2c
+    evidence:
+      - >
+        What changed. From 21e1374ddc2c (last at 5743b2bf5) to bb6be0a379d9
+        (f139f7ecf) the training paths changed by: GIT_OPTIONAL_LOCKS=0 in
+        forecasting/provenance.py's git calls (26d30764, fingerprint
+        2414d9334cd4); a model_input refactor of forward_pass; CCM for
+        EMForecaster, the Transformer and LSTM -- builds no cluster cell made
+        before -- and the grid and CLI selection that runs them; the fixed
+        train-mean membership evaluation of cluster runs, logged beside the
+        unchanged batch-protocol keys with sl_test/interval_width_mean still
+        written last; the CPU re-score tool forecasting/ccm_rescore.py; logging
+        hygiene (args.yaml re-dumped after the loaders, per-split window
+        counts, an MPS stamp); comments, docs and tests.
+      - >
+        Golden hashes. forecasting/test_golden.json was recorded at 51af0718e
+        (fingerprint 2414d9334cd4, the code of f84e58dae, which differs from
+        21e1374ddc2c only by GIT_OPTIONAL_LOCKS=0 in forecasting/provenance.py's
+        git calls), before any of those edits: 60 builds pinned bit for bit --
+        state_dict bytes, the RNG state after the build, an eval forward and
+        one training step -- for the six gradient-trained multivariate models,
+        the DLinear, PatchTST and TSMixer cluster builds at every grid k and
+        the six as one band, at the EMF (27 bands, L336/O96) and VoIP
+        (6 channels, L48/O12) shapes, and the six multivariate EMF builds under
+        a second seed. Those 60 hashes are unchanged at bb6be0a379d9: the
+        fixture has only grown since, by the new models' cluster builds.
+      - >
+        GPU gate, 2026-09-24, in a separate worktree with its own logs/ (run at
+        51913fa52, fingerprint 0796bf4be697 under the fingerprint rule of that
+        time; its 316 training files, blob for blob, give bb6be0a379d9 under
+        the fixture-inert rule of ee79dc893): the multivariate EMForecaster and
+        LSTM and the cluster DLinear k2, PatchTST k2 and TSMixer k3 cells,
+        ED2022 seed 69421, reran bit-identical to their logs in sl_test/mse,
+        sl_test/mae and epoch count (5 of 6). The multivariate Transformer does
+        not reproduce its own log under either code, but the old code
+        (f84e58dae) and the new agree with each other (MSE 0.495027, 79
+        epochs), so what separates it from its log is not the code change.

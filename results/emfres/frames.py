@@ -22,7 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .runlogs import Run, load_runs
+from .runlogs import Run, equivalent_code, load_runs
 
 # logs/ directory name -> the setup vocabulary results/ uses. "univariate"
 # means three different things across this repo -- the per-band grid's CLI
@@ -142,9 +142,12 @@ RUN_FIELDS = [
     # Provenance (forecasting/provenance.py): the commit the run was stamped
     # with or dated to, whether the tree was dirty, how that commit was
     # established (see runlogs.Run.commit_source), the fingerprint of the
-    # training code actually run (blank when it cannot be established), and
-    # how many trainings shared the GPU.
-    "git_commit", "git_dirty", "commit_source", "code_version", "concurrency",
+    # training code actually run (blank when it cannot be established), the
+    # version it counts as under specs/provenance.yaml's equivalent_code
+    # rules (code_version itself when no rule names it), and how many
+    # trainings shared the GPU.
+    "git_commit", "git_dirty", "commit_source", "code_version", "code_equivalent",
+    "concurrency",
     "source", "path",
 ]
 
@@ -155,8 +158,10 @@ CELL_FIELDS = [
     "n_runs", "n_seeds", "n_channels",
     # Distinct training-code versions behind the cell's runs, ';'-joined, with
     # "?" for any run whose code cannot be established; more than one means
-    # the cell mixes code versions and is not a clean seed mean.
-    "code_versions",
+    # the cell mixes code versions and is not a clean seed mean --
+    # unless code_equivalents, the same under the equivalent_code rules,
+    # shows one.
+    "code_versions", "code_equivalents",
 ]
 
 EPOCH_FIELDS = ["setup", "model", "dataset", "seq_len", "pred_len", "k",
@@ -200,8 +205,10 @@ def _baseline(run: Run) -> tuple:
     return _num(base), _num(skill(run.mse, base))
 
 
-def _row(run: Run, setup: str, repo: Path) -> dict:
+def _row(run: Run, setup: str, repo: Path,
+         equivalent: Optional[list[dict]] = None) -> dict:
     lookback, skill_value = _baseline(run)
+    version = code_fingerprint(repo, run.code_commit)
     return {
         "setup": setup,
         "family": family_of(run.dataset),
@@ -227,7 +234,8 @@ def _row(run: Run, setup: str, repo: Path) -> dict:
         "git_commit": run.git_commit or "",
         "git_dirty": "" if run.git_dirty is None else int(run.git_dirty),
         "commit_source": run.commit_source,
-        "code_version": code_fingerprint(repo, run.code_commit),
+        "code_version": version,
+        "code_equivalent": equivalent_code(equivalent or [], version),
         "concurrency": "" if run.concurrency is None else run.concurrency,
         "source": "log",
         "path": run.path.relative_to(repo).as_posix(),
@@ -241,12 +249,15 @@ def _num(v: Optional[float]) -> str:
 
 def build_runs(logs_dir: Path, repo: Path, exclude: list[str],
                inferred: Optional[list[dict]] = None,
-               attested: Optional[list[dict]] = None) -> list[dict]:
+               attested: Optional[list[dict]] = None,
+               equivalent: Optional[list[dict]] = None) -> list[dict]:
     """One row per log.json across every setup under ``logs_dir``.
 
-    ``inferred`` and ``attested`` are the rule lists from specs/provenance.yaml:
-    the first dates runs logged before provenance stamping, the second resolves
-    runs stamped on a dirty tree (see runlogs.infer_commit / attest_commit).
+    ``inferred``, ``attested`` and ``equivalent`` are the rule lists from
+    specs/provenance.yaml: the first dates runs logged before provenance
+    stamping, the second resolves runs stamped on a dirty tree (see
+    runlogs.infer_commit / attest_commit), the third counts one training-code
+    version as another (runlogs.equivalent_code).
     """
     rows = []
     for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
@@ -255,7 +266,7 @@ def build_runs(logs_dir: Path, repo: Path, exclude: list[str],
         setup = setup_of(sub)
         for run in load_runs(sub, exclude, setup=setup, inferred=inferred,
                              attested=attested):
-            rows.append(_row(run, setup, repo))
+            rows.append(_row(run, setup, repo, equivalent))
     return rows
 
 
@@ -335,6 +346,8 @@ def build_cells(runs: list[dict]) -> list[dict]:
             "n_seeds": len(seeds) or "",
             "n_channels": len(channels) or "",
             "code_versions": ";".join(sorted({r["code_version"] or "?" for r in rs})),
+            "code_equivalents": ";".join(sorted({r.get("code_equivalent", r["code_version"])
+                                                 or "?" for r in rs})),
         })
     return out
 
@@ -380,17 +393,38 @@ def write_manifest(path: Path, repo: Path, runs: list[dict], counts: dict,
         src = r.get("commit_source") or "unstamped"
         sources["stamped" if src == "log" else src] += 1
         if r.get("code_version"):
-            v = versions.setdefault(r["code_version"], {"commits": set(), "runs": 0})
+            v = versions.setdefault(r["code_version"], {"commits": set(), "runs": 0,
+                                                        "equivalent_to": set()})
             v["commits"].add(r["git_commit"])
             v["runs"] += 1
+            if r.get("code_equivalent", r["code_version"]) != r["code_version"]:
+                v["equivalent_to"].add(r["code_equivalent"])
+    equivalents: dict = {}
+    for r in runs:
+        if r.get("code_version"):
+            e = equivalents.setdefault(r.get("code_equivalent") or r["code_version"],
+                                       {"runs": 0, "versions": set()})
+            e["runs"] += 1
+            e["versions"].add(r["code_version"])
+
+    def version_entry(v: dict) -> dict:
+        entry = {"commits": sorted(v["commits"]), "runs": v["runs"]}
+        if v["equivalent_to"]:
+            entry["equivalent_to"] = ";".join(sorted(v["equivalent_to"]))
+        return entry
+
     payload = {
         "logs_commit": _logs_commit(repo),
         # The training-code versions behind the runs, each with the commit ids
         # that carry it. Several commits can share one version (they differ only
         # outside the code paths); one version is the goal -- contract C1 in
-        # .personal/PLAN.md.
-        "code_versions": {fp: {"commits": sorted(v["commits"]), "runs": v["runs"]}
-                          for fp, v in sorted(versions.items())},
+        # .personal/PLAN.md. A version an equivalent_code rule in
+        # specs/provenance.yaml counts as another names it in equivalent_to.
+        "code_versions": {fp: version_entry(v) for fp, v in sorted(versions.items())},
+        # The same runs under those rules: each version they count as, with the
+        # fingerprints it gathers. One entry here is what contract C1 asks for.
+        "code_equivalents": {fp: {"runs": e["runs"], "versions": sorted(e["versions"])}
+                             for fp, e in sorted(equivalents.items())},
         "unknown_code_runs": sum(1 for r in runs if not r.get("code_version")),
         "provenance": sources,
         "n_runs": len(runs),
