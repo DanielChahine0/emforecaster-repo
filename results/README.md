@@ -163,6 +163,13 @@ reported as a `NOTE`; only a changed value is fatal.
   to fix and the batch values are the fixed ones by construction) or `none`.
   Other setups leave these blank. A cell's fixed means are blank unless every
   run of it has one; `fixed_sources` lists what went in.
+- **`mse_std` / `mae_std` are the seed standard deviation in every setup.** For
+  a per-channel cell that is the sd of its per-seed band means, over the seeds
+  that have every band. Until 2026-09-24 it was the spread over every band x
+  seed run, which measures how different the bands are (ED2022 DLinear 0.494
+  against a seed sd of 1.3e-4); that spread is kept as `mse_band_seed_sd` /
+  `mae_band_seed_sd`. The per-channel CSV twins in `tables/csv/` publish the
+  column, so they change meaning with it; no rendered table used it.
 
 ## Which runs count
 

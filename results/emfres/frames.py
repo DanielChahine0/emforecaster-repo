@@ -161,7 +161,12 @@ RUN_FIELDS = [
 
 CELL_FIELDS = [
     "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "conf",
-    "mse", "mse_std", "mae", "mae_std",
+    # mse_std / mae_std are the SEED standard deviation in every setup: over
+    # the runs of a joint cell (one per seed), over the per-seed band means of
+    # a per-channel cell (see _seed_band_means). The spread over every
+    # band x seed run of a per-channel cell -- what mse_std held there before
+    # 2026-09-24 -- is mse_band_seed_sd / mae_band_seed_sd, blank elsewhere.
+    "mse", "mse_std", "mae", "mae_std", "mse_band_seed_sd", "mae_band_seed_sd",
     "val_loss", "running_time", "per_epoch",
     "num_params", "ic", "jc", "interval_width",
     # Cluster cells: the fixed-membership twins of the columns above, blank
@@ -345,12 +350,35 @@ def _stdev_all(vals: list[Optional[float]]) -> Optional[float]:
             if len(vals) > 1 and all(v is not None for v in vals) else None)
 
 
+def _seed_band_means(rs: list[dict], metric: str) -> list[float]:
+    """Per-seed means over the bands of a per-channel cell, complete seeds only.
+
+    A seed counts only if it has every band any seed of the cell has, and a
+    value for each: a seed half-way through a sweep, averaged over whichever
+    bands finished, is a different quantity from a full seed (the same rule as
+    paradigms.seed_values).
+    """
+    bands: dict = defaultdict(dict)
+    for r in rs:
+        bands[r["seed"]][r["channel"]] = _f(r[metric])
+    union = set().union(*(set(b) for b in bands.values())) if bands else set()
+    return [statistics.mean(b.values()) for _, b in sorted(bands.items())
+            if set(b) == union and all(v is not None for v in b.values())]
+
+
 def build_cells(runs: list[dict]) -> list[dict]:
     """Mean each (setup, model, dataset, L, O, k, conf) cell over its runs.
 
     Matches extract_results.aggregate exactly -- a plain mean over every run in
     the group, ignoring missing values, with num_params taken from the first
     run that logged one -- so the tables can be reconciled against the CSVs.
+
+    mse_std and mae_std are the seed standard deviation: of the runs of a joint
+    cell, one per seed, and of the per-seed band means of a per-channel cell
+    (_seed_band_means). Until 2026-09-24 a per-channel cell's mse_std was the
+    spread over all of its band x seed runs, which measures how different the
+    bands are, not how repeatable the cell is (ED2022 DLinear: 0.494 against a
+    seed sd of 1.3e-4); that number is kept as mse_band_seed_sd.
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in runs:
@@ -363,13 +391,20 @@ def build_cells(runs: list[dict]) -> list[dict]:
         seeds = {r["seed"] for r in rs if r["seed"]}
         channels = {r["channel"] for r in rs if r["channel"] != ""}
         get = lambda name: [_f(r.get(name, "")) for r in rs]
+        if channels:
+            spread = {m: _num(_stdev(get(m))) for m in ("mse", "mae")}
+            std = {m: _num(_stdev(_seed_band_means(rs, m))) for m in ("mse", "mae")}
+        else:
+            spread = {"mse": "", "mae": ""}
+            std = {m: _num(_stdev(get(m))) for m in ("mse", "mae")}
         sources = sorted({r.get("fixed_source", "") for r in rs} - {""})
         out.append({
             "setup": setup, "family": family_of(dataset),
             "model": model, "dataset": dataset,
             "seq_len": seq_len, "pred_len": pred_len, "k": k, "conf": conf,
-            "mse": _num(_mean(get("mse"))), "mse_std": _num(_stdev(get("mse"))),
-            "mae": _num(_mean(get("mae"))), "mae_std": _num(_stdev(get("mae"))),
+            "mse": _num(_mean(get("mse"))), "mse_std": std["mse"],
+            "mae": _num(_mean(get("mae"))), "mae_std": std["mae"],
+            "mse_band_seed_sd": spread["mse"], "mae_band_seed_sd": spread["mae"],
             "val_loss": _num(_mean(get("val_loss"))),
             "running_time": _num(_mean(get("running_time"))),
             "per_epoch": _num(_mean(get("per_epoch"))),

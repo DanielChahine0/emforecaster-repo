@@ -1,12 +1,14 @@
-"""The frames: the fixed cluster protocol.
+"""The frames: the fixed cluster protocol and seed spread.
 
-It decides what a cluster number in frames/ means, and fails quietly: a cluster
-run reading its batch-protocol numbers where the fixed ones exist publishes the
-sensitivity row as the result. So it is pinned here on small synthetic logs
-whose right answer is known.
+Each of these decides what a number in frames/ means, and each fails quietly:
+a cluster run reading its batch-protocol numbers where the fixed ones exist
+publishes the sensitivity row as the result; a per-channel spread over bands
+read as seed noise makes every per-channel cell look unrepeatable. So each is
+pinned here on small synthetic logs whose right answer is known.
 """
 
 import json
+import statistics
 
 import pytest
 
@@ -155,6 +157,44 @@ def _row(setup, seed, mse, *, channel="", k="", mae=None, **extra):
 
 def _cells(rows):
     return {(c["setup"], c["k"]): c for c in frames.build_cells(rows)}
+
+
+def test_per_channel_std_is_the_seed_sd_of_band_means():
+    # Two bands far apart (the band spread) and seeds that barely move.
+    values = {1: (0.10, 2.00), 2: (0.11, 2.01), 3: (0.12, 2.05)}
+    rows = [_row("perchannel", s, v, channel=ch)
+            for s, pair in values.items() for ch, v in enumerate(pair)]
+    cell = _cells(rows)[("perchannel", "")]
+    means = [statistics.mean(pair) for pair in values.values()]
+    assert float(cell["mse_std"]) == pytest.approx(statistics.stdev(means))
+    assert float(cell["mae_std"]) == pytest.approx(statistics.stdev(means) / 2)
+    # The old spread over every band x seed is kept, under its own name.
+    spread = statistics.stdev(v for pair in values.values() for v in pair)
+    assert float(cell["mse_band_seed_sd"]) == pytest.approx(spread)
+    assert float(cell["mse_band_seed_sd"]) > 10 * float(cell["mse_std"])
+    # The mean itself keeps its meaning: over every band x seed run.
+    assert float(cell["mse"]) == pytest.approx(statistics.mean(means))
+
+
+def test_a_seed_missing_a_band_is_left_out_of_the_seed_sd():
+    rows = [_row("perchannel", s, v, channel=ch)
+            for s, pair in {1: (0.1, 2.0), 2: (0.2, 2.2)}.items()
+            for ch, v in enumerate(pair)]
+    rows.append(_row("perchannel", 3, 9.0, channel=0))      # half a seed
+    cell = _cells(rows)[("perchannel", "")]
+    assert float(cell["mse_std"]) == pytest.approx(statistics.stdev([1.05, 1.2]))
+    assert cell["n_seeds"] == 3
+    # One complete seed has no seed spread at all.
+    one = _cells([_row("perchannel", 1, v, channel=ch) for ch, v in enumerate((0.1, 2.0))])
+    assert one[("perchannel", "")]["mse_std"] == ""
+
+
+def test_a_joint_cell_keeps_its_std_and_has_no_band_spread():
+    rows = [_row("multivariate", s, v) for s, v in ((1, 0.50), (2, 0.52), (3, 0.51))]
+    cell = _cells(rows)[("multivariate", "")]
+    assert float(cell["mse_std"]) == pytest.approx(statistics.stdev([0.50, 0.52, 0.51]))
+    assert cell["mse_band_seed_sd"] == "" and cell["mae_band_seed_sd"] == ""
+    assert cell["fixed_sources"] == "" and cell["mse_fixed"] == ""
 
 
 def test_a_cluster_cell_has_fixed_means_only_when_every_run_has_one():
