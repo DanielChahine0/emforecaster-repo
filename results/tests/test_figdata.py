@@ -111,6 +111,27 @@ def test_band_shares_carry_the_sign_and_sum_to_one_in_absolute_value(tmp_path):
     assert sum(abs(v) for v in share.values()) == pytest.approx(1.0)
 
 
+def test_a_model_left_out_of_the_shares_leaves_the_rest_summing_to_one(tmp_path):
+    rows, bands = [], []
+    for s in SEEDS:
+        for model, pc in (("DLinear", (1.1, 2.5, 1.4)), ("RF_EMF_Transformer", (4.0, 2.0, 1.5))):
+            rows.append(_run("multivariate", s, 0.5, model=model, dataset="uh2022", mse=1.5))
+            bands += [_band("multivariate", s, ch, v, model=model)
+                      for ch, v in enumerate((1.0, 2.0, 1.5))]
+            for ch, v in enumerate(pc):
+                rows.append(_run("perchannel", s, 0.5, model=model, dataset="uh2022",
+                                 channel=ch, mse=v))
+                bands.append(_band("perchannel", s, ch, v, model=model))
+    corpus, d = _load(tmp_path, rows, bands)
+    (grid,) = FD.band_grids(corpus, d / "bands.csv")
+    # With the Transformer, its band 0 (+3.0) carries most of the gap ...
+    assert grid.share()[0] == pytest.approx((0.1 + 3.0) / 3.7)
+    # ... left out, the shares are DLinear's alone, as if it were the only row.
+    share = grid.share(skip={"RF_EMF_Transformer"})
+    assert share[1] == pytest.approx(0.5 / 0.7) and share[0] == pytest.approx(0.1 / 0.7)
+    assert sum(abs(v) for v in share.values()) == pytest.approx(1.0)
+
+
 def test_the_spot_check_holds_the_figures_to_cells_csv(tmp_path):
     corpus, d = _load(tmp_path)
     n, bad = FD.spot_check(corpus, d / "cells.csv")

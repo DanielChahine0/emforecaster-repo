@@ -285,18 +285,21 @@ class BandGrid:
     diff: dict                   # {(model, channel): challenger - baseline band MSE}
     n: dict                      # {model: matched seeds}
 
-    def share(self) -> dict:
+    def share(self, skip=()) -> dict:
         """Each band's signed share of the summed absolute band gap.
 
         sum over models of (challenger - baseline) on the band, divided by the
         sum of |challenger - baseline| over every (model, band): the shares'
         absolute values sum to one, so a gap carried by a few bands shows as a
         few long bars. Positive = the baseline is better on that band.
+        Models in ``skip`` (a model that does not train here, whose band gaps
+        say nothing about the paradigms) enter neither the sum nor the total.
         """
-        total = sum(abs(v) for v in self.diff.values())
+        models = [m for m in self.models if m not in set(skip)]
+        total = sum(abs(v) for (m, _), v in self.diff.items() if m in models)
         if not total:
             return {}
-        return {ch: sum(self.diff.get((m, ch), 0.0) for m in self.models) / total
+        return {ch: sum(self.diff.get((m, ch), 0.0) for m in models) / total
                 for ch in self.channels}
 
 

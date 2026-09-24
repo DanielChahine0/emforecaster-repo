@@ -5,7 +5,9 @@ baseline) of each band's test MSE, seed-mean over the seeds both pipelines
 have: Verdigris where the challenger is better on that band, Burnt Peach
 where the baseline is. The strip under it gives each band's signed share of
 the summed absolute band gap over the dataset's models (figdata.BandGrid.share),
-so a gap concentrated in a few bands shows as a few long bars.
+so a gap concentrated in a few bands shows as a few long bars. A model that
+does not train on the dataset (corpus.flagged) keeps its row, marked with a
+dagger and muted, but is left out of the strip.
 
 Two comparisons: per-channel against multivariate, and the validation-chosen
 k against k = 1 (the fixed-membership band vectors, once a model's sweep is
@@ -23,10 +25,10 @@ from matplotlib.colors import TwoSlopeNorm
 from . import figdata as FD
 from . import paradigms as PG
 from .figkit import (
-    BURNT_PEACH, INK_SECONDARY, VERDIGRIS, dataset_name, diverging_cmap, model_name,
-    style_axes, title, window_label, write,
+    BURNT_PEACH, INK_MUTED, INK_SECONDARY, VERDIGRIS, dataset_name, diverging_cmap,
+    footnote, model_name, style_axes, title, window_label, write,
 )
-from .fig_paradigms import WIDTH
+from .fig_paradigms import DAGGER, WIDTH
 
 COMPARISONS = [
     (PG.MV, PG.PC, "pc-vs-mv", "Per-channel vs MV", "log₂(PC / MV)"),
@@ -51,13 +53,17 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     base, chal, slug, label, cbar = spec
     models, chans = grid.models, grid.channels
     nb, nm = len(chans), len(models)
+    # A model that does not train here keeps its row, marked and muted as in
+    # every other paradigm figure, but stays out of the share strip.
+    flagged = {m for ds, m in corpus.flagged if ds == grid.dataset} & set(models)
     heat_h = 0.2 * nm + 0.1
     strip_h = 0.75
-    height = 0.45 + heat_h + strip_h + 0.55
+    bottom = 0.55 + (0.05 if flagged else 0.0)
+    height = 0.45 + heat_h + strip_h + bottom
     fig = plt.figure(figsize=(WIDTH, height))
     gs = fig.add_gridspec(2, 2, height_ratios=[heat_h, strip_h], width_ratios=[1, 0.018],
                           hspace=0.12, wspace=0.02,
-                          left=0.14, right=0.93, top=1 - 0.4 / height, bottom=0.55 / height)
+                          left=0.14, right=0.93, top=1 - 0.4 / height, bottom=bottom / height)
     ax = fig.add_subplot(gs[0, 0])
     cax = fig.add_subplot(gs[0, 1])
     sx = fig.add_subplot(gs[1, 0], sharex=ax)
@@ -66,7 +72,11 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     for i, m in enumerate(models):
         for j, ch in enumerate(chans):
             data[i, j] = grid.ratio.get((m, ch), np.nan)
-    vmax = min(CLIP, max(0.05, float(np.nanmax(np.abs(data))) if np.isfinite(data).any() else CLIP))
+    # The scale is set by the models that train; a flagged row beyond it is
+    # drawn at the end colour with its value printed, like any clipped cell.
+    scaled = data[[i for i, m in enumerate(models) if m not in flagged] or list(range(nm))]
+    vmax = min(CLIP, max(0.05, float(np.nanmax(np.abs(scaled)))
+                         if np.isfinite(scaled).any() else CLIP))
     im = ax.imshow(np.clip(data, -vmax, vmax), aspect="auto", cmap=diverging_cmap(),
                    norm=TwoSlopeNorm(vcenter=0.0, vmin=-vmax, vmax=vmax),
                    interpolation="nearest")
@@ -76,7 +86,11 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
                 ax.text(j, i, f"{data[i, j]:+.1f}", ha="center", va="center",
                         fontsize=style.context * 0.7, color="white")
     ax.set_yticks(range(nm))
-    ax.set_yticklabels([f"{model_name(m)}" for m in models], fontsize=style.tick)
+    ax.set_yticklabels([model_name(m) + (f" {DAGGER}" if m in flagged else "") for m in models],
+                       fontsize=style.tick)
+    for tick, m in zip(ax.get_yticklabels(), models):
+        if m in flagged:
+            tick.set_color(INK_MUTED)
     ax.tick_params(axis="both", length=0, labelbottom=False)
     for side in ax.spines.values():
         side.set_visible(False)
@@ -85,7 +99,7 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     cb.ax.tick_params(labelsize=style.tick * 0.9, length=0)
     cb.set_label(cbar, fontsize=style.axis_label * 0.9, color=INK_SECONDARY)
 
-    share = grid.share()
+    share = grid.share(skip=flagged)
     vals = [100 * share.get(ch, 0.0) for ch in chans]
     style_axes(sx, style, grid="y")
     sx.bar(range(nb), vals, width=0.72, color=[BURNT_PEACH if v > 0 else VERDIGRIS for v in vals],
@@ -108,6 +122,9 @@ def fig_band_grid(grid: FD.BandGrid, corpus: FD.Corpus, spec: tuple, style, root
     title(fig, f"{label}, band by band · {dataset_name(grid.dataset)}", style,
           f"{fam} · {window_label(corpus.window)} · MSE · "
           f"{'/'.join(map(str, seeds))} matched seeds · positive = baseline better")
+    if flagged:
+        footnote(fig, f"{DAGGER} no seed trains in any paradigm; left out of the share strip",
+                 style)
     return write(fig, root, family="per-band", group=dataset_name(grid.dataset), subject=slug,
                  configs=[corpus.window], metric="mse", formats=formats)
 

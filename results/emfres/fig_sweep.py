@@ -12,7 +12,8 @@ faint dashed twin.
 Replaces the ED2022-only absolute cluster-sweep figure of plot_metrics: every
 dataset of the family, every model with a sweep, and the protocols side by
 side. A model whose sweep is still training is drawn from what it has, its
-points hollow, and gets no ring until its sweep is complete.
+points hollow, and gets no ring until its sweep is complete. A model that
+does not train (corpus.flagged) is marked with a dagger, its title muted.
 """
 
 from __future__ import annotations
@@ -26,15 +27,23 @@ from matplotlib.lines import Line2D
 from . import figdata as FD
 from .figkit import (
     INK_MUTED, INK_PRIMARY, INK_SECONDARY, SURFACE, dataset_colors, dataset_name,
-    layout, legend, model_name, panel_title, style_axes, title, window_label, write,
-    xlabel,
+    footnote, layout, legend, model_name, panel_title, style_axes, title, window_label,
+    write, xlabel,
 )
-from .fig_paradigms import METRIC_NAME, WIDTH
+from .fig_paradigms import DAGGER, METRIC_NAME, WIDTH
 
 NCOL = 3
 
 # Marker size step (in marker units) between datasets' rings and test-best marks.
 RING_STEP = 0.45
+
+
+def _where(corpus: FD.Corpus, models: set) -> str:
+    """' on <datasets>' when a flagged model is flagged on only some datasets."""
+    on = [ds for ds in corpus.datasets if any((ds, m) in corpus.flagged for m in models)]
+    whole = all((ds, m) in corpus.flagged for m in models for ds in corpus.datasets
+                if (ds, m) in corpus.board.cells)
+    return "" if whole else " on " + ", ".join(dataset_name(ds) for ds in on)
 
 
 def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> list:
@@ -52,6 +61,7 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     hue = dataset_colors(datasets)
     oracle_any = False
     partial_any = False
+    flagged_models = {m for _, m in corpus.flagged if m in models}
     for idx, model in enumerate(models):
         ax = axes[idx // ncol][idx % ncol]
         style_axes(ax, style, grid="y")
@@ -98,8 +108,10 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
                         color=color, lw=style.line_width * 0.45, ls=(0, (3, 2)), alpha=0.55,
                         zorder=3)
         partial_any |= partial
-        panel_title(ax, model_name(model) + (" · partial" if partial else ""), style)
-        if partial:
+        flagged = model in flagged_models
+        panel_title(ax, model_name(model) + (f" {DAGGER}" if flagged else "")
+                    + (" · partial" if partial else ""), style)
+        if partial or flagged:
             ax.title.set_color(INK_MUTED)
     for idx in range(len(models), nrow * ncol):
         axes[idx // ncol][idx % ncol].set_visible(False)
@@ -134,5 +146,8 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     legend(fig, handles, style, y=1 - 0.24 / height)
     layout(fig, style, top=0.82, bottom=0.42, left=0.09, wspace=0.08, hspace=0.42)
     xlabel(fig, list(axes.flat), "k (clusters)", style)
+    if flagged_models:
+        footnote(fig, f"{DAGGER} no seed trains in any paradigm"
+                 + _where(corpus, flagged_models), style)
     return write(fig, root, group=corpus.family, subject="k-gain",
                  configs=[corpus.window], metric=metric, formats=formats)
