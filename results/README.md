@@ -218,9 +218,12 @@ not declared equivalent and still show as a second version.
 VoIP has none yet) against the value today's frames give, and `make.py tables`
 runs the same gate before writing. By default it gates every family that has
 a snapshot, prints a line for each one that has none, and ends with one
-verdict per family (`reconcile: emf PASS (88 declared changes); voip not gated
-(no frozen snapshot yet)`). A family without a snapshot does not fail the run;
-`--family emf|voip` gates one. Three kinds of value are held
+verdict per family, for example `reconcile: emf PASS (88 declared changes);
+voip not gated (no frozen snapshot yet)` on frames extracted mid-sweep (on the
+tracked frames emf fails; see below). A family without a snapshot does not
+fail the run; `--family emf|voip` gates one. A frozen snapshot whose file is
+missing fails `reconcile` and `tables --check`, and `make.py tables` refuses
+to write without `--force`. Three kinds of value are held
 (`emfres/reconcile.py`). The last column is how many values
 `2026-09-22_tables.md` publishes of each; how many of them reproduce today,
 and which changes are expected, move with every run the sweep finishes, so
@@ -239,8 +242,10 @@ trailing zeros, so a p of `1` is 1.00 and does not match `0.5`, while
 `0.3765` matches `0.37649` and `+1.04%` matches `+1.035%` (printed to more
 places, a value agrees at the fewer). The text around a value counts: a tie
 mark (≈) that appears, or an `(n=…)` marking a cell still training, is a
-change. A scoreboard row is keyed by its comparison
-("Per-channel vs Multivariate"), not by its question's wording. The sweep is
+change. A `cells` value printed with `(n=…)` is held at the mean it printed,
+so it changes as its seeds finish: freeze a snapshot only once none is left.
+A scoreboard row is keyed by its comparison ("Per-channel vs Multivariate"),
+not by its question's wording. The sweep is
 read in both layouts it has had: the snapshot's one section per dataset and
 metric, which underlined the k with the best *test* value, and today's single
 section, whose oracle k is that same choice. A snapshot section is found by
@@ -289,8 +294,11 @@ moved and the last rule in `specs/gate.yaml` pins each one; and against the
 batch mean it was published from (`mse`/`mae`), whose runs nothing touched.
 There it has to reproduce, and no rule forgives a change
 (`reconcile.BATCH_VIA`). Which protocol a snapshot's Cluster section printed
-is read from its first MSE heading (`sl_test/loss` or `sl_test_fixed/loss`),
-so after a re-freeze its cells are held against the fixed means alone.
+is read from its first MSE heading (`sl_test/loss` or `sl_test_fixed/loss`).
+A snapshot that leads with the fixed protocol (EMF after its re-freeze, and
+any VoIP one) has its first MSE and MAE tables held against the fixed means,
+and the MSE and MAE of its batch-protocol group (5.1, 5.2) against the batch
+means, where again no rule forgives a change (`reconcile.BATCH_GROUP_VIA`).
 
 `make.py reconcile --all` lists every change and every new value. A changed
 section's `NOTE` says what the gate held of it and, for a partly gated
@@ -448,7 +456,10 @@ docstring has the full rules.
 
 ## Which runs count
 
-`specs/runs.yaml` declares what `extract` drops and why. It still excludes the
+`specs/runs.yaml` declares what `extract` drops and why (`exclude`), and which
+published cells the value gate is to find withdrawn rather than missing
+(`archived`: a rule names its dataset by the table label or the `cells.csv`
+slug, and applies to every family that publishes it). It still excludes the
 54 cluster runs stamped seed 42 / seed 43 — a different configuration, not
 replicate seeds (`notes/ccm-hyperparameters.md` §8) — though since 2026-08-25
 those runs live under `logs/_archive/cluster/` and are skipped as an archive
@@ -482,14 +493,10 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
   `archive/<date>_voip_tables.md`, point `SNAPSHOTS['voip']` at it, and set
   the `voip` block's `snapshot` to its name. The gate reads the VoIP tables
   as it reads the EMF ones. On frames extracted on 2026-09-24, today's VoIP
-  render gated against itself holds 320 cells, 496 scoreboard values and
-  432 sweep values, all of which reproduce.
-- Once a snapshot prints the fixed protocol in its Cluster section (the EMF
-  one after its re-freeze, and any VoIP one), the batch-protocol group at the
-  end of that section is text only: `cells` reads only the section's first
-  MSE and MAE tables. No per-cell batch value is gated then. What stays
-  gated of that protocol is the paradigm comparison's batch-protocol
-  sensitivity rows (counts, median gap, p).
+  render gated against itself holds 512 cells (192 of them the Cluster
+  section's batch-protocol group), 496 scoreboard values and 432 sweep
+  values, all of which reproduce. Freeze either family only once no cell of
+  its render prints `(n=…)`.
 - `specs/provenance.yaml` holds three kinds of evidenced rule. `inferred` dates
   runs logged before stamping (2026-09-19) by setup and `exp/time` window;
   `attested` resolves runs stamped on a dirty tree to the commit whose code they
