@@ -143,8 +143,10 @@ def test_a_cell_short_of_its_seeds_shows_n_and_is_never_ranked():
     # TSMixer's 0.3000 is the lowest, but one seed of three: shown, not bold.
     assert "| **0.5020** | 0.3000 (n=1) |" in row
     assert "`(n=…)`" in md
+    assert "- Protocol: the logged batch protocol" in md    # which cluster numbers these are
     # A complete tree renders exactly as before: no marker, no legend.
-    assert "(n=" not in er.render_report(er.MULTIVARIATE_TITLE, mv, mv_cells, targets=targets)
+    plain = er.render_report(er.MULTIVARIATE_TITLE, mv, mv_cells, targets=targets)
+    assert "(n=" not in plain and "Protocol" not in plain
 
 
 def test_a_per_channel_seed_missing_a_band_is_marked_partial():

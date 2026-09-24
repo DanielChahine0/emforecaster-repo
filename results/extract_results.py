@@ -448,6 +448,13 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
         items.append(("Channel clusters",
                       f"k = {', '.join(str(k) for k in ks)} "
                       f"(each k is its own cell, never averaged together)"))
+        items.append(("Protocol",
+                      "the logged batch protocol (`sl_test/*`): the cluster membership is "
+                      "averaged over each evaluation batch, so a k > 1 forecast depends on "
+                      "its neighbouring windows. The primary fixed train-mean membership "
+                      "numbers (`sl_test_fixed/*`), with k chosen on validation, are in "
+                      "`Paradigm Comparison` and `Channel Clustering (CCM) vs. plain`; at "
+                      "k = 1 the two are the same forecast"))
     items.append(("Runs", coverage_summary(runs, cells)))
     if title == UNIVARIATE_SERIES_TITLE:
         items += [("Caveat", text) for text in SERIES_CAVEATS]
