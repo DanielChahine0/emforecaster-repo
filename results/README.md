@@ -4,7 +4,7 @@ Tables, figures, and the tidy CSVs behind both.
 
 One rule governs the layout: **tracked text, ignored pixels.** Everything with a
 number in it is committed and diffs meaningfully; everything made of pixels is
-regenerated on demand and git-ignored. `results/` tracks about 1 MB.
+regenerated on demand and git-ignored. `results/` tracks about 2.3 MB.
 
 ## Rebuild everything
 
@@ -125,8 +125,9 @@ such a version as another — `from`, `to`, and the `evidence` that shows it
 (golden hashes, a bit-exact GPU rerun); a rule without evidence is ignored,
 and so, with a `WARNING`, are rules that map one version to two others or form
 a cycle (`a -> b` beside `b -> a`), which would otherwise give a swapped,
-non-canonical mapping. `runs.csv` keeps the raw fingerprint in `code_version` and adds the version it
-counts as in `code_equivalent` (`cells.csv`: `code_equivalents`);
+non-canonical mapping. `runs.csv` keeps the raw fingerprint in `code_version`
+and adds the version it counts as in `code_equivalent` (`cells.csv`:
+`code_equivalents`);
 `MANIFEST.json` lists every raw version under `code_versions`, with
 `equivalent_to` on the mapped ones, and the grouping under `code_equivalents`.
 `extract` warns about a code split only across versions that remain distinct
@@ -193,7 +194,11 @@ reported as a `NOTE`; only a changed value is fatal.
   twin), a per-channel run's own band. `channel` is the loader's column index,
   the same in every paradigm; `band` is that column's header (the frequency in
   MHz, or the VoIP signal name). Joint runs log no per-band MAE, so it is blank
-  there. `lookback_mse` is the band's lookback-mean baseline.
+  there. `lookback_mse` is the band's lookback-mean baseline. The per-band
+  values are the logged float32 vectors, so they average to their run's
+  number only approximately: a batch vector to `mse` within 2.4e-7 relative,
+  a sidecar's fixed vector to `mse_fixed` within 1.6e-5 (EMF2023; 2.3e-6 on
+  UH2022, under 7e-7 elsewhere).
 - **`timing.csv`**: the uncontended cost of each complete per-channel seed at
   L336/O96: every band's epochs (`runs.csv` now carries `epochs`) times the
   seconds per epoch the solo timing pass of 2026-09-22 measured on three bands
@@ -238,6 +243,11 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
   (the Phase 0/1 changes), so their cells show two versions once newer seeds
   join them; `.personal/PLAN.md` records the bit-exact reproduction that shows
   those runs behave identically under the current code.
+- `frames/bands.csv` is 1.19 MB at full precision (10,608 rows on
+  2026-09-24), more than half again what `results/` tracks (2.28 MB), and the
+  CCM sweep's cluster runs add roughly 5,000 rows more. Whether to track it
+  as is, round it, or regenerate it on demand is still open; decide before
+  the regenerated frames are next committed.
 - `frames/epochs.csv` (per-epoch losses) is opt-in behind `--epochs` and
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
 - `emfres/fig_curves.py` still walks `logs/` directly rather than reading
