@@ -3,8 +3,11 @@
 
 Each figure puts the models along the x-axis (ordered by year of publication)
 and one line per dataset, so a panel reads as "how this metric moves across
-model generations, per dataset". Three panels - MSE, MAE, total training time -
-are emitted both as one combined strip and as standalone single figures, twice:
+model generations, per dataset". Three panels - MSE, MAE, total training time
+(for the per-channel setup the sum over a cell's bands, each band's time
+contended, and a note names the models whose time overlapped another user's
+GPU process) - are emitted both as one combined strip and as standalone single
+figures, twice:
 ``figures/by-dataset/`` keeps datasets as the lines with models along the
 x-axis, and ``figures/by-model/`` flips the roles. Each also gets an
 ``figures/overlay/`` panel putting both setups' MAE together (multivariate
@@ -157,6 +160,51 @@ SECTION_ALIASES = {
 # The k-grouped-channels study: the same shape plus a k column, so its figures
 # put the cluster count on the x-axis instead of the model generation.
 CLUSTER_SECTION = "Cluster (k-Grouped Channels)"
+
+# A per-channel "Training time" record is the sum over the cell's bands
+# (emfres.records.PER_CHANNEL_SUM), each band's time contended by the bands
+# that trained beside it. Every panel, axis and note says so.
+PER_CHANNEL_SECTION = SECTION_ALIASES["perchannel"]
+PER_CHANNEL_TIME_NOTE = ("per-channel time = the sum of the band trainings, each band "
+                         "trained alongside others (contended)")
+
+# A time point whose cell had a run overlap another user's process on the
+# GPU (emfres.records.contended_cells, specs/contention.yaml).
+TIME_FLAG = "‡"
+
+
+def time_title(section: str) -> str:
+    """The time panel's title: a per-channel time is the sum over its bands."""
+    return "Training time, Σ bands" if section == PER_CHANNEL_SECTION else "Training time"
+
+
+def flagged_models(records, section: str, grid: str | None, contended: dict | None) -> list:
+    """The models of a section whose plotted time has a foreign-contended cell."""
+    marked = (contended or {}).get(section, set())
+    if not marked:
+        return []
+    window = parse_grid(grid) if grid else None
+    hits = {r.model for r in records
+            if r.section == section and r.metric == "Training time"
+            and (window is None or (r.lookback, r.horizon) == window)
+            and not np.isnan(r.value) and (r.dataset, r.model, r.cluster) in marked}
+    return [short_model(m) for m in sorted(hits, key=model_rank)]
+
+
+def time_notes(records, section: str, grid: str | None, contended: dict | None,
+               marked: bool = False) -> list:
+    """The caveats a section's time panels carry, [] when they need none.
+
+    ``marked``: the figure labels the flagged models with TIME_FLAG (the
+    trade-off view), so the note leads with it.
+    """
+    notes = [PER_CHANNEL_TIME_NOTE] if section == PER_CHANNEL_SECTION else []
+    flagged = flagged_models(records, section, grid, contended)
+    if flagged:
+        notes.append(f"{TIME_FLAG + ' ' if marked else ''}another user's process was on "
+                     f"the GPU while {', '.join(flagged)} trained: "
+                     f"{'its time' if len(flagged) == 1 else 'their times'} may be inflated")
+    return notes
 
 # The clustering study reads on one dataset: its figures default to ED2022
 # (matching the sweep default in forecasting/grids.py), and --dataset overrides.
@@ -400,11 +448,14 @@ def build_figures(
     k_token=None,
     title_text: str | None,
     subtitle_text: str | None,
+    contended: dict | None = None,
 ) -> list[Path]:
     panels: list[Panel] = []
     context = None  # the sole dataset of a cluster study, surfaced in subtitles
     baselines: dict[str, list] = {}  # panel key -> no-clustering value per series
     for key, _, long_title, is_time in METRICS:
+        if is_time:
+            long_title = time_title(section)
         if split == "cluster":  # lines = (dataset, model) pairs, columns = k
             ks, pairs, kvalues, configs = aggregate_clusters(records, section, key, grid)
             if not ks:
@@ -511,6 +562,10 @@ def build_figures(
         text.set_color(INK_PRIMARY)
 
     add_x_label(fig, axes, style, x_title)
+    notes = (time_notes(records, section, grid, contended)
+             if any(p.is_time for p in panels) else [])
+    if notes:
+        footnote(fig, " · ".join(notes), style, y=0.012)
     directory, base = artifact_path(
         outdir, family, group=group, subject=subject,
         dataset=dataset_token, configs=first.configs, k=k_token,
@@ -534,6 +589,10 @@ def build_figures(
         if any(v is not None for v in baselines.get(panel.key, [])):
             draw_no_cluster_baselines(ax, panel, baselines[panel.key], style)
         add_x_label(fig, [ax], style, x_title)
+        if panel.is_time and notes:
+            for i, text in enumerate(reversed(notes)):
+                footnote(fig, text, style,
+                         y=0.012 + i * style.footnote * 1.4 / 72 / style.single_size[1])
         directory, base = artifact_path(
             outdir, family, group=group, subject=subject,
             dataset=dataset_token, configs=panel.configs, k=k_token,
@@ -723,22 +782,25 @@ def build_overlay_figure(
 # --------------------------------------------------------------------------- #
 
 
-def tradeoff_points(records, section: str, metric: str, grid: str | None):
+def tradeoff_points(records, section: str, metric: str, grid: str | None,
+                    contended: dict | None = None):
     """One point per model: (label, mean seconds, mean value, colour, hollow).
 
     Both means run over the datasets (and configs), so each model collapses to a
     single cost/accuracy position. Colours reuse the model-split assignment,
-    hollow markers included.
+    hollow markers included. A model whose time has a foreign-contended cell
+    is labelled with TIME_FLAG.
     """
     models, datasets, mvals, configs = aggregate(records, section, metric, grid)
     _, _, tvals, _ = aggregate(records, section, "Training time", grid)
+    flagged = set(flagged_models(records, section, grid, contended))
     points = []
     for i, model in enumerate(models):
         ys = [mvals[d][model] for d in datasets if np.isfinite(mvals[d][model])]
         ts = [tvals[d][model] for d in datasets if np.isfinite(tvals[d][model])]
         color, second_cycle = series_style(i)
         points.append((
-            short_model(model),
+            short_model(model) + (TIME_FLAG if short_model(model) in flagged else ""),
             float(np.mean(ts)) if ts else float("nan"),
             float(np.mean(ys)) if ys else float("nan"),
             color,
@@ -760,12 +822,13 @@ def build_tradeoff_figures(
     group: str | None,
     title_text: str | None,
     subtitle_text: str | None,
+    contended: dict | None = None,
 ) -> list[Path]:
     panels = []
     for key, _, long_title, is_time in METRICS:
         if is_time:
             continue
-        points, configs = tradeoff_points(records, section, key, grid)
+        points, configs = tradeoff_points(records, section, key, grid, contended)
         if points and any(np.isfinite(t) and np.isfinite(y) for _, t, y, _, _ in points):
             panels.append((key, long_title, points, configs))
 
@@ -788,7 +851,10 @@ def build_tradeoff_figures(
              fontsize=style.title, fontweight="bold", color=INK_PRIMARY)
     fig.text(0.5, 0.985 - (style.title * 1.5) / 72 / style.combined_size[1], subhead,
              ha="center", va="top", fontsize=style.subtitle, color=INK_SECONDARY)
-    add_x_label(fig, axes, style, f"Training time ({TIME_UNIT_ABBREV.get(unit, unit)})")
+    add_x_label(fig, axes, style, f"{time_title(section)} ({TIME_UNIT_ABBREV.get(unit, unit)})")
+    notes = time_notes(records, section, grid, contended, marked=True)
+    if notes:
+        footnote(fig, " · ".join(notes), style, y=0.012)
     directory, base = artifact_path(outdir, "tradeoff", group=group,
                                     configs=panels[0][3])
     directory.mkdir(parents=True, exist_ok=True)
@@ -801,7 +867,11 @@ def build_tradeoff_figures(
         unit = draw_tradeoff_panel(
             ax, key, long_title, subtitle_text or grid_line(configs), points, style
         )
-        add_x_label(fig, [ax], style, f"Training time ({TIME_UNIT_ABBREV.get(unit, unit)})")
+        add_x_label(fig, [ax], style,
+                    f"{time_title(section)} ({TIME_UNIT_ABBREV.get(unit, unit)})")
+        for i, text in enumerate(reversed(notes)):
+            footnote(fig, text, style,
+                     y=0.012 + i * style.footnote * 1.4 / 72 / style.single_size[1])
         directory, base = artifact_path(outdir, "tradeoff", group=group,
                                         configs=configs, metric=f"{key}-vs-tt")
         directory.mkdir(parents=True, exist_ok=True)
@@ -871,9 +941,11 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             parser.error(str(exc))
 
+    contended: dict = {}
     if args.source == "frames":
-        from emfres.records import records_from_cells
+        from emfres.records import contended_cells, records_from_cells
         records = records_from_cells(args.frames, here)
+        contended = contended_cells(args.frames)
         where = args.frames
     else:
         records = parse_tables(args.tables)
@@ -947,6 +1019,7 @@ def main(argv: list[str] | None = None) -> int:
                 split=split,
                 title_text=args.title,
                 subtitle_text=args.subtitle,
+                contended=contended,
             ):
                 print(f"  wrote {path}")
         if args.section in ("all", "multivariate", "perchannel"):
@@ -978,6 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
             group=STEM_SLUGS.get(stem, stem),
             title_text=args.title,
             subtitle_text=args.subtitle,
+            contended=contended,
         ):
             print(f"  wrote {path}")
 
@@ -1010,6 +1084,7 @@ def main(argv: list[str] | None = None) -> int:
             split="cluster",
             title_text=args.title,
             subtitle_text=args.subtitle,
+            contended=contended,
         ):
             print(f"  wrote {path}")
 

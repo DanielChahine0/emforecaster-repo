@@ -269,8 +269,9 @@ def by_model_figure(style: pm.Style, formats: list[str], outdir: Path) -> None:
     pm.add_x_label(fig, list(axes[-1]), style, "Lookback length")
     footnote(
         fig,
-        "per-channel time = sum of the 27 band trainings · "
-        "the lookback-336 cells were timed under different GPU load",
+        "per-channel time = sum of the 27 band trainings, each trained alongside "
+        "other bands (contended) · the lookback-336 cells were timed under different "
+        "GPU load",
         style, y=0.008,
     )
     directory, base = artifact_path(outdir, "l-ladder", dataset=DATASET,
@@ -325,8 +326,9 @@ def main() -> None:
     pm.add_x_label(fig, axes, style, "Lookback length")
     footnote(
         fig,
-        "per-channel time = sum of the 27 band trainings · "
-        "the lookback-336 cells were timed under different GPU load",
+        "per-channel time = sum of the 27 band trainings, each trained alongside "
+        "other bands (contended) · the lookback-336 cells were timed under different "
+        "GPU load",
         style,
     )
 

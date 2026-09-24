@@ -312,6 +312,51 @@ def test_the_legacy_figures_read_a_cluster_cells_fixed_protocol(tmp_path):
     assert old[("Cluster", "MSE")] == 0.50
 
 
+def test_the_legacy_figures_sum_a_per_channel_time_over_its_bands(tmp_path):
+    """A per-channel cell's running_time is one band's; its plotted time is the
+    sum over its bands, titled so, and a foreign-contended cell is named."""
+    from pathlib import Path
+
+    import plot_metrics as pm
+    from emfres.records import contended_cells, records_from_cells, records_match_tables
+
+    results = Path(__file__).resolve().parents[1]
+    base = {f: "" for f in frames.CELL_FIELDS}
+    pc = dict(base, setup="perchannel", family="emf", model="EMForecaster", dataset="ed2022",
+              seq_len=336, pred_len=96, conf=1, mse="0.50", mae="0.40", running_time="60",
+              n_channels="27", n_foreign="8", contended="concurrent;foreign")
+    mv = dict(base, setup="multivariate", family="emf", model="DLinear", dataset="ed2022",
+              seq_len=336, pred_len=96, conf=1, mse="0.55", mae="0.42", running_time="50",
+              n_foreign="0", contended="none")
+    path = tmp_path / "cells.csv"
+    frames.write_csv(path, [pc, mv], frames.CELL_FIELDS)
+    records = records_from_cells(path, results)
+    got = {(r.section.split()[0], r.metric): r.value for r in records}
+    assert got[("Univariate", "Training time")] == 60 * 27        # the sum over bands
+    assert got[("Multivariate", "Training time")] == 50           # one run, as logged
+    assert pm.time_title(pm.PER_CHANNEL_SECTION) == "Training time, Σ bands"
+    assert pm.time_title("Multivariate") == "Training time"
+
+    contended = contended_cells(path)
+    assert contended == {pm.PER_CHANNEL_SECTION: {("ED2022", "EMForecaster (2025)", None)}}
+    notes = pm.time_notes(records, pm.PER_CHANNEL_SECTION, "336/96", contended)
+    assert notes[0] == pm.PER_CHANNEL_TIME_NOTE
+    assert "while EMForecaster trained: its time may be inflated" in notes[1]
+    assert pm.time_notes(records, "Multivariate", "336/96", contended) == []
+    points, _ = pm.tradeoff_points(records, pm.PER_CHANNEL_SECTION, "MAE", "336/96",
+                                   contended)
+    assert [p[0] for p in points] == ["EMForecaster" + pm.TIME_FLAG]
+
+    # The markdown prints the per-channel time per band: not compared.
+    md = tmp_path / "tables.md"
+    md.write_text("# Univariate (Per Channel)\n\n### 2.1 · Total training time\n\n"
+                  "| Dataset | L | O | EMForecaster (2025) |\n|:---|---:|---:|---:|\n"
+                  "| ED2022 | 336 | 96 | 1m 0s |\n")
+    n, diffs = records_match_tables(path, md, results)
+    assert n == 0
+    assert not any(pm.PER_CHANNEL_SECTION in d and "Training time" in d for d in diffs)
+
+
 def test_p7_counts_and_notes_a_cost_another_users_gpu_process_may_have_inflated(
         tmp_path, monkeypatch):
     import csv

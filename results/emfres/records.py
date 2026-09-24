@@ -46,6 +46,14 @@ COMPLEXITY_COLUMNS = METRIC_COLUMNS + [("Parameters", "num_params")]
 FIXED_TWINS = {"mse": "mse_fixed", "mae": "mae_fixed", "ic": "ic_fixed", "jc": "jc_fixed",
                "interval_width": "interval_width_fixed"}
 
+# A per-channel cell's running_time is one band's model (the mean over its
+# band runs), not what the per-channel strategy costs. Its "Training time"
+# record is that times the cell's band count, the sum over its bands, as the
+# Ultimate Comparison and Multivariate vs univariate tables count it. The
+# bands trained alongside each other, so it is a contended sum; timing.csv
+# holds the uncontended estimate (P7). plot_metrics titles it so.
+PER_CHANNEL_SUM = ("perchannel", "running_time")
+
 
 def _f(v: str) -> Optional[float]:
     return float(v) if v not in ("", None) else None
@@ -114,6 +122,9 @@ def records_from_cells(cells_csv: Path, results: Path, metrics=None,
                     for col, label in enumerate(labels):
                         r = by_key.get((ds, sl, pl, k, label))
                         value = _f(r.get(twins.get(column, column), "")) if r else None
+                        if (setup, column) == PER_CHANNEL_SUM and value is not None:
+                            bands = _f(r.get("n_channels", ""))
+                            value = value * bands if bands else None
                         records.append(pm.Record(
                             section=section,
                             metric=metric,
@@ -129,6 +140,29 @@ def records_from_cells(cells_csv: Path, results: Path, metrics=None,
     return records
 
 
+def contended_cells(cells_csv: Path, family: str = "emf") -> dict:
+    """{section: {(dataset label, model label, k)}} of the cells whose time may
+    be inflated: a run of theirs overlapped another user's GPU process
+    (cells.csv n_foreign > 0, from specs/contention.yaml). Keyed as the
+    records are, so a plotter can name the flagged points it draws."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import extract_results as er
+
+    from .frames import family_of
+
+    out: dict = {}
+    with open(cells_csv) as f:
+        for r in csv.DictReader(f):
+            if r["setup"] not in SETUP_SECTIONS or not _f(r.get("n_foreign", "")):
+                continue
+            if family is not None and (r.get("family") or family_of(r["dataset"])) != family:
+                continue
+            out.setdefault(SETUP_SECTIONS[r["setup"]], set()).add(
+                (er.dataset_label(r["dataset"]), er.model_label(r["model"]),
+                 None if r["k"] == "" else int(r["k"])))
+    return out
+
+
 def _key(r):
     return (r.section, r.metric, r.dataset, r.lookback, r.horizon, r.model,
             r.cluster, r.model_order)
@@ -137,15 +171,20 @@ def _key(r):
 def records_match_tables(cells_csv: Path, tables_md: Path, results: Path):
     """Compare CSV-derived records against the markdown-derived ones.
 
-    Returns (n_compared, list of human-readable differences).
+    Returns (n_compared, list of human-readable differences). The per-channel
+    training time is left out: the section's table prints it per band, the
+    records sum it over the bands (PER_CHANNEL_SUM).
     """
     import math
 
     sys.path.insert(0, str(results))
     import plot_metrics as pm
 
-    want = {_key(r): r.value for r in pm.parse_tables(tables_md)}
-    got = {_key(r): r.value for r in records_from_cells(cells_csv, results)}
+    summed = (SETUP_SECTIONS[PER_CHANNEL_SUM[0]], "Training time")
+    want = {_key(r): r.value for r in pm.parse_tables(tables_md)
+            if (r.section, r.metric) != summed}
+    got = {_key(r): r.value for r in records_from_cells(cells_csv, results)
+           if (r.section, r.metric) != summed}
 
     diffs = []
     for k in sorted(set(want) | set(got), key=lambda t: [str(x) for x in t]):
