@@ -57,9 +57,27 @@ Repo-side adaptations, each marked ADAPTED below or at its site:
     multivariate baseline cell (not in MV_MODELS).
 
 get_model (utils/models.py) builds the backbone with the same kwargs as the
-multivariate branch plus n_clusters, then wraps it here. Everything else about
-the run -- data, optimizer, conformal recalibration, logging -- is unchanged.
+multivariate branch plus n_clusters, then wraps it here. The run's data and
+optimizer are unchanged; its evaluation adds the fixed-membership protocol
+below, with its own conformal recalibration and sl_*_fixed keys, and so refuses
+conf.validation_eval=True.
+
+Two evaluation protocols (see fit_fixed_membership):
+
+  batch  upstream's own: every forward pools the membership over the windows
+         in its batch, so an eval forecast depends on which other windows
+         share its batch -- on the sequential test loader, up to batch_size-1
+         later windows whose lookbacks overlap its target. Logged as sl_val/*
+         and sl_test/*, and kept as the sensitivity row.
+  fixed  one membership per run, pooled over the whole training split after
+         the best checkpoint is restored, so a forecast depends on its own
+         lookback only. Logged as sl_val_fixed/* and sl_test_fixed/*; the
+         primary cluster evaluation.
+
+At k=1 the membership is all ones either way, so the two protocols agree.
 """
+
+import contextlib
 
 import torch
 import torch.nn as nn
@@ -100,6 +118,14 @@ class CCMForecaster(nn.Module):
                 "backbone was not built with n_clusters="
                 f"{args.cluster.k_clusters}; build it through get_model."
             )
+        # Checked at build, not at test time, so it fails before any training.
+        if args.conf.conf and args.conf.validation_eval:
+            raise ValueError(
+                "A cluster run needs conf.validation_eval=False: the fixed-"
+                "membership evaluation recalibrates conformal on validation at "
+                "test time, and validation_eval=True would score it against the "
+                "batch-protocol calibration saved during training."
+            )
 
         from forecasting.multivariate.utils.ccm_upstream import Cluster_assigner
 
@@ -138,7 +164,25 @@ class CCMForecaster(nn.Module):
         # Set by the last forward; read by similarity_loss().
         self.cluster_prob = None
 
+        # The fixed membership, [num_channels, k], set by fit_fixed_membership.
+        # A None buffer is left out of state_dict, so a fresh build and every
+        # checkpoint saved during training keep the key set they always had;
+        # once set, it is saved with the weights it was fitted for.
+        self.register_buffer("fixed_prob", None)
+        # Whether forward uses fixed_prob; toggled by fixed_membership().
+        self.use_fixed_prob = False
+
     def forward(self, x):
+        if self.use_fixed_prob:
+            # Eval only: training keeps upstream's batch membership and refresh.
+            if self.training:
+                raise RuntimeError(
+                    "The fixed membership is an evaluation protocol; switch to "
+                    "eval() or leave fixed_membership() before training."
+                )
+            self.cluster_prob = self.fixed_prob
+            return self.backbone(x, cluster_prob=self.fixed_prob)
+
         # x: (batch, num_channels, seq_len); upstream's assigner works in
         # (batch, seq_len, num_channels).
         prob, refreshed = self.assigner(x.permute(0, 2, 1), self.cluster_emb)
@@ -157,6 +201,94 @@ class CCMForecaster(nn.Module):
 
         self.cluster_prob = prob
         return self.backbone(x, cluster_prob=prob)
+
+    def window_prob(self, x):
+        """Each window's own membership scores, before any pooling.
+
+        The first half of upstream's Cluster_assigner.forward
+        (TimeSeriesCCM-main/models/layers.py:280-287) on the assigner's own
+        layers and this wrapper's cluster_emb: cosine similarity of each
+        channel's projected lookback against the k cluster embeddings. Upstream
+        then averages this over the batch (:291) and sinkhorns the mean (:292);
+        fit_fixed_membership takes the same two steps over the training split.
+
+        Args:
+            x: (batch, num_channels, seq_len), as forward() receives it.
+
+        Returns:
+            (batch, num_channels, k).
+        """
+        assigner = self.assigner
+        # Upstream permutes its (batch, seq_len, C) input back to this layout.
+        x_emb = assigner.linear(x).reshape(-1, assigner.d_model)
+        prob = torch.mm(assigner.l2norm(x_emb), assigner.l2norm(self.cluster_emb).t())
+        return prob.reshape(-1, x.shape[1], assigner.n_cluster)
+
+    @torch.no_grad()
+    def fit_fixed_membership(self, inputs):
+        """Fit and store the run's one fixed membership.
+
+        Upstream pools the membership over whatever windows share a batch, in
+        evaluation too, so a test forecast depends on its batch-mates (see the
+        module docstring). This pools it once over the training split instead:
+        the mean of window_prob over every training window, then upstream's
+        sinkhorn with the assigner's epsilon -- the batch mean with the whole
+        split as the batch. The sum is taken in float64 on the CPU, so the
+        result does not depend on how the split is batched or ordered (beyond
+        float32 rounding of each window's scores), and works on MPS.
+
+        Args:
+            inputs: iterable of (batch, num_channels, seq_len) model inputs that
+                covers the training split once.
+
+        Returns:
+            fixed_prob, (num_channels, k), also stored on the module.
+        """
+        from forecasting.multivariate.utils.ccm_upstream import sinkhorn
+
+        was_training = self.training
+        self.eval()
+        total, count = None, 0
+        try:
+            for x in inputs:
+                prob = self.window_prob(x).to("cpu", torch.float64)
+                total = prob.sum(dim=0) if total is None else total + prob.sum(dim=0)
+                count += prob.shape[0]
+        finally:
+            self.train(was_training)
+        if count == 0:
+            raise ValueError("fit_fixed_membership got no training windows.")
+
+        mean = (total / count).to(self.cluster_emb.device, self.cluster_emb.dtype)
+        self.fixed_prob = sinkhorn(mean, epsilon=self.assigner.epsilon)
+        return self.fixed_prob
+
+    @contextlib.contextmanager
+    def fixed_membership(self):
+        """Forward with fixed_prob in place of the batch membership, for the block."""
+        if self.fixed_prob is None:
+            raise RuntimeError(
+                "No fixed membership yet; call fit_fixed_membership() first."
+            )
+        previous = self.use_fixed_prob
+        self.use_fixed_prob = True
+        try:
+            yield self.fixed_prob
+        finally:
+            self.use_fixed_prob = previous
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # A checkpoint carries fixed_prob only once it was fitted. Follow the
+        # checkpoint either way, so a strict load takes old and new checkpoints
+        # alike and a membership fitted for other weights never survives one.
+        key = prefix + "fixed_prob"
+        if key in state_dict:
+            self.fixed_prob = torch.empty_like(
+                state_dict[key], device=self.cluster_emb.device
+            )
+        else:
+            self.fixed_prob = None
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     @staticmethod
     def channel_similarity(x):

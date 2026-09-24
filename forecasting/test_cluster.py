@@ -8,8 +8,9 @@ tree via utils/ccm_upstream.py) and wraps it in CCMForecaster
 (forecasting/multivariate/models/ccm.py), which drives upstream's
 Cluster_assigner and owns the similarity loss. These tests cover that
 mechanism's contract with the rest of the pipeline (shapes, routing, loss,
-checkpointing) and the grid wiring that gets a cell from `--setup cluster --k N`
-to logs/cluster/.
+checkpointing), the fixed-membership evaluation protocol that sits beside
+upstream's batch one, and the grid wiring that gets a cell from
+`--setup cluster --k N` to logs/cluster/.
 
 They replaced the tests for the whole-network upstream adapter this grid ran
 until 2026-08-25 (which had themselves replaced the KMeans-partition head's
@@ -17,14 +18,18 @@ tests on 2026-08-06); the upstream model wrappers and their TimesNet cells are
 gone, and the shape-bug regression moved into the wrapper's refresh tests.
 """
 
+import glob
 import json
 import os
 
+import matplotlib.pyplot as plt
 import pytest
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 from forecasting import grid, grids
 from forecasting.multivariate.config.config import Global
+from forecasting.multivariate.exp.exp import Experiment
 from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
 from forecasting.multivariate.models.dlinear import DLinear
 from forecasting.multivariate.utils.ccm_upstream import (Cluster_assigner,
@@ -298,6 +303,313 @@ def test_multivariate_models_are_untouched_when_clustering_is_off():
                    for m in model.modules())
     assert model(torch.randn(2, NUM_CHANNELS, SEQ_LEN)).shape == (
         2, NUM_CHANNELS, PRED_LEN)
+
+
+# ---------------------------------------------------------------------------
+# Fixed-membership evaluation (the primary protocol; upstream's batch one stays
+# logged beside it)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
+def test_window_prob_pooled_over_the_batch_is_the_assigners_membership(model_id):
+    # The fixed membership reuses the first half of upstream's assigner; pooled
+    # the way upstream pools it, it must be that assigner's output, bit for bit.
+    model = get_model(make_args(model_id))
+    model.eval()
+    x = torch.randn(5, NUM_CHANNELS, SEQ_LEN)
+    with torch.no_grad():
+        upstream, _ = model.assigner(x.permute(0, 2, 1), model.cluster_emb)
+        pooled = sinkhorn(model.window_prob(x).mean(dim=0),
+                          epsilon=model.assigner.epsilon)
+    assert torch.equal(pooled, upstream)
+
+
+def test_fixed_membership_is_the_train_mean_however_it_is_batched():
+    model = get_model(make_args("DLinear"))
+    x = torch.randn(10, NUM_CHANNELS, SEQ_LEN)
+    with torch.no_grad():
+        expected = sinkhorn(model.window_prob(x).mean(dim=0),
+                            epsilon=model.assigner.epsilon)
+
+    whole = model.fit_fixed_membership([x]).clone()
+    split = model.fit_fixed_membership([x[:3], x[3:4], x[4:]]).clone()
+    shuffled = model.fit_fixed_membership([x[torch.randperm(10)]]).clone()
+    torch.testing.assert_close(whole, expected)
+    torch.testing.assert_close(split, whole)
+    torch.testing.assert_close(shuffled, whole)
+    assert model.fixed_prob.shape == (NUM_CHANNELS, K)
+    torch.testing.assert_close(model.fixed_prob.sum(dim=1), torch.ones(NUM_CHANNELS))
+
+
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
+def test_fixed_forecasts_do_not_depend_on_the_eval_batch(model_id):
+    """The point of the fixed protocol (finding C1): a window's forecast is a
+    function of its own lookback, not of which windows share its batch."""
+    model = get_model(make_args(model_id))
+    model.eval()
+    x = torch.randn(8, NUM_CHANNELS, SEQ_LEN)
+    model.fit_fixed_membership([torch.randn(16, NUM_CHANNELS, SEQ_LEN)])
+    perm = torch.randperm(8)
+
+    with torch.no_grad():
+        # The batch protocol is batch-dependent, or this test would prove nothing.
+        assert not torch.allclose(model(x[:1]), model(x)[:1])
+        with model.fixed_membership():
+            whole = model(x)
+            one_by_one = torch.cat([model(x[i:i + 1]) for i in range(8)])
+            reordered = torch.empty_like(whole)
+            reordered[perm] = model(x[perm])
+            halves = torch.cat([model(x[:5]), model(x[5:])])
+    torch.testing.assert_close(one_by_one, whole)
+    torch.testing.assert_close(reordered, whole)
+    torch.testing.assert_close(halves, whole)
+
+
+@pytest.mark.parametrize("model_id", sorted(CCM_MODELS))
+def test_k1_fixed_protocol_is_the_batch_protocol(model_id):
+    # One cluster: the membership is all ones however it is pooled, so the two
+    # protocols are the same forecast, bit for bit.
+    model = get_model(make_args(model_id, k=1))
+    model.eval()
+    x = torch.randn(4, NUM_CHANNELS, SEQ_LEN)
+    model.fit_fixed_membership([torch.randn(16, NUM_CHANNELS, SEQ_LEN)])
+    assert torch.equal(model.fixed_prob, torch.ones(NUM_CHANNELS, 1))
+    with torch.no_grad():
+        batch = model(x)
+        with model.fixed_membership():
+            fixed = model(x)
+    assert torch.equal(fixed, batch)
+
+
+def test_fixed_prob_is_checkpointed_only_once_fitted():
+    """A fresh build and every checkpoint saved during training keep their old
+    key set (the 375 existing cluster checkpoints load as before); a fitted
+    membership travels with the weights it was fitted for."""
+    model = get_model(make_args("DLinear"))
+    old_keys = set(model.state_dict())
+    assert "fixed_prob" not in old_keys
+    old_checkpoint = model.state_dict()
+
+    model.fit_fixed_membership([torch.randn(8, NUM_CHANNELS, SEQ_LEN)])
+    assert set(model.state_dict()) == old_keys | {"fixed_prob"}
+
+    fresh = get_model(make_args("DLinear"))
+    fresh.load_state_dict(model.state_dict())  # strict=True, as Experiment.test does
+    torch.testing.assert_close(fresh.fixed_prob, model.fixed_prob)
+    model.eval()
+    fresh.eval()
+    x = torch.randn(3, NUM_CHANNELS, SEQ_LEN)
+    with torch.no_grad(), model.fixed_membership(), fresh.fixed_membership():
+        torch.testing.assert_close(fresh(x), model(x))
+
+    # An old checkpoint loads strictly into a fitted model too, and drops the
+    # membership that belonged to other weights.
+    fresh.load_state_dict(old_checkpoint)
+    assert fresh.fixed_prob is None
+    assert set(fresh.state_dict()) == old_keys
+
+
+def test_fixed_membership_needs_a_fit_and_stays_out_of_training():
+    model = get_model(make_args("DLinear"))
+    x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
+    with pytest.raises(RuntimeError, match="fit_fixed_membership"):
+        with model.fixed_membership():
+            pass
+
+    model.fit_fixed_membership([x])
+    model.train()
+    with pytest.raises(RuntimeError, match="evaluation protocol"):
+        with model.fixed_membership():
+            model(x)
+    # The block restores upstream's protocol even when it raised.
+    assert model.use_fixed_prob is False
+    model(x)
+
+
+def test_cluster_run_rejects_conformal_validation_eval():
+    # The fixed protocol recalibrates on validation at test time; validation_eval
+    # would score it against the batch calibration saved during training.
+    args = make_args("DLinear")
+    args.conf.conf = True
+    args.conf.validation_eval = True
+    with pytest.raises(ValueError, match="validation_eval"):
+        get_model(args)
+
+
+def _stub_experiment(args, **windows):
+    """An Experiment with a shuffled, drop_last loader over each split's windows
+    and nothing else set up, as a re-score of a saved checkpoint builds one."""
+    exp = Experiment(args)
+    exp.device = torch.device("cpu")
+    for split, x in windows.items():
+        dataset = TensorDataset(x, torch.zeros(len(x), NUM_CHANNELS, PRED_LEN))
+        setattr(exp, f"{split}_loader",
+                DataLoader(dataset, batch_size=5, shuffle=True, drop_last=True))
+    return exp
+
+
+def test_experiment_fits_the_membership_on_the_whole_train_split_only():
+    """The run's membership must see every training window -- whatever the
+    training loader's shuffle and drop_last -- and no evaluation window: fitted
+    on validation or test it would leak the windows it then scores."""
+    args = make_args("DLinear")
+    model = get_model(args)
+    windows = {"train": torch.randn(12, NUM_CHANNELS, SEQ_LEN),
+               "val": torch.randn(7, NUM_CHANNELS, SEQ_LEN),
+               "test": torch.randn(7, NUM_CHANNELS, SEQ_LEN)}
+    exp = _stub_experiment(args, **windows)
+
+    fitted = exp.fit_fixed_membership(model).clone()
+    own = {split: model.fit_fixed_membership([x]).clone()
+           for split, x in windows.items()}
+    torch.testing.assert_close(fitted, own["train"])
+    assert not torch.allclose(fitted, own["val"])
+    assert not torch.allclose(fitted, own["test"])
+
+
+def test_fixed_evaluation_refuses_a_forward_handle_on_another_model():
+    # evaluate() forwards through exp.model_fwd; were that a different module
+    # than the one holding the fixed membership, the batch protocol would be
+    # logged under the sl_*_fixed keys.
+    args = make_args("DLinear")
+    model = get_model(args)
+    model.fit_fixed_membership([torch.randn(4, NUM_CHANNELS, SEQ_LEN)])
+    exp = _stub_experiment(args)
+    exp.model_fwd = get_model(args)
+    with pytest.raises(RuntimeError, match="model_fwd"):
+        exp.evaluate_fixed_membership(model, "DLinear", torch.nn.MSELoss())
+
+
+# One VoIP cell trained end to end (Experiment.run, CPU, two epochs) per case,
+# shared by the tests below: the multivariate DLinear cell and its k=1 and k=3
+# cluster twins.
+E2E_CASES = {"mv": None, "k1": 1, "k3": 3}
+
+
+def _run_voip_cell(k, logs_root):
+    setup = "voip_cluster" if k else "voip"
+    load_config, Experiment = grid.setup_modules(setup)
+    args = load_config(grid.args_path(setup, "rf_emf_mv/dlinear"))
+    # What run_grid sets for a cell, minus the host profile.
+    args.data.dataset = "VOIP_MOBILE"
+    args.data.seq_len = 48
+    args.data.pred_len = 12
+    args.conf.conf = True
+    args.conf.alpha = grids.GRIDS[setup]["alpha"]
+    args.exp.neptune = False
+    args.exp.id = f"k{k}" if k else ""
+    args.exp.seed_list = [grid.SEED]
+    args.exp.seed = grid.SEED
+    args.exp.compile = False
+    if k:
+        args.cluster.enabled = True
+        args.cluster.k_clusters = k
+    grid.apply_overrides(args, grids.GRIDS[setup]["overrides"])
+    args.sl.epochs = 2
+    args.data.num_workers = 0
+    args.data.pin_memory = False
+
+    # Experiment writes under ./logs. One thread: on a shared many-core box the
+    # default thread count makes this tiny model ~20x slower.
+    cwd, threads = os.getcwd(), torch.get_num_threads()
+    os.chdir(logs_root)
+    torch.set_num_threads(1)
+    exp = Experiment(args)
+    try:
+        exp.run()
+    finally:
+        os.chdir(cwd)
+        torch.set_num_threads(threads)
+        plt.close("all")
+    (log_path,) = glob.glob(os.path.join(logs_root, "logs", "**", "log.json"),
+                            recursive=True)
+    with open(log_path) as f:
+        log = json.load(f)
+    checkpoint = torch.load(os.path.join(os.path.dirname(log_path), "supervised.pth"))
+    return log, checkpoint, exp
+
+
+@pytest.fixture(scope="module")
+def voip_runs(tmp_path_factory):
+    return {name: _run_voip_cell(k, tmp_path_factory.mktemp(name))
+            for name, k in E2E_CASES.items()}
+
+
+def _metric_keys(log):
+    return [key for key in log if not key.startswith("parameters/")]
+
+
+@pytest.mark.parametrize("name", ["k1", "k3"])
+def test_cluster_run_logs_both_protocols_before_the_marker(voip_runs, name):
+    log, checkpoint, _ = voip_runs[name]
+    keys = _metric_keys(log)
+    test_keys = [key for key in keys if key.startswith("sl_test/")]
+    assert "sl_test/ic" in test_keys and grid.MARKER in test_keys
+
+    fixed = [key for key in keys if "_fixed/" in key]
+    assert "sl_val_fixed/loss" in fixed
+    assert {key for key in fixed if key.startswith("sl_test_fixed/")} == {
+        key.replace("sl_test/", "sl_test_fixed/") for key in test_keys}
+
+    # The resume marker is still the last thing logged: only its own sibling,
+    # written with it as before, comes after.
+    marker = keys.index(grid.MARKER)
+    assert keys[marker + 1:] == ["sl_test/interval_width_std"]
+    assert all(keys.index(key) < marker for key in fixed)
+
+    assert checkpoint["fixed_prob"].shape == (6, E2E_CASES[name])
+    torch.testing.assert_close(checkpoint["fixed_prob"].sum(dim=1), torch.ones(6))
+
+
+def test_k1_run_fixed_metrics_equal_the_batch_metrics(voip_runs):
+    log, _, _ = voip_runs["k1"]
+    for key in _metric_keys(log):
+        if key.startswith("sl_test/"):
+            assert log[key.replace("sl_test/", "sl_test_fixed/")] == log[key], key
+    # Validation is shuffled, so the two passes sum the same losses in a
+    # different order: equal up to float summation, not bitwise.
+    assert log["sl_val_fixed/loss"][0] == pytest.approx(min(log["sl_val/loss"]),
+                                                         rel=1e-6)
+
+
+def test_k3_run_fixed_metrics_are_their_own(voip_runs):
+    # Not a copy of the batch protocol: at k>1 the membership differs.
+    log, _, _ = voip_runs["k3"]
+    assert log["sl_test_fixed/mse"] != log["sl_test/mse"]
+    # The interval width is a function of the calibration scores alone: equal
+    # widths would mean the fixed test reused the batch calibration.
+    assert (log["sl_test_fixed/interval_width_mean"]
+            != log["sl_test/interval_width_mean"])
+
+
+def test_k3_run_calibrates_the_fixed_intervals_under_the_fixed_membership(
+        voip_runs):
+    """The scores the fixed test intervals were drawn from (the run's last
+    calibration) are validation's under the fixed membership, recomputed here,
+    and not validation's under the batch protocol."""
+    _, _, exp = voip_runs["k3"]
+    run_scores = exp.calibration_scores
+
+    def calibrate_on_validation():
+        exp.evaluate(model=exp.model, model_id=exp.args.exp.model_id,
+                     loader=exp.val_loader, criterion=exp.criterion, flag="sl",
+                     conformal_calibrate=True)
+        return exp.calibration_scores
+
+    with exp.model.fixed_membership():
+        fixed = calibrate_on_validation()
+    batch = calibrate_on_validation()
+    for key in ("uncorrected", "corrected"):
+        torch.testing.assert_close(run_scores[key], fixed[key])
+        assert not torch.allclose(run_scores[key], batch[key])
+
+
+def test_non_cluster_run_is_untouched_by_the_fixed_protocol(voip_runs):
+    log, checkpoint, _ = voip_runs["mv"]
+    assert not any("_fixed" in key for key in log)
+    assert "fixed_prob" not in checkpoint
+    assert _metric_keys(log)[-2:] == [grid.MARKER, "sl_test/interval_width_std"]
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,8 @@ the CLUSTERING layers cross the bridge:
                        nn.Linear.
   sinkhorn             upstream's row normalization (a temperature softmax; the
                        released code runs zero Sinkhorn iterations despite the
-                       name). Exported for tests and sanity checks.
+                       name). Exported for the fixed membership (models/ccm.py),
+                       which normalizes its train-split mean with it, and tests.
 
 They are threaded through THIS repo's own models (see models/dlinear.py,
 models/tsmixer.py, layers/patchtst/backbone.py, orchestrated by models/ccm.py),

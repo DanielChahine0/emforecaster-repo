@@ -40,6 +40,7 @@ from forecasting.multivariate.utils.models import (
     compute_aux_loss,
     model_update,
     forward_pass,
+    model_input,
 )
 from forecasting.multivariate.utils.classification import (
     get_logger_mapping,
@@ -870,9 +871,12 @@ class Experiment:
             pass
         elif self.args.exp.calibrate:
             self.init_dataloaders(loader_type="all", learning_type="sl")
-        elif self.args.conf.conf and not self.args.conf.validation_eval:
-            # Conformal recalibration below needs the val set. seq_load frees any
-            # existing loaders, so build train/val/test together to keep val_loader.
+        elif self.args.cluster.enabled or (
+            self.args.conf.conf and not self.args.conf.validation_eval
+        ):
+            # Conformal recalibration below needs the val set, and a cluster
+            # run's fixed membership the train split too. seq_load frees any
+            # existing loaders, so build train/val/test together to keep them.
             self.init_dataloaders(loader_type="all", learning_type="sl")
         else:
             self.init_dataloaders(loader_type="test", learning_type="sl")
@@ -940,9 +944,30 @@ class Experiment:
             num_plots=10,
         )
 
+        # <---CCM: the same checkpoint under one fixed membership--->
+        # The primary cluster evaluation (models/ccm.py); the batch-protocol
+        # stats above stay the sensitivity row. Runs after them so they are
+        # computed exactly as before, and the conformal scores it recalibrates
+        # are its own.
+        if self.args.cluster.enabled:
+            self.fit_fixed_membership(model)
+            # Rewrite the checkpoint with the membership beside the weights it
+            # was fitted for, so supervised.pth alone reproduces the fixed stats.
+            torch.save(model.state_dict(), best_model_path)
+            val_fixed, test_fixed = self.evaluate_fixed_membership(
+                model, model_id, criterion, flag, mae, acc, ch_acc
+            )
 
         ch_acc = True if self.args.data.full_channels else ch_acc
         acc = False if self.args.data.full_channels else acc
+        # Logged before the batch-protocol test stats: the grid's resume marker
+        # (sl_test/interval_width_mean) must stay the last thing a run logs.
+        if self.args.cluster.enabled:
+            self.log_stats(val_fixed, flag, mae, acc, ch_acc, mode="val_fixed")
+            self.log_stats(
+                test_fixed, flag, mae, acc, ch_acc, mode="test_fixed",
+                coverage=self.args.conf.conf,
+            )
         self.log_stats(
             stats, flag, mae, acc, ch_acc, mode="test", coverage=self.args.conf.conf
         )
@@ -959,6 +984,85 @@ class Experiment:
         self.tuning_score = stats[
             f"{self.args.exp.tuning_metric}"
         ]  # For hyperparameter tuning
+
+    def fit_fixed_membership(self, model):
+        """CCM: fit the run's fixed membership on the training split.
+
+        Every training window once, in order, through a fresh loader: the
+        training loader shuffles, and may drop its last batch. Stored on the
+        model (CCMForecaster.fit_fixed_membership) and returned.
+        """
+        loader = DataLoader(
+            self.train_loader.dataset,
+            batch_size=self.train_loader.batch_size,
+            shuffle=False,
+            num_workers=self.train_loader.num_workers,
+            pin_memory=self.train_loader.pin_memory,
+        )
+        return model.fit_fixed_membership(
+            model_input(self.args, batch, self.device) for batch in loader
+        )
+
+    def evaluate_fixed_membership(
+        self, model, model_id, criterion, flag="sl", mae=False, acc=False,
+        ch_acc=False,
+    ):
+        """CCM: validation and test under the model's fixed membership.
+
+        Mirrors test(): the validation stats, then split-conformal recalibrated
+        on validation with this same membership, then the test stats scored
+        against it. Needs fit_fixed_membership first, and self.model_fwd to
+        be model (or its compiled wrapper). Overwrites self.calibration_scores.
+
+        Returns:
+            (val_stats, test_stats), as evaluate() returns them.
+        """
+        # evaluate() forwards through self.model_fwd, not model: were they
+        # different modules, the batch protocol would be scored as the fixed one.
+        if getattr(self.model_fwd, "_orig_mod", self.model_fwd) is not model:
+            raise RuntimeError(
+                "evaluate_fixed_membership needs self.model_fwd to run model; "
+                "set it to the model the fixed membership was fitted on."
+            )
+        with model.fixed_membership():
+            val_stats = self.evaluate(
+                model=model,
+                model_id=model_id,
+                loader=self.val_loader,
+                criterion=criterion,
+                flag=flag,
+                mae=mae,
+                acc=acc,
+                ch_acc=ch_acc,
+                conformal_calibrate=False,
+                coverage=False,
+            )
+            if self.args.conf.conf:
+                self.evaluate(
+                    model=model,
+                    model_id=model_id,
+                    loader=self.val_loader,
+                    criterion=criterion,
+                    flag=flag,
+                    mae=mae,
+                    acc=acc,
+                    ch_acc=ch_acc,
+                    conformal_calibrate=True,
+                    coverage=False,
+                )
+            test_stats = self.evaluate(
+                model=model,
+                model_id=model_id,
+                loader=self.test_loader,
+                criterion=criterion,
+                flag=flag,
+                mae=mae,
+                acc=acc,
+                ch_acc=ch_acc,
+                conformal_calibrate=False,
+                coverage=self.args.conf.conf,
+            )
+        return val_stats, test_stats
 
     def evaluate(
         self,
@@ -1240,7 +1344,12 @@ class Experiment:
     def log_stats(
         self, stats, flag, mae, acc, ch_acc, mode, task="binary", coverage=False
     ):
-        modes = {"val": "Validation", "test": "Test"}
+        modes = {
+            "val": "Validation",
+            "test": "Test",
+            "val_fixed": "Validation (fixed membership)",
+            "test_fixed": "Test (fixed membership)",
+        }
         Mode = modes[mode]
         mapping = get_logger_mapping(self.args.open_neuro.task)
 
@@ -1254,7 +1363,7 @@ class Experiment:
             self.print_master(f"Model {Mode} MSE (channel-averaged): {stats['mse']:.6f}")
             epoch_logger(self.args, self.logger, f"{flag}_{mode}/mse", stats["mse"])
             if (
-                mode == "test"
+                mode in ("test", "test_fixed")
                 and "mse_per_channel" in stats
                 and not self.args.exp.neptune
             ):
