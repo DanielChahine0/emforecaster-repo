@@ -260,7 +260,7 @@ def choose_k(ks: dict, protocol: str, grid: tuple, n_family: int) -> Choice:
                    and all(v.get("val") is not None for v in ks[k].values()))
     base = dict(swept=swept, ranked=ranked, grid=grid, seeds=seeds, n_family=n_family)
     if not ranked:
-        return Choice(None, reason="no k has a validation loss at every seed", **base)
+        return Choice(None, reason="no k has every seed of the sweep yet", **base)
     sources = ()
     if protocol == "fixed":
         runs = [v.get("source", "") for k in ranked for v in ks[k].values()]

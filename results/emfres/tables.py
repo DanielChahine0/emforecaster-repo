@@ -331,7 +331,7 @@ def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
                     sweep = board.sweeps[c]
                     choice = board.choices[c]
                     row = [model_label(c[1]),
-                           cell_txt(board.cells[c].get(PG.MV), metric, n_family)]
+                           cell_txt(board.cells.get(c, {}).get(PG.MV), metric, n_family)]
                     for k in ks:
                         txt = cell_txt(sweep.get(k), metric, n_family)
                         row.append(f"<u>{txt}</u>" if k == choice.k else txt)
