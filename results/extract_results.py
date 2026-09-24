@@ -8,8 +8,8 @@
 
 Cluster runs (forecasting/grids.py GRIDS["cluster"]) sweep a k-cluster dimension on
 top of the usual (model, dataset, L, O) grid, so k is part of a cell's identity
-here: without it the four k values of one cell would be averaged into a single
-meaningless number. It shows up as an extra column, and only for trees that have
+here: without it the k values of one cell (1, 2, 3, 5 and 9 on EMF; 1, 2, 3 and 6
+on VoIP) would be averaged into a single meaningless number. It shows up as an extra column, and only for trees that have
 it -- every non-cluster tree's tables are byte-for-byte what they were before.
 
 The last section, '# Ultimate Comparison', puts every pipeline (per-channel,
@@ -72,7 +72,7 @@ ULTIMATE_SETTING = (336, 96)
 from emfres.runlogs import (  # noqa: E402
     Cell, Run, excluded, load_runs, parse_running_time,
 )
-from emfres.frames import is_archive  # noqa: E402
+from emfres.frames import family_of, is_archive  # noqa: E402
 
 
 
@@ -606,10 +606,14 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
                        f"shared cluster-wise linear, no similarity gradient), so it is "
                        f"the controlled no-clustering baseline. It still carries the "
                        f"cluster assigner's parameters, which is why its weight count "
-                       f"exceeds `{short_label(MULTIVARIATE_TITLE)}`'s; on DLinear the two "
-                       f"cells reproduce each other to four decimals. Runs made before "
-                       f"2026-08-25 by the upstream wrappers are in logs/_archive and are "
-                       f"not in these tables."))
+                       f"exceeds `{short_label(MULTIVARIATE_TITLE)}`'s. The two agree "
+                       f"within seed noise, not bit for bit (the per-seed gaps are in "
+                       f"`Channel Clustering (CCM) vs. plain`). Cluster rows are the "
+                       f"logged batch protocol; the fixed-membership numbers, the "
+                       f"primary protocol, are in `Paradigm Comparison`."
+                       + (" Runs made before 2026-08-25 by the upstream wrappers are in "
+                          "logs/_archive and are not in these tables."
+                          if any(family_of(d) == "emf" for d in axes[0][2]) else "")))
     items.append(
         ("Conformal prediction",
          "on for every run" if [a[0] for a in axes] == [True] else
@@ -627,7 +631,8 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
                  f"(**bold** = best, <u>underline</u> = runner-up); read **down** a dataset "
                  f"block to see what the same model does per channel, jointly, or with a "
                  f"k-cluster head. `{MISSING}` = that combination was not run "
-                 f"(the cluster grid only covers the four models that have a head to cluster).")
+                 f"(ARIMA and Persistence never are: they fit one model per band, so "
+                 f"there is nothing to cluster).")
 
         for name, log_key, attr, fmt in [("MSE", "sl_test/loss", "mse", num_fmt(4)),
                                          ("MAE", "sl_test/mae", "mae", num_fmt(4))]:
