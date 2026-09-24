@@ -55,15 +55,20 @@ def spec_attested() -> list[dict]:
 
 
 def spec_equivalent() -> list[dict]:
-    """Code-version equivalences, from specs/provenance.yaml; unusable ones warned about."""
-    from .runlogs import valid_equivalence
+    """Code-version equivalences, from specs/provenance.yaml.
+
+    Refused rules -- no evidence, a version mapped to two others, a cycle
+    (runlogs.equivalence_table) -- are warned about and left out.
+    """
+    from .runlogs import equivalence_table, valid_equivalence
 
     rules = _provenance_rules("equivalent_code")
-    for rule in rules:
-        if not valid_equivalence(rule):
-            print(f"WARNING: specs/provenance.yaml equivalent_code rule {rule!r} "
-                  f"needs from, to and evidence; ignoring it", file=sys.stderr)
-    return [r for r in rules if valid_equivalence(r)]
+    table, problems = equivalence_table(rules)
+    for problem in problems:
+        print(f"WARNING: specs/provenance.yaml equivalent_code: {problem}; ignoring it",
+              file=sys.stderr)
+    return [r for r in rules if valid_equivalence(r)
+            and table.get(str(r["from"]).strip()) == str(r["to"]).strip()]
 
 
 def spec_timing() -> dict:

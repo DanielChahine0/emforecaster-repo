@@ -122,8 +122,10 @@ is unknown); more than one means the cell is not a single-code seed mean.
 A training-code edit that provably leaves every run's numbers alone still makes
 a new fingerprint. An `equivalent_code` rule in `specs/provenance.yaml` counts
 such a version as another — `from`, `to`, and the `evidence` that shows it
-(golden hashes, a bit-exact GPU rerun); a rule without evidence is ignored.
-`runs.csv` keeps the raw fingerprint in `code_version` and adds the version it
+(golden hashes, a bit-exact GPU rerun); a rule without evidence is ignored,
+and so, with a `WARNING`, are rules that map one version to two others or form
+a cycle (`a -> b` beside `b -> a`), which would otherwise give a swapped,
+non-canonical mapping. `runs.csv` keeps the raw fingerprint in `code_version` and adds the version it
 counts as in `code_equivalent` (`cells.csv`: `code_equivalents`);
 `MANIFEST.json` lists every raw version under `code_versions`, with
 `equivalent_to` on the mapped ones, and the grouping under `code_equivalents`.

@@ -223,6 +223,49 @@ def valid_equivalence(rule) -> bool:
             and bool(evidence) and all(str(e).strip() for e in evidence))
 
 
+def equivalence_table(rules: list[dict]) -> tuple[dict, list[str]]:
+    """The from -> to table of the usable ``equivalent_code`` rules, and why
+    each other rule was refused.
+
+    A rule is refused whole, never half applied: when it has no evidence
+    (valid_equivalence); when its ``from`` is also mapped to another version,
+    since one code version cannot count as two; and when following the rules
+    from it comes back to it. A cycle is a misconfiguration, not a mapping:
+    a -> b with b -> a would count the runs at a as b and those at b as a, and
+    a -> a says nothing. A refused rule leaves its versions distinct, so
+    ``make.py extract`` still reports the split the rule would have hidden.
+    A rule that only leads into a cycle (c -> a beside a -> b -> a) keeps its
+    own mapping.
+    """
+    problems: list[str] = []
+    targets: dict = {}
+    for rule in rules or []:
+        if not valid_equivalence(rule):
+            problems.append(f"rule {rule!r} needs from, to and evidence")
+            continue
+        targets.setdefault(str(rule["from"]).strip(), set()).add(str(rule["to"]).strip())
+    table = {}
+    for src, tos in targets.items():
+        if len(tos) > 1:
+            problems.append(f"{src} is mapped to {len(tos)} versions "
+                            f"({', '.join(sorted(tos))})")
+        else:
+            table[src] = next(iter(tos))
+    cycles = []
+    for start in sorted(table):
+        path, node = [], start
+        while node in table and node not in path:
+            path.append(node)
+            node = table[node]
+        if node == start and not any(start in c for c in cycles):
+            cycles.append(path)
+    for cycle in cycles:
+        problems.append("rules form a cycle: " + " -> ".join(cycle + cycle[:1]))
+        for node in cycle:
+            del table[node]
+    return table, problems
+
+
 def equivalent_code(rules: list[dict], fingerprint: str) -> str:
     """The code version a training-code fingerprint is counted as.
 
@@ -230,16 +273,15 @@ def equivalent_code(rules: list[dict], fingerprint: str) -> str:
     (frames.code_fingerprint) onto another whose runs it is shown to
     reproduce, with the evidence beside it: the code changed on disk -- a new
     fingerprint -- but not in anything a run computes. Rules chain (a -> b,
-    b -> c counts a as c); a cycle stops where it would repeat. Fingerprints
-    match exactly, and a rule without evidence is ignored (valid_equivalence).
-    A fingerprint no rule names is its own version; "" stays "".
+    b -> c counts a as c). Fingerprints match exactly; a rule without
+    evidence, a version mapped to two others and a cycle are refused
+    (equivalence_table). A fingerprint no rule names is its own version;
+    "" stays "".
     """
-    table = {str(r["from"]).strip(): str(r["to"]).strip()
-             for r in rules or [] if valid_equivalence(r)}
-    seen = {fingerprint}
-    while fingerprint in table and table[fingerprint] not in seen:
+    table, _ = equivalence_table(rules)
+    # equivalence_table leaves no cycle, so the walk ends.
+    while fingerprint in table:
         fingerprint = table[fingerprint]
-        seen.add(fingerprint)
     return fingerprint
 
 

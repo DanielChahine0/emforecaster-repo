@@ -93,7 +93,10 @@ attested:
 # it counts as in code_equivalent (cells.csv: code_versions / code_equivalents);
 # MANIFEST.json lists every raw version with its equivalent_to, and `make.py
 # extract` warns about a split only across versions that are still distinct
-# after these rules. Rules chain; fingerprints match exactly.
+# after these rules. Rules chain; fingerprints match exactly. A version mapped
+# to two others, or rules that come back to where they started (a -> b with
+# b -> a, or a -> a), are misconfigurations: extract warns and ignores those
+# rules, so the versions stay distinct.
 #
 # 2414d9334cd4 (HEAD from 26d30764 to 51af0718e: the only fingerprinted change
 # from 21e1374ddc2c is GIT_OPTIONAL_LOCKS=0 in forecasting/provenance.py, which

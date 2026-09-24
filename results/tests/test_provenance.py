@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from emfres import cli, frames
-from emfres.runlogs import (attest_commit, equivalent_code, infer_commit, load_runs,
-                            valid_equivalence)
+from emfres.runlogs import (attest_commit, equivalence_table, equivalent_code,
+                            infer_commit, load_runs, valid_equivalence)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -205,11 +205,34 @@ def test_an_equivalence_maps_a_version_and_chains():
     assert equivalent_code(EQUIV, "bbbbbb") == "bbbbbb"
 
 
-def test_a_cycle_stops_instead_of_looping():
+def test_a_cycle_is_refused_not_followed():
+    # a -> b with b -> a would count a's runs as b and b's as a: no canonical
+    # version, so neither rule applies and both versions stay distinct.
     loop = [{"from": "a", "to": "b", "evidence": ["x"]},
-            {"from": "b", "to": "a", "evidence": ["x"]}]
-    assert equivalent_code(loop, "a") == "b"
-    assert equivalent_code(loop, "b") == "a"
+            {"from": "b", "to": "a", "evidence": ["x"]},
+            {"from": "c", "to": "a", "evidence": ["x"]}]
+    assert equivalent_code(loop, "a") == "a"
+    assert equivalent_code(loop, "b") == "b"
+    # A rule that only leads into the cycle keeps its own mapping.
+    assert equivalent_code(loop, "c") == "a"
+    table, problems = equivalence_table(loop)
+    assert table == {"c": "a"}
+    assert problems == ["rules form a cycle: a -> b -> a"]
+    # Mapping a version to itself is a cycle of one.
+    assert equivalence_table([{"from": "a", "to": "a", "evidence": ["x"]}]) == (
+        {}, ["rules form a cycle: a -> a"])
+
+
+def test_a_version_mapped_to_two_others_is_refused():
+    fork = [{"from": "b", "to": "a", "evidence": ["x"]},
+            {"from": "b", "to": "c", "evidence": ["x"]},
+            {"from": "d", "to": "a", "evidence": ["x"]},
+            {"from": "d", "to": "a", "evidence": ["the same rule twice"]}]
+    assert equivalent_code(fork, "b") == "b"
+    assert equivalent_code(fork, "d") == "a"
+    table, problems = equivalence_table(fork)
+    assert table == {"d": "a"}
+    assert problems == ["b is mapped to 2 versions (a, c)"]
 
 
 def test_an_equivalence_without_evidence_vouches_for_nothing():
@@ -316,3 +339,20 @@ def test_a_rule_without_evidence_is_warned_about_and_ignored(tmp_path, monkeypat
     monkeypatch.setattr(cli, "SPECS", specs)
     assert cli.spec_equivalent() == [{"from": "c", "to": "a", "evidence": ["x"]}]
     assert "needs from, to and evidence" in capsys.readouterr().err
+
+
+def test_a_cycle_or_fork_in_the_spec_is_warned_about_and_ignored(tmp_path, monkeypatch,
+                                                                 capsys):
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    keep = {"from": "e", "to": "a", "evidence": ["x"]}
+    (specs / "provenance.yaml").write_text(json.dumps({"equivalent_code": [
+        {"from": "a", "to": "b", "evidence": ["x"]},
+        {"from": "b", "to": "a", "evidence": ["x"]},
+        {"from": "c", "to": "d", "evidence": ["x"]},
+        {"from": "c", "to": "e", "evidence": ["x"]}, keep]}))
+    monkeypatch.setattr(cli, "SPECS", specs)
+    assert cli.spec_equivalent() == [keep]
+    err = capsys.readouterr().err
+    assert "WARNING: specs/provenance.yaml equivalent_code: rules form a cycle: a -> b -> a" in err
+    assert "c is mapped to 2 versions (d, e)" in err
