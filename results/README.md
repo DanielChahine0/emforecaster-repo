@@ -414,9 +414,14 @@ declare is fatal.
   record except the solo pass (none foreign), so earlier runs are flagged by
   their stamps alone. On the 2026-09-24 logs, 282 of the sweep's 309
   finished runs overlapped another user's jobs, which held the GPU for 5.6 of
-  its first 7.3 hours. The timing tables print ‡ after such a cell's time
-  and do not rank it; P7 draws it hollow; the legacy figures name its models
-  in a note. The flag says the time may be inflated: accuracy is unaffected.
+  its first 7.3 hours. The timing tables print ‡ after such a cell's time;
+  P7 draws it hollow; the legacy figures name its models in a note. The flag
+  says the time may be inflated: accuracy is unaffected. Sharing the card
+  only adds wall time, so a ‡ time is an upper bound and the tables rank it
+  as logged: a place it wins it would keep uncontended, and one it loses
+  only says it may be faster than it shows (leaving it unranked handed its
+  mark to a slower cell in 33 of the 94 marked rows with a ‡ on the
+  2026-09-24 logs).
 
 ## The paradigm comparison
 

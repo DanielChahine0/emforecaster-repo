@@ -199,13 +199,19 @@ SHORT_NOTE = ("`(n=…)` = a cell with fewer complete seeds than the other cells
 
 # The timed columns. A cell whose runs overlapped another user's process on
 # the GPU (Cell.n_foreign, from specs/contention.yaml) carries FOREIGN_MARK
-# there and is not ranked: its time may be inflated. Its accuracy is not
-# marked -- sharing a GPU changes scheduling, not arithmetic.
+# there. Sharing the card only adds wall time, so its time is an upper bound
+# on what it would have taken alone, and it is ranked as logged: a place it
+# wins it would keep uncontended, and one it loses only says it may be
+# faster than it shows. Leaving it out of the ranking instead handed its
+# mark to a cell slower than it. Its accuracy is not marked -- sharing a GPU
+# changes scheduling, not arithmetic.
 TIME_ATTRS = ("running_time", "per_epoch")
 FOREIGN_MARK = " ‡"
 FOREIGN_NOTE = ("‡ = a cell with a run that trained while another user's process was on "
-                "the GPU (`specs/contention.yaml`): its time may be inflated, so it is "
-                "not ranked. Its accuracy is unaffected.")
+                "the GPU (`specs/contention.yaml`): its time can only be too high, as "
+                "sharing the card adds wall time, so it is ranked as logged. A ‡ time "
+                "ranked ahead of another would stay ahead uncontended; one ranked behind "
+                "may belong ahead. Its accuracy is unaffected.")
 
 
 def foreign_mark(cell: Optional[Cell]) -> str:
@@ -338,18 +344,19 @@ def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool,
     for ds, sl, pl, k in row_keys:
         keys = [(m, ds, sl, pl, conf, k) for m in models]
         vals = [getattr(cells.get(key), attr, None) for key in keys]
-        notes = [shortfall(cells.get(key), key, targets) if v is not None else ""
-                 for key, v in zip(keys, vals)]
-        if attr in TIME_ATTRS:
-            notes = [note + (foreign_mark(cells.get(key)) if v is not None else "")
-                     for key, v, note in zip(keys, vals, notes)]
-        strs = [fmt(v) + note for v, note in zip(vals, notes)]
+        shorts = [shortfall(cells.get(key), key, targets) if v is not None else ""
+                  for key, v in zip(keys, vals)]
+        strs = [fmt(v) for v in vals]
         if mark_best:
             # Ranked within one k: the models of a cluster row compete at the same
             # cluster count, not against the other k's of the same window. A
-            # cell still training is not ranked against finished ones, nor a
-            # time another user's GPU process may have inflated.
-            mark_ranks(strs, [None if note else v for v, note in zip(vals, notes)])
+            # cell still training is not ranked against finished ones; a time
+            # another user's GPU process may have inflated is, as the upper
+            # bound it is (FOREIGN_NOTE).
+            mark_ranks(strs, [None if short else v for v, short in zip(vals, shorts)])
+        strs = [s + short + (foreign_mark(cells.get(key))
+                             if attr in TIME_ATTRS and v is not None else "")
+                for s, short, key, v in zip(strs, shorts, keys, vals)]
         head = [dataset_label(ds), str(sl), str(pl)]
         if show_k:
             head.append(MISSING if k is None else str(k))
@@ -922,17 +929,18 @@ def ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt,
             if all(v is None for v in vals):
                 continue
             keys = [(m, ds, sl, pl, conf, p.k) for m in models]
-            notes = [shortfall(p.cells.get(key), key, targets) if v is not None else ""
-                     for key, v in zip(keys, vals)]
-            if attr in TIME_ATTRS:
-                notes = [note + (foreign_mark(p.cells.get(key)) if v is not None else "")
-                         for key, v, note in zip(keys, vals, notes)]
-            strs = [fmt(v) + note for v, note in zip(vals, notes)]
+            shorts = [shortfall(p.cells.get(key), key, targets) if v is not None else ""
+                      for key, v in zip(keys, vals)]
+            strs = [fmt(v) for v in vals]
             # Ranked across the row, i.e. model vs model under one strategy; the
             # strategies are compared by reading down a dataset block instead.
-            # A cell still training is not ranked against finished ones, nor a
-            # time another user's GPU process may have inflated.
-            mark_ranks(strs, [None if note else v for v, note in zip(vals, notes)])
+            # A cell still training is not ranked against finished ones; a time
+            # another user's GPU process may have inflated is, as the upper
+            # bound it is (FOREIGN_NOTE).
+            mark_ranks(strs, [None if short else v for v, short in zip(vals, shorts)])
+            strs = [s + short + (foreign_mark(p.cells.get(key))
+                                 if attr in TIME_ATTRS and v is not None else "")
+                    for s, short, key, v in zip(strs, shorts, keys, vals)]
             rows.append([dataset_label(ds), p.label] + strs)
     return rows
 

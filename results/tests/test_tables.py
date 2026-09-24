@@ -193,7 +193,10 @@ def test_the_pooled_epoch_table_marks_a_row_that_pools_a_cell_still_training():
                                                         er.aggregate(mv), targets=targets)
 
 
-def test_a_time_another_users_gpu_process_may_have_inflated_is_marked_not_ranked():
+def test_a_time_another_users_gpu_process_may_have_inflated_is_marked_and_ranked_as_logged():
+    """Sharing the card only adds wall time, so a ‡ time is an upper bound: one
+    already faster than every unmarked time is the fastest, and one slower is
+    ranked where its logged time puts it."""
     from dataclasses import replace
 
     er, mv, cl = _trees()
@@ -209,7 +212,17 @@ def test_a_time_another_users_gpu_process_may_have_inflated_is_marked_not_ranked
     tabs = _section_tables(md)
     time = next(rows for head, rows in tabs.items() if head.startswith("Total training time"))
     k2 = next(r for r in time if r[3] == "2")
-    assert k2[4] == "30s ‡" and k2[5] == "**1m 0s**"         # marked, the other ranked
+    # Faster than the only unmarked time even as logged: the fastest, with its mark.
+    assert k2[4] == "**30s** ‡" and k2[5] == "<u>1m 0s</u>"
+    per_epoch = next(rows for head, rows in tabs.items() if head.startswith("Per-epoch"))
+    assert next(r for r in per_epoch if r[3] == "2")[4:6] == ["**0.5s** ‡", "<u>1.0s</u>"]
+    # A ‡ time slower than an unmarked one is ranked behind it, not dropped.
+    slow = [replace(r, running_time=90.0) if (r.model, r.k) == ("DLinear", 2) else r
+            for r in cl]
+    slow_md = er.render_report(er.CLUSTER_TITLE, slow, er.aggregate(slow), targets=targets)
+    slow_time = next(rows for head, rows in _section_tables(slow_md).items()
+                     if head.startswith("Total training time"))
+    assert next(r for r in slow_time if r[3] == "2")[4:6] == ["<u>1m 30s</u> ‡", "**1m 0s**"]
     mse = next(rows for head, rows in tabs.items() if head.startswith("MSE"))
     assert "‡" not in " ".join(" ".join(r) for r in mse)
     assert er.FOREIGN_NOTE in md
@@ -429,7 +442,8 @@ def test_the_ultimate_and_mv_vs_univariate_time_tables_mark_a_foreign_contended_
     md = er.render_ultimate(er.ULTIMATE_TITLE, pipes)
     time = md[md.index("Total training time"):]
     row = next(line for line in time.splitlines() if "| Cluster (k=1) |" in line)
-    assert "| 1m 0s ‡ |" in row and "**" not in row          # TSMixer is short, DLinear ‡
+    # TSMixer is short, so not ranked; DLinear's ‡ time is the only one ranked.
+    assert "| **1m 0s** ‡ |" in row and "(n=1)" in row
     assert er.FOREIGN_NOTE in time
     acc = md[:md.index("Total training time")]
     assert "‡" not in acc
