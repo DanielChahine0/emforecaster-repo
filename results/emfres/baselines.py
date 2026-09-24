@@ -29,9 +29,18 @@ agree to within 2e-4 -- and is documented rather than flagged. A training-loss
 rule fails too: per-channel DLinear barely moves its loss because it *starts*
 at a moving-average forecast with a tiny learning rate.
 
+``train_mean_mse`` is the second forecast that learns nothing: the training
+split's mean, which is 0 in the scaled space every model forecasts in (the
+scalers are fit on the training split). A model without RevIN that collapses
+lands there instead: the single-series Transformer, which has no RevIN in
+its code, sits at 1.1619 on ptv2 at L336/O96 -- the training-mean MSE to four
+decimals -- at three of its five seeds.
+
 Computed from the data with the training package's own loader, so the split,
 the train-only scaler, the outage and trace-join masks and the window starts
-are exactly the ones the runs were scored on.
+are exactly the ones the runs were scored on. The single-series tree
+(det, ptv, ptv2) is read with its own package's loader,
+forecasting/univariate, the one its runs trained on.
 """
 
 from __future__ import annotations
@@ -42,9 +51,8 @@ from typing import Optional
 
 import numpy as np
 
-# frames dataset slug -> the name load_forecasting takes. Only the joint-channel
-# corpora: the single-series grid runs a different package and has no RevIN
-# collapse to detect, so its runs are left without a baseline.
+# frames dataset slug -> the name load_forecasting takes, for the joint-channel
+# corpora (forecasting/multivariate).
 LOADER_NAME = {
     "ed2022": "ED2022",
     "uh2022": "UH2022",
@@ -54,6 +62,10 @@ LOADER_NAME = {
     "voip_mobile": "VOIP_MOBILE",
     "voip_fixed": "VOIP_FIXED",
 }
+
+# The single-series tree's slugs -> the name forecasting/univariate's
+# load_forecasting takes. One broadband series each, scored as one channel.
+SERIES_LOADER_NAME = {"det": "rf_emf_det", "ptv": "rf_emf_ptv", "ptv2": "rf_emf_ptv2"}
 
 _CACHE: dict = {}
 
@@ -98,35 +110,72 @@ def lookback_mean_mse(dataset: str, seq_len: int, pred_len: int,
 
     Returns an array with one entry per channel, in the loader's channel order
     (a per-channel run's ``channel`` indexes it; a joint run's MSE is its mean),
-    or None for a dataset outside LOADER_NAME.
+    one entry for a single series, or None for a dataset no loader knows.
     """
-    name = LOADER_NAME.get(dataset)
-    if name is None:
+    found = _trivial(dataset, seq_len, pred_len, train_split, val_split)
+    return None if found is None else found[0]
+
+
+def train_mean_mse(dataset: str, seq_len: int, pred_len: int,
+                   train_split: float, val_split: float) -> Optional[np.ndarray]:
+    """Per-channel test MSE of forecasting the training split's mean (0 when scaled).
+
+    Same windows, channel order and None as lookback_mean_mse.
+    """
+    found = _trivial(dataset, seq_len, pred_len, train_split, val_split)
+    return None if found is None else found[1]
+
+
+def _series(dataset: str, seq_len: int, pred_len: int, train_split: float,
+            val_split: float) -> tuple:
+    """(lookback, train mean) MSE of a single series, as one-channel arrays."""
+    from forecasting.univariate.utils.dataloading import load_forecasting
+
+    _, _, (x, y) = load_forecasting(
+        dataset_name=SERIES_LOADER_NAME[dataset], seq_len=seq_len, pred_len=pred_len,
+        train_split=train_split, val_split=val_split, univariate=True, scale=True)
+    x = np.asarray(x, dtype=np.float64).reshape(len(x), -1)    # (windows, seq_len)
+    y = np.asarray(y, dtype=np.float64).reshape(len(y), -1)    # (windows, pred_len)
+    lookback = ((y - x.mean(axis=1, keepdims=True)) ** 2).mean()
+    return np.array([lookback]), np.array([(y * y).mean()])
+
+
+def _trivial(dataset: str, seq_len: int, pred_len: int, train_split: float,
+             val_split: float) -> Optional[tuple]:
+    """(lookback-mean, train-mean) per-channel test MSE, cached; None if unknown."""
+    dataset = str(dataset).lower()
+    if dataset not in LOADER_NAME and dataset not in SERIES_LOADER_NAME:
         return None
+    name = LOADER_NAME.get(dataset) or SERIES_LOADER_NAME[dataset]
     key = (name, seq_len, pred_len, round(float(train_split), 6), round(float(val_split), 6))
-    if key not in _CACHE:
-        from forecasting.multivariate.utils.dataloading import load_forecasting
-        from forecasting.multivariate.utils.datasets import ForecastingDataset
+    if key in _CACHE:
+        return _CACHE[key]
+    if dataset in SERIES_LOADER_NAME:
+        _CACHE[key] = _series(dataset, seq_len, pred_len, train_split, val_split)
+        return _CACHE[key]
+    from forecasting.multivariate.utils.dataloading import load_forecasting
+    from forecasting.multivariate.utils.datasets import ForecastingDataset
 
-        _, _, (test, synthetic) = load_forecasting(
-            dataset_name=name, seq_len=seq_len, pred_len=pred_len,
-            train_split=train_split, val_split=val_split, return_synthetic=True)
-        test = np.asarray(test, dtype=np.float64)             # (channels, time)
-        windows = ForecastingDataset(test, seq_len, pred_len, synthetic=synthetic)
-        starts = (np.asarray(windows.valid_starts) if windows.valid_starts is not None
-                  else np.arange(len(windows)))
+    _, _, (test, synthetic) = load_forecasting(
+        dataset_name=name, seq_len=seq_len, pred_len=pred_len,
+        train_split=train_split, val_split=val_split, return_synthetic=True)
+    test = np.asarray(test, dtype=np.float64)             # (channels, time)
+    windows = ForecastingDataset(test, seq_len, pred_len, synthetic=synthetic)
+    starts = (np.asarray(windows.valid_starts) if windows.valid_starts is not None
+              else np.arange(len(windows)))
 
-        # Squared error of the lookback-mean forecast over every window, from
-        # running sums: for target y and forecast m, sum (y - m)^2 over the
-        # horizon is sum y^2 - 2 m sum y + O m^2.
-        zero = np.zeros((test.shape[0], 1))
-        c1 = np.concatenate([zero, np.cumsum(test, axis=1)], axis=1)
-        c2 = np.concatenate([zero, np.cumsum(test * test, axis=1)], axis=1)
-        mean = (c1[:, starts + seq_len] - c1[:, starts]) / seq_len
-        sy = c1[:, starts + seq_len + pred_len] - c1[:, starts + seq_len]
-        syy = c2[:, starts + seq_len + pred_len] - c2[:, starts + seq_len]
-        se = syy - 2.0 * mean * sy + pred_len * mean * mean
-        _CACHE[key] = se.sum(axis=1) / (len(starts) * pred_len)
+    # Squared error of the lookback-mean forecast over every window, from
+    # running sums: for target y and forecast m, sum (y - m)^2 over the
+    # horizon is sum y^2 - 2 m sum y + O m^2.
+    zero = np.zeros((test.shape[0], 1))
+    c1 = np.concatenate([zero, np.cumsum(test, axis=1)], axis=1)
+    c2 = np.concatenate([zero, np.cumsum(test * test, axis=1)], axis=1)
+    mean = (c1[:, starts + seq_len] - c1[:, starts]) / seq_len
+    sy = c1[:, starts + seq_len + pred_len] - c1[:, starts + seq_len]
+    syy = c2[:, starts + seq_len + pred_len] - c2[:, starts + seq_len]
+    se = syy - 2.0 * mean * sy + pred_len * mean * mean
+    n = len(starts) * pred_len
+    _CACHE[key] = (se.sum(axis=1) / n, syy.sum(axis=1) / n)
     return _CACHE[key]
 
 

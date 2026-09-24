@@ -133,10 +133,13 @@ def code_fingerprint(repo: Path, commit: Optional[str]) -> str:
 RUN_FIELDS = [
     "setup", "family", "model", "dataset", "seq_len", "pred_len", "k", "channel",
     "seed", "conf", "mse", "mae", "val_loss",
-    # Against the trivial forecast (emfres/baselines.py): the test MSE of
-    # repeating each window's lookback mean on the same windows, and the run's
-    # skill over it (1 - mse / lookback_mse).
-    "lookback_mse", "skill",
+    # Against the trivial forecasts (emfres/baselines.py): the test MSE of
+    # repeating each window's lookback mean on the same windows, the run's
+    # skill over it (1 - mse / lookback_mse), and the test MSE of forecasting
+    # the training split's mean (0 in the scaled space), where a model without
+    # RevIN lands when it collapses. The single-series tree is scored with its
+    # own package's loader.
+    "lookback_mse", "skill", "train_mean_mse",
     "running_time", "per_epoch", "epochs",
     # The 0-based epoch of val_loss, the checkpoint early stopping kept
     # (runlogs.Run.best_epoch); blank for the fit-once models.
@@ -250,28 +253,28 @@ def is_archive(logs_dir: Path) -> bool:
 
 
 def _baseline(run: Run) -> tuple:
-    """(lookback_mse, skill) cells for one run, blank when unavailable."""
-    from .baselines import lookback_mean_mse, skill
+    """(lookback_mse, skill, train_mean_mse) cells for one run, blank when unavailable."""
+    from .baselines import lookback_mean_mse, skill, train_mean_mse
 
     if run.mse is None or run.train_split is None or run.val_split is None:
-        return "", ""
-    per_channel = lookback_mean_mse(run.dataset, run.seq_len, run.pred_len,
-                                    run.train_split, run.val_split)
-    if per_channel is None:
-        return "", ""
+        return "", "", ""
+    args = (run.dataset, run.seq_len, run.pred_len, run.train_split, run.val_split)
+    lookback, train_mean = lookback_mean_mse(*args), train_mean_mse(*args)
+    if lookback is None:
+        return "", "", ""
     if run.channel is not None:
-        if run.channel >= len(per_channel):
-            return "", ""
-        base = float(per_channel[run.channel])
+        if run.channel >= len(lookback):
+            return "", "", ""
+        base, mean = float(lookback[run.channel]), float(train_mean[run.channel])
     else:
         # A joint run's MSE averages every channel over the same windows.
-        base = float(per_channel.mean())
-    return _num(base), _num(skill(run.mse, base))
+        base, mean = float(lookback.mean()), float(train_mean.mean())
+    return _num(base), _num(skill(run.mse, base)), _num(mean)
 
 
 def _row(run: Run, setup: str, repo: Path,
          equivalent: Optional[list[dict]] = None) -> dict:
-    lookback, skill_value = _baseline(run)
+    lookback, skill_value, train_mean = _baseline(run)
     version = code_fingerprint(repo, run.code_commit)
     return {
         "setup": setup,
@@ -289,6 +292,7 @@ def _row(run: Run, setup: str, repo: Path,
         "val_loss": _num(run.val_loss),
         "lookback_mse": lookback,
         "skill": skill_value,
+        "train_mean_mse": train_mean,
         "running_time": _num(run.running_time),
         "per_epoch": _num(run.per_epoch),
         "epochs": "" if run.epochs is None else run.epochs,
