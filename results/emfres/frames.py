@@ -66,10 +66,34 @@ def family_of(dataset: str) -> str:
 # results package does not import the training package.
 CODE_PATHS = ("forecasting", "main.py", "pyproject.toml", "TimeSeriesCCM-main")
 
-# Files under those paths that no training run ever reads.
-def _inert(path: str) -> bool:
+# Extensions a test's data fixture can carry: forecasting/test_golden.json holds
+# the hashes test_golden.py pins the model builds to.
+FIXTURE_SUFFIXES = (".json", ".csv", ".npy", ".npz")
+
+
+def _is_test_module(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
-    return name.endswith(".md") or (name.startswith("test_") and name.endswith(".py"))
+    return name.startswith("test_") and name.endswith(".py")
+
+
+def _folder(path: str) -> str:
+    return path.rpartition("/")[0]
+
+
+def _inert(path: str, test_dirs: frozenset = frozenset()) -> bool:
+    """True for a file under CODE_PATHS that no training run ever reads.
+
+    That is markdown, test modules (test_*.py), and the data fixtures those
+    tests load: a test_* file with a FIXTURE_SUFFIXES extension in a folder of
+    ``test_dirs``, the folders holding a test module. A fixture is inert only
+    beside a test module, so a test_* data file a loader might read elsewhere
+    still counts as training code.
+    """
+    name = path.rsplit("/", 1)[-1]
+    if name.endswith(".md") or _is_test_module(path):
+        return True
+    return (name.startswith("test_") and name.endswith(FIXTURE_SUFFIXES)
+            and _folder(path) in test_dirs)
 
 
 _FINGERPRINTS: dict = {}
@@ -81,8 +105,9 @@ def code_fingerprint(repo: Path, commit: Optional[str]) -> str:
     Two commits that differ only in results/, logs/, data/ or documentation
     train identically, so provenance is judged on this rather than on the
     commit id: a run stamped before a results-only commit and one stamped after
-    it are the same code version. Tests and markdown under the code paths are
-    left out for the same reason -- no training run imports them.
+    it are the same code version. Markdown, tests and the fixtures the tests
+    load are left out for the same reason (see _inert) -- no training run reads
+    them, so a tests-only commit keeps the version.
     """
     if not commit:
         return ""
@@ -95,10 +120,12 @@ def code_fingerprint(repo: Path, commit: Optional[str]) -> str:
         except Exception:
             _FINGERPRINTS[key] = ""
         else:
-            lines = sorted(
-                f"{path} {meta.split()[2]}"
-                for meta, _, path in (l.partition("\t") for l in listing.splitlines())
-                if path and not _inert(path))
+            blobs = [(path, meta.split()[2])
+                     for meta, _, path in (l.partition("\t") for l in listing.splitlines())
+                     if path]
+            test_dirs = frozenset(_folder(p) for p, _ in blobs if _is_test_module(p))
+            lines = sorted(f"{path} {sha}" for path, sha in blobs
+                           if not _inert(path, test_dirs))
             _FINGERPRINTS[key] = (hashlib.sha256("\n".join(lines).encode()).hexdigest()[:12]
                                   if lines else "")
     return _FINGERPRINTS[key]

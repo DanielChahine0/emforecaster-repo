@@ -98,10 +98,11 @@ inputs change and not otherwise, so a rebuild leaves `git status` clean.
 
 Provenance is judged on the code a run executed, not on its commit id. A code
 version is a fingerprint of `forecasting/`, `main.py`, `pyproject.toml` and the
-vendored CCM tree at that commit, ignoring tests and markdown
+vendored CCM tree at that commit, ignoring markdown, tests (`test_*.py`) and
+the data fixtures beside them such as `forecasting/test_golden.json`
 (`frames.code_fingerprint`). Commits that differ only in `results/`, `logs/`,
-`data/` or docs therefore share a version, which is what lets results work be
-committed while a sweep is running without splitting the sweep.
+`data/`, tests or docs therefore share a version, which is what lets results
+work be committed while a sweep is running without splitting the sweep.
 
 Per run, `runs.csv` carries `git_commit` (stamped, or dated by a rule),
 `git_dirty`, `commit_source` — `log` (stamped, clean tree), `attested` (stamped

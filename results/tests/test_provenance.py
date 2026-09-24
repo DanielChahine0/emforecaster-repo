@@ -59,6 +59,56 @@ def test_tests_and_docs_do_not_count_as_training_code():
     assert not frames._inert("forecasting/multivariate/utils/testing_helpers.py")
 
 
+def test_a_test_fixture_is_inert_only_beside_a_test_module():
+    tests = frozenset({"forecasting"})
+    assert frames._inert("forecasting/test_golden.json", tests)
+    assert frames._inert("forecasting/test_windows.npz", tests)
+    # No test module in that folder: a loader could be reading it.
+    assert not frames._inert("forecasting/data/test_split.json", tests)
+    assert not frames._inert("forecasting/test_golden.json")
+    # A data file is a fixture by its test_ prefix, and only a data one is.
+    assert not frames._inert("forecasting/golden.json", tests)
+    assert not frames._inert("forecasting/test_config.yaml", tests)
+
+
+def _git(root, *argv):
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t",
+                    *argv], check=True, capture_output=True)
+
+
+def _commit(root, files):
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "c")
+    return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_regenerating_a_fixture_keeps_the_code_version(tmp_path):
+    _git(tmp_path, "init", "-q")
+    base = _commit(tmp_path, {"forecasting/model.py": "W = 1\n",
+                              "forecasting/test_model.py": "def test(): pass\n",
+                              "forecasting/test_model.json": '{"h": "a"}\n'})
+    fixture = _commit(tmp_path, {"forecasting/test_model.json": '{"h": "b"}\n'})
+    stray = _commit(tmp_path, {"forecasting/data/test_split.json": "[1]\n"})
+    code = _commit(tmp_path, {"forecasting/model.py": "W = 2\n"})
+    fp = {c: frames.code_fingerprint(tmp_path, c) for c in (base, fixture, stray, code)}
+    assert fp[base] and fp[base] == fp[fixture]
+    assert fp[stray] != fp[fixture]
+    assert fp[code] != fp[stray]
+
+
+def test_the_golden_hash_commits_kept_the_code_version():
+    # 149ec6295 and 51af0718e added and regrew forecasting/test_golden.py and its
+    # fixture test_golden.json on top of f84e58dae, and touched nothing else.
+    commits = ("f84e58dae", "149ec6295", "51af0718e")
+    if not _in_history(*commits):
+        pytest.skip("commits not in this checkout's history")
+    assert len({frames.code_fingerprint(REPO, c) for c in commits}) == 1
+
+
 # --------------------------------------------------------------- rules
 
 INFERRED = [
