@@ -793,10 +793,10 @@ class Cluster(BaseModel):
     from the vendored TimeSeriesCCM-main/ tree: channels are assigned to k
     clusters by a learned, soft, sinkhorn-normalized assignment against
     trainable cluster embeddings, and k parallel Linear layers are mixed by
-    that assignment. Only DLinear, PatchTST, TSMixer, EMForecaster and
-    RF_EMF_Transformer (the last two swap the read-out their channels share)
-    are built this way (models/ccm.py CCM_MODELS); any other model_id is
-    rejected at model build.
+    that assignment. Only DLinear, PatchTST, TSMixer, EMForecaster,
+    RF_EMF_Transformer and LSTM (the last three swap the read-out their
+    channels share) are built this way (models/ccm.py CCM_MODELS); any other
+    model_id is rejected at model build.
 
     Two prior implementations produced runs under logs/ trees that are NOT
     resumable against the current code:

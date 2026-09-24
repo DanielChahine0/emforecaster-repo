@@ -36,6 +36,7 @@ class RecurrentModel(nn.Module):
         last_state=True,
         avg_state=False,
         return_head=True,
+        n_clusters=None,
     ):
         super(RecurrentModel, self).__init__()
 
@@ -62,6 +63,9 @@ class RecurrentModel(nn.Module):
             eps_revin (float): The epsilon value for RevIN. Default: 1e-5.
             last_state (bool): If True, returns the last state of the RNN. Default: True.
             avg_state (bool): If True, returns the average state of the RNN. Default: False.
+            n_clusters (int): CCM cluster grid only (models/ccm.py). Replaces the linear head every channel shares
+                with k cluster-wise copies mixed by the soft membership that forward() then requires; the patch
+                projection, the LSTM and its LayerNorm stay shared. LSTM backbone only. None = off.
         """
 
         # Parameters
@@ -76,6 +80,23 @@ class RecurrentModel(nn.Module):
         self.avg_state = avg_state
         self.input_size = d_model if patching else num_channels
         self.return_head = return_head
+        self.n_clusters = n_clusters
+        # Only the linear head has a cluster-wise form, and routing it by the
+        # membership (one row per channel) needs the patching path, the one that
+        # keeps a channel axis in front of the head. Only the LSTM backbone is
+        # adapted: the grids log this model under its LSTM alias, so any other
+        # backbone would put a different network in that column.
+        if n_clusters is not None and (
+            backbone_id != "LSTM"
+            or not patching
+            or head_type != "linear"
+            or not return_head
+        ):
+            raise ValueError(
+                "n_clusters only replaces the LSTM's linear head; cluster cells "
+                "run backbone_id='LSTM' and patching=True with "
+                "head_type='linear' and return_head=True."
+            )
 
         # RevIN
         if revin:
@@ -145,7 +166,25 @@ class RecurrentModel(nn.Module):
 
         head_dim = 2 * head_dim if bidirectional else head_dim
 
-        if head_type == "linear":
+        if head_type == "linear" and n_clusters is not None:
+            # Upstream's own cluster-wise layer, run verbatim from the vendored
+            # tree (lazy import so only cluster cells touch it; its trailing
+            # device arg is unused). xavier_init below redraws the weights from
+            # the global RNG, so the stream it starts from has to be the
+            # multivariate one: a throwaway plain head burns exactly the draws
+            # the multivariate head makes here, and the k-way layer is built on
+            # a forked CPU RNG that is restored after (the build draws nothing
+            # on a GPU). The backbone then gets the multivariate init at any k,
+            # copy 0 the multivariate head's draw, and copies 1..k-1 the draws
+            # that follow it.
+            from forecasting.multivariate.utils.ccm_upstream import Cluster_wise_linear
+
+            nn.Linear(head_dim, pred_len)  # the throwaway plain head
+            with torch.random.fork_rng(devices=[]):
+                self.head = Cluster_wise_linear(
+                    n_clusters, num_channels, head_dim, pred_len, None
+                )
+        elif head_type == "linear":
             self.head = nn.Linear(head_dim, pred_len)
         elif head_type == "mlp":
             self.head = nn.Sequential(
@@ -185,7 +224,7 @@ class RecurrentModel(nn.Module):
 
         return out, last_hn
 
-    def forward(self, x):
+    def forward(self, x, cluster_prob=None):
         """
         Computes the forward pass of the Mamba model. There are two possible modes:
 
@@ -202,6 +241,11 @@ class RecurrentModel(nn.Module):
         Legend:
             B: batch_size, M: num_channels, L: seq_len, N: num_patches, P: patch_dim, D: d_model.
         """
+        if self.n_clusters is not None and cluster_prob is None:
+            raise ValueError(
+                "This RecurrentModel was built with n_clusters; forward() needs "
+                "the ClusterAssigner's membership (see models/ccm.py)."
+            )
 
         # Ensure input is correct
         if len(x.shape) == 2:
@@ -243,7 +287,12 @@ class RecurrentModel(nn.Module):
 
         # Head
         if self.return_head:
-            x = self.head(self.dropout(x))  # (B, pred_len)
+            if self.n_clusters is not None:
+                # CCM routes each channel by its own membership row, along the
+                # channel axis the reshape above restored.
+                x = self.head(self.dropout(x), cluster_prob)  # (B, M, pred_len)
+            else:
+                x = self.head(self.dropout(x))  # Patched: (B, M, pred_len). Non-patched: (B, pred_len)
 
         # RevOUT
         if self.revout:

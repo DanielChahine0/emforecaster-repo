@@ -45,8 +45,8 @@ from forecasting import hardware
 
 def get_model(args, generator=torch.Generator()):
     # The cluster grid runs the SAME constructors below with n_clusters set --
-    # the model's per-channel temporal linears (EMForecaster and the
-    # Transformer: the read-out their channels share) become upstream's own
+    # the model's per-channel temporal linears (EMForecaster, the Transformer
+    # and LSTM: the read-out their channels share) become upstream's own
     # Cluster_wise_linear, imported verbatim from the vendored
     # TimeSeriesCCM-main/ tree -- and wraps the result in CCMForecaster
     # (forecasting/multivariate/models/ccm.py), which drives upstream's
@@ -108,6 +108,7 @@ def get_model(args, generator=torch.Generator()):
             eps_revin=args.sl.eps_revin,
             last_state=args.sl.last_state,
             avg_state=args.sl.avg_state,
+            n_clusters=n_clusters,
         )
     elif args.exp.model_id == "Linear":
         model = Linear(

@@ -33,6 +33,7 @@ from forecasting.multivariate.exp.exp import Experiment
 from forecasting.multivariate.models.ccm import CCM_MODELS, CCMForecaster
 from forecasting.multivariate.models.dlinear import DLinear
 from forecasting.multivariate.models.emforecaster import EMForecaster
+from forecasting.multivariate.models.recurrent import RecurrentModel
 from forecasting.multivariate.models.rf_emf_baselines import Transformer
 from forecasting.multivariate.utils import models
 from forecasting.multivariate.utils.ccm_upstream import (Cluster_assigner,
@@ -77,6 +78,15 @@ def make_args(model_id, k=K, beta=0.3):
         # The one width its backbone runs at (rf_emf_mv/transformer): conv1
         # folds d_model 2 -> 1 ahead of the fc2 read-out CCM clusters.
         args.sl.d_model = 2
+    if model_id == "LSTM":
+        # Its production structure (rf_emf_mv/lstm): patches projected into a
+        # two-layer LSTM whose averaged state feeds the linear head CCM
+        # clusters.
+        args.data.patching = True
+        args.sl.last_state = False
+        args.sl.avg_state = True
+        args.sl.norm_mode = "layer"
+        args.sl.num_enc_layers = 2
     return args
 
 
@@ -299,8 +309,9 @@ def test_get_model_rejects_a_model_without_a_ccm_adaptation():
     # each channel on its own to route, and ARIMA and Persistence forecast each
     # band alone with no gradient path; building something else under their
     # name would put a column in the results table that is not the method it
-    # claims to be.
-    for model_id in ("TimesNet", "ARIMA", "Persistence"):
+    # claims to be. The bare RecurrentModel id is out too: the grids run the
+    # LSTM backbone under its LSTM alias, and no other backbone is adapted.
+    for model_id in ("TimesNet", "ARIMA", "Persistence", "RecurrentModel"):
         with pytest.raises(ValueError, match="no CCM adaptation"):
             get_model(make_args(model_id))
 
@@ -641,6 +652,157 @@ def test_cluster_transformer_needs_its_channel_count():
 
 
 # ---------------------------------------------------------------------------
+# LSTM: CCM on the linear head its channels share
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("shape", sorted(JOB_SHAPES))
+def test_ccm_k1_lstm_is_the_multivariate_build(shape):
+    """k=1 is the multivariate cell bit for bit, with no weights copied over:
+    its one head copy is drawn where the multivariate head is, and the all-ones
+    membership passes the forecast through unchanged."""
+    mv = build(make_job_args("LSTM", shape=shape))
+    ccm = build(make_job_args("LSTM", k=1, shape=shape))
+    assert isinstance(ccm.backbone, RecurrentModel)
+
+    want = mv.state_dict()
+    got = {name.replace("head.linears.0.", "head."): tensor
+           for name, tensor in ccm.backbone.state_dict().items()}
+    assert list(got) == list(want)
+    for name, tensor in want.items():
+        assert torch.equal(got[name], tensor), name
+
+    _, num_channels, seq_len, _, _ = JOB_SHAPES[shape]
+    x = torch.randn(3, num_channels, seq_len)
+    mv.eval()
+    ccm.eval()
+    with torch.no_grad():
+        assert torch.equal(ccm(x), mv(x))
+
+
+def test_lstm_backbone_init_is_the_multivariate_build_at_every_k(monkeypatch):
+    """Clustering the head moves nothing else. xavier_init redraws the weights
+    at the end of the build, so the head's construction must leave the stream
+    it redraws from as the multivariate build leaves it: at every k the
+    rest of the network is the multivariate init and copy 0 is the
+    multivariate head; the other copies are the draws that follow it, distinct,
+    and copy j is the same whatever k is. Those draws leave the global RNG
+    where the multivariate build does only at k=1: past it the assigner and
+    training draw a shifted stream, as for DLinear, PatchTST and TSMixer."""
+    # The backbone exactly as get_model builds it, before the wrapper's
+    # assigner draws from the RNG.
+    monkeypatch.setattr(models, "CCMForecaster", lambda args, backbone: backbone)
+    mv = build(make_job_args("LSTM"))
+    mv_rng = torch.get_rng_state()
+    want = mv.state_dict()
+    del mv
+
+    reference = None
+    for k in (9, 5, 3, 2, 1):
+        backbone = build(make_job_args("LSTM", k=k))
+        assert torch.equal(torch.get_rng_state(), mv_rng) == (k == 1), k
+
+        state = backbone.state_dict()
+        copies = {f"head.linears.{i}.{p}" for i in range(k)
+                  for p in ("weight", "bias")}
+        assert set(state) == set(want) - {"head.weight", "head.bias"} | copies
+        for name, tensor in want.items():
+            if not name.startswith("head."):
+                assert torch.equal(state[name], tensor), (k, name)
+
+        linears = backbone.head.linears
+        assert torch.equal(linears[0].weight, want["head.weight"])
+        # xavier_init zeroes every bias, the multivariate head's included.
+        assert all(torch.equal(linear.bias, want["head.bias"])
+                   for linear in linears)
+        for i in range(k):
+            assert not any(torch.equal(linears[i].weight, linears[j].weight)
+                           for j in range(i)), (k, i)
+        if reference is None:
+            reference = [linear.weight for linear in linears]
+        for i in range(k):
+            assert torch.equal(linears[i].weight, reference[i]), (k, i)
+
+
+def test_lstm_routes_each_channel_by_its_own_membership_row():
+    """Channel c's read-out is its own mixture, sum_j p[c, j] * copy_j(h[b, c]),
+    where h[b, c] is channel c's averaged LSTM state for window b alone: the
+    fold into the batch and back keeps every channel on its own row. So moving
+    one channel's membership row, or its input, moves that channel's forecast
+    and no other's."""
+    model = get_model(make_args("LSTM"))
+    model.eval()
+    linears = model.backbone.head.linears
+    with torch.no_grad():
+        # xavier_init leaves the biases at zero; nonzero ones check their
+        # mixture too.
+        for linear in linears:
+            linear.bias.normal_()
+    seen = {}
+    model.backbone.head.register_forward_hook(
+        lambda module, inputs, out: seen.update(h=inputs[0], out=out))
+
+    x = torch.randn(2, NUM_CHANNELS, SEQ_LEN)
+    prob = torch.softmax(3 * torch.randn(NUM_CHANNELS, K), dim=-1)
+    moved = prob.clone()
+    moved[2] = torch.eye(K)[prob[2].argmin()]
+    x_moved = x.clone()
+    x_moved[:, 4] = torch.randn(2, SEQ_LEN)
+    with torch.no_grad():
+        out = model.backbone(x, cluster_prob=prob)
+        assert seen["h"].shape == (2, NUM_CHANNELS, 16)
+        want = sum(prob[:, j, None] * linears[j](seen["h"]) for j in range(K))
+        torch.testing.assert_close(seen["out"], want)
+        out_moved = model.backbone(x, cluster_prob=moved)
+        out_x_moved = model.backbone(x_moved, cluster_prob=prob)
+
+    def changed(other):
+        return [c for c in range(NUM_CHANNELS)
+                if not torch.equal(other[:, c], out[:, c])]
+
+    assert changed(out_moved) == [2]
+    assert changed(out_x_moved) == [4]
+
+
+# Each cluster beyond the first adds one more copy of the head, Linear(d_model
+# -> pred_len): 32 -> 96, 3,168 parameters, on EMF; 32 -> 12, 396, on VoIP. Any
+# k adds the assigner's Linear(seq_len -> sl.d_model=32): 10,784 on EMF, 1,568
+# on VoIP.
+@pytest.mark.parametrize("shape, k, expected", [
+    ("emf", None, 20_726), ("emf", 1, 31_510), ("emf", 2, 34_678),
+    ("emf", 3, 37_846), ("emf", 5, 44_182), ("emf", 9, 56_854),
+    ("voip", None, 17_912), ("voip", 1, 19_480), ("voip", 2, 19_876),
+    ("voip", 3, 20_272), ("voip", 6, 21_460),
+])
+def test_lstm_parameter_counts_at_production_size(shape, k, expected):
+    model = build(make_job_args("LSTM", k=k, shape=shape))
+    assert sum(p.numel() for p in model.parameters()) == expected
+
+
+def test_lstm_clusters_only_the_patched_linear_head():
+    # Unpatched, the LSTM reads the channels as the features of one sequence,
+    # so no channel axis reaches the head for the membership to index; an MLP
+    # head has no cluster-wise form, and with the head off there is nothing to
+    # route. Another backbone under the LSTM alias would be a different network
+    # in the LSTM column. Each must fail at build rather than train something
+    # else under the cluster cell's name.
+    for setting in ({"data.patching": False}, {"sl.head_type": "mlp"},
+                    {"exp.backbone_id": "GRU"}, {"exp.backbone_id": "RNN"},
+                    {"exp.backbone_id": "Mamba"}):
+        args = make_args("LSTM")
+        grid.apply_overrides(args, setting)
+        with pytest.raises(ValueError, match="linear head"):
+            get_model(args)
+
+    with pytest.raises(ValueError, match="linear head"):
+        RecurrentModel(d_model=16, num_enc_layers=2, pred_len=PRED_LEN,
+                       backbone_id="LSTM", seq_len=SEQ_LEN, patching=True,
+                       patch_dim=8, patch_stride=4, num_channels=NUM_CHANNELS,
+                       last_state=False, avg_state=True, return_head=False,
+                       n_clusters=K)
+
+
+# ---------------------------------------------------------------------------
 # Fixed-membership evaluation (the primary protocol; upstream's batch one stays
 # logged beside it)
 # ---------------------------------------------------------------------------
@@ -976,6 +1138,18 @@ def test_cluster_transformer_trains_end_to_end(tmp_path):
     log, checkpoint, exp = _run_voip_cell(
         2, tmp_path, job="rf_emf_mv/transformer", settings={"sl.epochs": 1})
     assert isinstance(exp.model.backbone, Transformer)
+    for key in ("sl_train/loss", "sl_train/similarity_loss", "sl_val/loss",
+                "sl_test/mse", "sl_test_fixed/mse", grid.MARKER):
+        assert torch.isfinite(torch.tensor(log[key])).all(), key
+    _assert_both_protocols_before_the_marker(log, checkpoint, 2)
+
+
+def test_cluster_lstm_trains_end_to_end(tmp_path):
+    """A cluster LSTM cell trains and scores through Experiment.run, both
+    protocols included, at the VoIP grid's own settings (one epoch)."""
+    log, checkpoint, exp = _run_voip_cell(
+        2, tmp_path, job="rf_emf_mv/lstm", settings={"sl.epochs": 1})
+    assert isinstance(exp.model.backbone, RecurrentModel)
     for key in ("sl_train/loss", "sl_train/similarity_loss", "sl_val/loss",
                 "sl_test/mse", "sl_test_fixed/mse", grid.MARKER):
         assert torch.isfinite(torch.tensor(log[key])).all(), key

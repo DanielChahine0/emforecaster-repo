@@ -40,6 +40,10 @@ put Cluster_wise_linear):
                 the Linear read-out (fc2) from each channel's encoded,
                 convolved sequence to the horizon; the encoder and the convs
                 are untouched. The same precedent.
+  LSTM          the linear head from each channel's averaged LSTM state to the
+                horizon (RecurrentModel, backbone_id LSTM); the patch
+                projection, the LSTM and its LayerNorm are untouched. The same
+                precedent.
 
 Repo-side adaptations, each marked ADAPTED below or at its site:
 
@@ -96,9 +100,12 @@ import torch.nn as nn
 # models/ have been given a cluster-wise form of a linear map they apply to each
 # channel on its own -- a per-channel temporal linear, or a read-out shared
 # across channels -- for CCM to route. get_model rejects a cluster cell for any
-# other model_id before building anything.
+# other model_id before building anything. LSTM is the grids' alias for the
+# LSTM-backboned RecurrentModel, and its cluster build refuses any other
+# backbone; the bare RecurrentModel id, whose other backbones no grid runs,
+# stays out.
 CCM_MODELS = frozenset(
-    {"DLinear", "PatchTST", "TSMixer", "EMForecaster", "RF_EMF_Transformer"}
+    {"DLinear", "PatchTST", "TSMixer", "EMForecaster", "RF_EMF_Transformer", "LSTM"}
 )
 
 
