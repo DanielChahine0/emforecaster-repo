@@ -322,6 +322,22 @@ def test_the_cross_tables_take_the_paradigm_comparisons_k(tmp_path):
         assert board[protocol][("DLinear (2023)", "ed2022")].k == 2    # validates best
 
 
+def test_the_index_says_which_columns_of_the_cluster_twin_lead(tmp_path):
+    runs = [_run("multivariate", s, 0.4) for s in SEEDS]
+    runs += [_run("cluster", s, 0.4, k=2, val=0.3) for s in SEEDS]
+    frames.write_csv(tmp_path / "cells.csv", frames.build_cells(runs), frames.CELL_FIELDS)
+    twins = {p.stem: p for p in tables.cells_csv_twins(tmp_path / "cells.csv",
+                                                       tmp_path / "csv")}
+    assert "`*_fixed` columns" in tables.twin_note(twins["cluster"])
+    assert "batch protocol" in tables.twin_note(twins["cluster"])
+    assert tables.twin_note(twins["multivariate"]) == ""
+    # A twin of frames written before the fixed columns: nothing to gloss.
+    old = tmp_path / "old" / "cluster.csv"
+    old.parent.mkdir()
+    old.write_text("setup,model,mse,mae\ncluster,DLinear,0.5,0.4\n")
+    assert tables.twin_note(old) == ""
+
+
 def test_the_ultimate_table_does_not_rank_a_cell_still_training():
     er, mv, cl = _trees()
     pipes = er.build_pipelines({er.MULTIVARIATE_TITLE: er.aggregate(mv),

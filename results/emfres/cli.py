@@ -406,7 +406,7 @@ def cmd_tables(args) -> int:
              "", "| Section | Markdown |", "| :--- | :--- |"]
     index += [f"| {title} | [`{slug}.md`]({slug}.md) |" for slug, title, _ in sections]
     index += ["", "Per-setup cell values, one row per aggregated cell:", ""]
-    index += [f"- [`csv/{p.name}`](csv/{p.name})" for p in twins]
+    index += [f"- [`csv/{p.name}`](csv/{p.name}){T.twin_note(p)}" for p in twins]
     (outdir / "index.md").write_text("\n".join(index) + "\n")
 
     rel = outdir.relative_to(REPO)

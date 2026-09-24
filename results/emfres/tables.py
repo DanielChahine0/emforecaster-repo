@@ -285,6 +285,24 @@ def cells_csv_twins(cells_csv: Path, outdir: Path,
     return written
 
 
+def twin_note(path: Path) -> str:
+    """What tables/index.md adds after a csv twin's link, or "".
+
+    A twin keeps cells.csv's columns, so where its markdown section leads with
+    another column than the plain metric -- the Cluster section with the
+    fixed-membership protocol -- the index says which columns those are.
+    """
+    if path.stem != "cluster":
+        return ""
+    with open(path, newline="") as f:
+        header = next(csv.reader(f), [])
+    if "mse_fixed" not in header:
+        return ""
+    return (": the primary values, the fixed train-mean membership that `cluster.md` "
+            "leads with, are the `*_fixed` columns; `mse`, `mae`, `ic`, `jc` and "
+            "`interval_width` are the logged batch protocol, its sensitivity")
+
+
 # --------------------------------------------------------------------------- #
 # CCM sweep: each model against itself with clustering, k-major
 # --------------------------------------------------------------------------- #

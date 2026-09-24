@@ -433,7 +433,10 @@ docstring has the full rules.
   A fixed twin is all or nothing in the tables as in `cells.csv`
   (`extract_results.fixed_cells`): a cell with a run that has no fixed
   metrics prints `-` there, not a mean over its other seeds, while its time,
-  epochs and size keep every run (no run lacks them today). CCM vs Base bolds
+  epochs and size keep every run (no run lacks them today). The csv twin
+  `tables/csv/cluster.csv` keeps `cells.csv`'s columns, so its primary values
+  are the `*_fixed` ones and `mse`/`mae`/`ic`/`jc`/`interval_width` the batch
+  sensitivity; `tables/index.md` says so beside its link. CCM vs Base bolds
   neither side of a pair that prints the same at 4 decimals.
 
 ## Which runs count
