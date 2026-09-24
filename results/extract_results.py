@@ -654,6 +654,13 @@ def render_ultimate(title: str, pipelines: list[Pipeline]) -> str:
     return doc.render()
 
 
+# The cluster cell whose logged parameters stand for a family's sweep in the
+# CCM paper's configuration table (Table 10): the first dataset at a mid-range
+# k. The EMF sweep runs k 1, 2, 3, 5, 9 over 27-29 bands; VoIP k 1, 2, 3, 6
+# over 6 signals, where k = 5 was never run.
+CCM_REPRESENTATIVE = {"emf": ("ed2022", 5), "voip": ("voip_mobile", 3)}
+
+
 def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
                        mv_cells: dict[tuple, Cell], cluster_runs: list[Run]) -> str:
     """The CCM paper's Table 4 shape: base | + CCM per backbone, IMP(%) last.
@@ -677,6 +684,14 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     if not models or not datasets:
         return ""
 
+    family = family_of(datasets[0])
+    rep_ds, rep_k = CCM_REPRESENTATIVE.get(family, (datasets[0], None))
+    if rep_ds not in datasets:
+        rep_ds = datasets[0]
+    windows = sorted({(r.seq_len, r.pred_len) for r in cluster_runs
+                      if family_of(r.dataset) == family}, reverse=True)
+    others = [setting_label(*w) for w in windows if w != (sl, pl)]
+
     doc = Doc(title)
     doc.preamble([
         ("Format", "the CCM paper's Table 4 - per backbone a base | + CCM column "
@@ -685,7 +700,13 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
                    "base models"),
         ("Base", f"the plain multivariate cell from '# {MULTIVARIATE_TITLE}' - same "
                  f"job config and training hyperparameters, no CCM"),
-        ("Configuration", f"{setting_label(sl, pl)} only -- the window the k sweep covers"),
+        ("Configuration", f"{setting_label(sl, pl)}"
+                          + (f"; the k sweep also ran at {', '.join(others)}, in "
+                             f"`Channel Clustering (CCM) vs. plain`" if others
+                             else " -- the window the k sweep covers")),
+        ("Protocol", "the logged batch protocol (cluster membership averaged over each "
+                     "evaluation batch); the primary fixed-membership numbers, with k "
+                     "chosen on validation, are in `Paradigm Comparison`"),
         ("Caveat", "the + CCM cell's k is chosen post hoc by test MSE per (dataset, "
                    "model) and reused for MAE - an oracle bound, where the paper "
                    "tunes k on validation data. The base column is the plain "
@@ -748,7 +769,7 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     def ccm_log(m: str) -> dict:
         for r in cluster_runs:
             if (model_label(r.model) == m and r.seq_len == sl and r.pred_len == pl
-                    and r.k == 5 and r.dataset == "ed2022"):
+                    and r.k == rep_k and r.dataset == rep_ds):
                 with open(r.path) as f:
                     return json.load(f)
         return {}
@@ -770,7 +791,7 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
 
     cfg_rows = [
         ["Channel clusters k swept"] + [
-            "-".join(str(v) for v in (min(vs), max(vs))) if (vs := sorted(
+            ", ".join(str(v) for v in vs) if (vs := sorted(
                 {key[5] for key in cluster_cells
                  if key[0] == m and at(key) and key[5] is not None})) else MISSING
             for m in models],
@@ -789,18 +810,19 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
             if param(m, "parameters/sl/weight_decay") else MISSING for m in models],
         ["Batch size"] + [
             str(param(m, "parameters/sl/batch_size") or MISSING) for m in models],
-        ["Trainable weights, base → + CCM (ED2022, k=5)"] + [
-            f"{fmt_int(getattr(mv_cells.get((m, 'ed2022', sl, pl, conf, None)), 'num_params', None))}"
-            f" → {fmt_int(getattr(cluster_cells.get((m, 'ed2022', sl, pl, conf, 5)), 'num_params', None))}"
+        [f"Trainable weights, base → + CCM ({dataset_label(rep_ds)}, k={rep_k})"] + [
+            f"{fmt_int(getattr(mv_cells.get((m, rep_ds, sl, pl, conf, None)), 'num_params', None))}"
+            f" → {fmt_int(getattr(cluster_cells.get((m, rep_ds, sl, pl, conf, rep_k)), 'num_params', None))}"
             for m in models],
     ]
     doc.table("Experiment configuration",
               md_table(["Configuration"] + models, "l" + "r" * len(models), cfg_rows),
-              note="Read from the cluster runs' logged parameters (ED2022, k=5 "
-                   "representative; β and the training set-up are identical across "
-                   "cells). The sinkhorn temperature is upstream's hard-coded "
-                   "default (`TimeSeriesCCM-main/models/layers.py`), not a logged "
-                   "parameter.")
+              note=f"Read from the cluster runs' logged parameters ({dataset_label(rep_ds)}, "
+                   f"k={rep_k} representative, {setting_label(sl, pl)}; β and the "
+                   f"training set-up are identical across the family's cells). `-` = "
+                   f"no run of that model at that cell yet. The sinkhorn temperature "
+                   f"is upstream's hard-coded default "
+                   f"(`TimeSeriesCCM-main/models/layers.py`), not a logged parameter.")
 
     return doc.render()
 
