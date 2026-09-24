@@ -497,6 +497,37 @@ def test_a_dash_that_now_has_a_value_is_new_not_a_change(tmp_path):
         "its tables other than MSE/MAE are text only")
 
 
+def test_a_cell_still_training_is_held_at_the_mean_it_printed(tmp_path):
+    # "(n=…)" marks a cell whose seeds are still training. It is held at the
+    # mean it printed, so it changes as they finish, rather than read as '-'.
+    published = tmp_path / "2026-01-01_tables.md"
+    published.write_text("\n".join([
+        "# Multivariate", "", "### 1.1 · MSE (`sl_test/loss`)", "",
+        "| Dataset | $L$ | $O$ | DLinear (2023) | TSMixer (2023) | PatchTST (2023) |",
+        "|:---|---:|---:|---:|---:|---:|",
+        "| ED2022 | 336 | 96 | 0.5353 (n=1) | **0.5100 (n=2 + partial)** | - |", ""]))
+
+    def gate(dlinear):
+        cells = tmp_path / "cells.csv"
+        base = {f: "" for f in frames.CELL_FIELDS}
+        frames.write_csv(cells, [
+            dict(base, setup="multivariate", model=model, dataset="ed2022", seq_len=336,
+                 pred_len=96, k="", conf=1, mse=mse)
+            for model, mse in (("DLinear", dlinear), ("TSMixer", "0.51"),
+                               ("PatchTST", "0.52"))], frames.CELL_FIELDS)
+        return R.gate(published, cells, [], family="emf", runs_spec=tmp_path / "none.yaml",
+                      gate_spec=tmp_path / "none.yaml", out=io.StringIO())
+
+    g = gate("0.53531")
+    held = g.held["cells"]
+    assert g.ok and held.published == 2 and len(held.new) == 1      # PatchTST's '-'
+    assert "2 cells the snapshot printed with (n=...)" in " ".join(held.notes)
+    assert "1 cells are '-'" in " ".join(held.notes)
+    g = gate("0.5360")
+    assert [c.label() for c in g.unexpected] == [
+        "multivariate/DLinear/ED2022 L336/O96 [MSE]: 0.5353 (n=1) -> 0.5360"]
+
+
 def test_every_dataset_label_reads_back_to_its_cells_slug():
     import extract_results as er
 

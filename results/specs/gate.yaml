@@ -65,6 +65,8 @@
 # in emfres/cli.py at the copy; and set F's `snapshot` below to the copy's name
 # with empty `held_elsewhere` and `expected` lists. `make.py reconcile` gates
 # every family that has a snapshot and names each one that has none.
+# Freeze only once no cell of the render prints `(n=…)`: a cell still training
+# is held at the mean it printed, so it fails the gate as its seeds finish.
 
 emf:
   # The EMF lists were written for 2026-09-22_tables.md. Re-freeze once they

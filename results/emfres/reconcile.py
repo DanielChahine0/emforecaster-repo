@@ -509,34 +509,79 @@ def cluster_printed_batch(text: str) -> bool:
     return False
 
 
+def _cell_records(text: str):
+    """Every cell of the MSE/MAE tables the cells kind reads, raw.
+
+    Yields (record, group, printed): a plot_metrics.Record as parse_tables
+    makes it (a '-' or a cell still training is NaN), the group it was
+    printed in -- '' for a per-setup section's first MSE and MAE tables (1.1,
+    1.2, plot_metrics.METRICS), BATCH_GROUP_VIA for a cluster section's
+    batch-protocol group -- and the cell as printed, emphasis stripped.
+    """
+    import plot_metrics as pm
+
+    first = [(name, pat) for name, pat, _, _ in pm.METRICS if name in ("MSE", "MAE")]
+    for heading, block in split_blocks(text):
+        setup = SECTION_SETUP.get(heading)
+        if setup is None:
+            continue
+        for heads, header, rows in _tables(block):
+            if header[:3] != ["Dataset", "L", "O"] or header[3:4] == ["Model"]:
+                continue
+            sub = pm.clean_cell(heads.get(3, "")).replace("·", "").replace("  ", " ")
+            metric = next((name for name, pat in first if pat.match(sub)), None)
+            group = ""
+            if (metric is None and setup == "cluster"
+                    and BATCH_GROUP in _cell(heads.get(2, ""))):
+                found = re.search(r"\b(MSE|MAE)\b", sub)
+                metric, group = (found.group(1), BATCH_GROUP_VIA) if found else (None, "")
+            if metric is None:
+                continue
+            first_model = 4 if header[3:4] == ["k"] else 3
+            for cells in rows:
+                k = int(_cell(cells[3])) if first_model == 4 else None
+                for col, (model, raw) in enumerate(zip(header[first_model:],
+                                                       cells[first_model:])):
+                    printed = pm.clean_cell(raw)
+                    yield (pm.Record(section=heading, metric=metric,
+                                     dataset=pm.clean_cell(cells[0]),
+                                     lookback=int(_cell(cells[1])),
+                                     horizon=int(_cell(cells[2])), model=model,
+                                     model_order=(pm.model_rank(model), col),
+                                     value=pm.parse_value(printed), cluster=k),
+                           group, printed)
+
+
 def batch_group_records(text: str) -> list:
     """The MSE/MAE cells of a cluster section's batch-protocol group.
 
     plot_metrics.parse_tables reads each section's first MSE and MAE tables
     (1.1, 1.2) only. A cluster section that leads with the fixed protocol
     prints the logged batch one in its last group (BATCH_GROUP): its MSE and
-    MAE tables, read here as parse_tables reads the others, into the same
-    records. A snapshot that printed the batch protocol first has no such
-    group.
+    MAE tables, read into the same records. A snapshot that printed the
+    batch protocol first has no such group.
     """
-    import plot_metrics as pm
+    return [r for r, group, _ in _cell_records(text) if group]
 
-    out = []
-    for heading, block in split_blocks(text):
-        if SECTION_SETUP.get(heading) != "cluster":
-            continue
-        for heads, header, rows in _tables(block):
-            metric = re.search(r"\b(MSE|MAE)\b", _cell(heads.get(3, "")))
-            if (BATCH_GROUP not in _cell(heads.get(2, "")) or metric is None
-                    or header[:4] != ["Dataset", "L", "O", "k"]):
-                continue
-            for cells in rows:
-                for col, (model, raw) in enumerate(zip(header[4:], cells[4:])):
-                    out.append(pm.Record(
-                        section=heading, metric=metric.group(1), dataset=_cell(cells[0]),
-                        lookback=int(_cell(cells[1])), horizon=int(_cell(cells[2])),
-                        model=model, model_order=(pm.model_rank(model), col),
-                        value=pm.parse_value(_cell(raw)), cluster=int(_cell(cells[3]))))
+
+# A cell still training, as extract_results.shortfall prints it: its mean so
+# far, then "(n=1)" or "(n=2 + partial)".
+_TRAINING = re.compile(r"^([+-]?\d+(?:\.\d+)?)\s*\(n=[^)]*\)$")
+
+
+def training_cells(text: str) -> dict:
+    """The cells the snapshot printed with an ``(n=…)``, still training.
+
+    parse_tables reads each as '-'. Keyed as hold_cells meets them (section,
+    group, metric, dataset, L, O, k, model), each is (the mean it printed, the
+    cell as printed).
+    """
+    out = {}
+    for r, group, printed in _cell_records(text):
+        m = _TRAINING.match(printed)
+        if m:
+            out[(r.section, group, r.metric, r.dataset, r.lookback, r.horizon,
+                 r.cluster, r.model)] = (float(m.group(1)), printed)
     return out
 
 
@@ -596,7 +641,8 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
     absent = archived = 0
     text = tables.read_text()
     batch_printed = cluster_printed_batch(text)
-    n_batch = n_group = 0
+    training = training_cells(text)
+    n_batch = n_group = n_training = 0
     records = [(r, "") for r in pm.parse_tables(tables)]
     if not batch_printed:
         records += [(r, BATCH_GROUP_VIA) for r in batch_group_records(text)]
@@ -622,7 +668,15 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
         row = lookup(setup, model, r.dataset, r.lookback, r.horizon, k)
         # A batch-protocol group's cell is printed from the batch column.
         column = r.metric.lower() if group else primary_column(setup, r.metric)
+        value, published = r.value, f"{r.value:.4f}"
         if math.isnan(r.value):
+            # A cell still training, printed with an (n=...): held at the mean
+            # it printed, like any other, so it changes as its seeds finish.
+            value, published = training.get(
+                (r.section, group, r.metric, r.dataset, r.lookback, r.horizon,
+                 r.cluster, r.model), (value, "-"))
+            n_training += not math.isnan(value)
+        if math.isnan(value):
             # A '-' in the table: that grid cell was never run. A frames row
             # for it now is a value the snapshot never had -- new, not a change.
             absent += 1
@@ -635,7 +689,6 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
             # nothing left to hold it against.
             archived += 1
             continue
-        published = f"{r.value:.4f}"
         # Against the column the section prints it from today, and a cluster
         # value the snapshot printed under the batch protocol also against
         # that protocol's column, where its runs still have to reproduce it.
@@ -648,7 +701,7 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
         found = []
         for col, via in against:
             got = "" if row is None else (row.get(col) or "")
-            if got == "" or round(float(got), 4) != round(r.value, 4):
+            if got == "" or round(float(got), 4) != round(value, 4):
                 found.append(Change("cells", key, published,
                                     None if got == "" else f"{float(got):.4f}", via))
         held.tally(r.section, bool(found))
@@ -656,6 +709,10 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
     if absent:
         held.notes.append(f"{absent} cells are '-' in the snapshot (never run); "
                           f"{len(held.new)} of them have a frames row now")
+    if n_training:
+        held.notes.append(f"{n_training} cells the snapshot printed with (n=...), still "
+                          f"training: held at the mean it printed, so each changes as its "
+                          f"seeds finish -- freeze a snapshot once none is left")
     if n_batch:
         held.notes.append(f"{n_batch} cluster cells the snapshot printed under the batch "
                           f"protocol: held against today's fixed-protocol cells, the "
