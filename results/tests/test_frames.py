@@ -217,6 +217,18 @@ def test_runs_csv_carries_fixed_beside_batch(tmp_path):
     assert (row["mse"], row["mse_fixed"], row["fixed_source"]) == ("0.5", "0.45", "log")
     assert (row["val_loss"], row["val_loss_fixed"]) == ("0.7", "0.61")
     assert row["epochs"] == 2
+    assert row["best_epoch"] == 1                      # sl_val/loss [0.8, 0.7]
+
+
+def test_best_epoch_is_the_first_epoch_of_the_best_validation_loss(tmp_path):
+    # Worse from the start (a failed per-channel band): the best epoch is 0,
+    # and a later tie with it does not move the checkpoint early stopping kept.
+    _write(tmp_path, "DLinear/toy/L336_O96_cp/1",
+           _log(**{"sl_val/loss": [0.5, 0.6, 0.7, 0.5]}))
+    _write(tmp_path, "ARIMA/toy/L336_O96_cp/2", _log(**{"sl_val/loss": []}))
+    runs = {r.seed: r for r in load_runs(tmp_path, [], setup="multivariate")}
+    assert runs["1"].best_epoch == 0 and runs["1"].val_loss == 0.5
+    assert runs["2"].best_epoch is None and runs["2"].val_loss is None
 
 
 # --------------------------------------------------------------- cells

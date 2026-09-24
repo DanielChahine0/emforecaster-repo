@@ -121,6 +121,12 @@ class Run:
     # Training epochs actually run (len(sl_train/loss)); None for the fit-once
     # models.
     epochs: Optional[int] = None
+    # The epoch (0-based) whose validation loss is val_loss, the first one on
+    # a tie -- the checkpoint early stopping restored. A run whose best epoch
+    # is 0-2 got worse from the start: patience ran out while the OneCycle
+    # warm-up was still raising the learning rate (the failed per-channel
+    # PatchTST bands, paradigms.FAILED_BEST_EPOCH). None where val_loss is.
+    best_epoch: Optional[int] = None
     # sl_test/mse_per_channel: the test MSE of every channel, in the loader's
     # channel order. A per-channel run logs its one band here.
     mse_per_channel: Optional[list] = None
@@ -516,6 +522,7 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
         val_curve = d.get("sl_val/loss") or d.get("sl_valid/loss")
         val_loss = (min(v for v in val_curve if v is not None)
                     if isinstance(val_curve, list) and val_curve else None)
+        best_epoch = (val_curve.index(val_loss) if val_loss is not None else None)
 
         mse_per_channel = d.get("sl_test/mse_per_channel") or None
 
@@ -537,7 +544,8 @@ def load_runs(logs_root: Path, exclude: list[str], *, setup: Optional[str] = Non
                          git_dirty=git_dirty, code_commit=code_commit,
                          train_split=d.get("parameters/data/train_split"),
                          val_split=d.get("parameters/data/val_split"),
-                         epochs=epochs, mse_per_channel=mse_per_channel,
+                         epochs=epochs, best_epoch=best_epoch,
+                         mse_per_channel=mse_per_channel,
                          fixed_source=fixed_source, **fixed))
     if incomplete:
         print(f"NOTE: skipped {len(incomplete)} unfinished run(s) under {logs_root} "

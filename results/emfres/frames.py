@@ -137,7 +137,10 @@ RUN_FIELDS = [
     # repeating each window's lookback mean on the same windows, and the run's
     # skill over it (1 - mse / lookback_mse).
     "lookback_mse", "skill",
-    "running_time", "per_epoch", "epochs", "num_params",
+    "running_time", "per_epoch", "epochs",
+    # The 0-based epoch of val_loss, the checkpoint early stopping kept
+    # (runlogs.Run.best_epoch); blank for the fit-once models.
+    "best_epoch", "num_params",
     "ic", "jc", "interval_width",
     # Cluster runs only: the same metrics under the fixed train-mean membership
     # (the primary cluster protocol; mse, mae, val_loss, ic, jc and
@@ -289,6 +292,7 @@ def _row(run: Run, setup: str, repo: Path,
         "running_time": _num(run.running_time),
         "per_epoch": _num(run.per_epoch),
         "epochs": "" if run.epochs is None else run.epochs,
+        "best_epoch": "" if run.best_epoch is None else run.best_epoch,
         "num_params": "" if run.num_params is None else run.num_params,
         "ic": _num(run.ic),
         "jc": _num(run.jc),
