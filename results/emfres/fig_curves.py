@@ -2,9 +2,14 @@
 reading the ``log.json`` files under
 ``logs/{setup}/{model}/{dataset}/L{L}_O{O}_{protocol}/{seed}/``.
 
-Curves are averaged across seeds (mean with a +/-1 std band, NaN-aware so
-early-stopped seeds can end at different epochs). Test loss is a single scalar
-evaluated on the best-validation checkpoint, drawn as a horizontal line.
+Every seed is drawn as its own thin curve, with its best validation epoch
+marked on it. The bold mean runs only to the epoch the shortest seed reached,
+where every seed still contributes. Averaging past it -- the NaN-padded mean
+this used to draw -- is survivorship: a seed that collapsed and stopped early
+drops out, and the mean of the survivors looks converged (audit RA-9: the
+series Transformer at L336/O96, where most seeds collapsed). Test loss is one
+scalar per seed, evaluated on that seed's best-validation checkpoint, drawn as
+a horizontal line at the seed mean.
 Per-run figures go to ``{out}/{dataset}/{model}/``; ``--combined`` writes one
 figure per (dataset, L, O) with a subplot per model to ``{out}/{dataset}/``.
 """
@@ -25,9 +30,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # The run-directory convention lives with the training code; add the repo
-# root so this works whether it is run as a script or imported as emfres.
+# root so this works whether it is run as a script or imported as emfres. The
+# typeface and palette are results/'s own (emfres.style).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from forecasting.run_path import iter_run_dirs
+from emfres.style import GRIDLINE, INK_SECONDARY, SERIES_COLORS, rc_fonts
+
+# train, val, test: Charcoal Blue, Verdigris, Burnt Peach.
+COLORS = {"train": SERIES_COLORS[2], "val": SERIES_COLORS[0], "test": SERIES_COLORS[1]}
 
 # metric -> (per-epoch train key, per-epoch val key, test scalar key, axis label)
 METRICS = {
@@ -96,52 +107,63 @@ def out_dir(base, cfg, model=None):
 
 
 def aggregate(logs, key):
-    """Per-epoch mean/std across seeds; shorter seeds are NaN-padded."""
+    """(epochs, mean, std, curves) over the epochs every seed reached.
+
+    The mean stops at the shortest seed rather than NaN-padding past it: a
+    seed that stopped early would otherwise leave the mean to the seeds that
+    kept going. ``curves`` holds each seed's full curve, for drawing.
+    """
     curves = [np.asarray(d[key], dtype=float) for d in logs.values() if key in d]
-    max_len = max((len(c) for c in curves), default=0)
-    if max_len == 0:
+    curves = [c for c in curves if len(c)]
+    if not curves:
         return None
-    stacked = np.full((len(curves), max_len), np.nan)
-    for i, c in enumerate(curves):
-        stacked[i, :len(c)] = c
-    with np.errstate(invalid="ignore"):
-        mean, std = np.nanmean(stacked, axis=0), np.nanstd(stacked, axis=0)
-    return np.arange(1, max_len + 1), mean, std
+    common = min(len(c) for c in curves)
+    stacked = np.stack([c[:common] for c in curves])
+    return np.arange(1, common + 1), stacked.mean(axis=0), stacked.std(axis=0), curves
 
 
 def plot_curve(ax, logs, key, label, color):
+    """Each seed thin, the mean over the common epochs bold; returns the curves."""
     agg = aggregate(logs, key)
     if agg is None:
         return None
-    epochs, mean, std = agg
+    epochs, mean, std, curves = agg
+    if len(curves) > 1:
+        for c in curves:
+            ax.plot(np.arange(1, len(c) + 1), c, color=color, lw=0.8, alpha=0.35)
+        label += f" (mean of {len(curves)} to epoch {len(epochs)})"
     ax.plot(epochs, mean, label=label, color=color, lw=2)
-    if len(logs) > 1:
-        ax.fill_between(epochs, mean - std, mean + std, color=color, alpha=0.15)
-    return mean
+    return curves
 
 
 def plot_metric(ax, logs, title, metric):
     train_key, val_key, test_key, ylabel = METRICS[metric]
     if train_key:
-        plot_curve(ax, logs, train_key, "train", "#1f77b4")
-    val_mean = plot_curve(ax, logs, val_key, "val", "#ff7f0e")
-    if val_mean is not None:
-        best_epoch = int(np.nanargmin(val_mean)) + 1
-        ax.axvline(best_epoch, color="#ff7f0e", ls=":", lw=1, alpha=0.7)
-        title += f"  (best val @ epoch {best_epoch})"
+        plot_curve(ax, logs, train_key, "train", COLORS["train"])
+    val_curves = plot_curve(ax, logs, val_key, "val", COLORS["val"])
+    if val_curves:
+        # Best validation epoch per seed, on that seed's own curve: the
+        # checkpoint each seed's test value comes from.
+        best = [int(np.nanargmin(c)) for c in val_curves]
+        ax.plot([b + 1 for b in best], [c[b] for c, b in zip(val_curves, best)],
+                marker="v", linestyle="None", color=COLORS["val"], markersize=6,
+                markeredgecolor="white", markeredgewidth=0.6, label="best val (per seed)")
+        title += f"  (best val @ epoch {', '.join(str(b + 1) for b in best)})"
 
     test_vals = [float(d[test_key][0]) for d in logs.values() if d.get(test_key)]
     if test_vals:
         label = f"test (final) = {np.mean(test_vals):.4f}"
         if len(test_vals) > 1:
             label += f" ± {np.std(test_vals):.4f}"
-        ax.axhline(np.mean(test_vals), color="#2ca02c", ls="--", lw=1.8, label=label)
+        ax.axhline(np.mean(test_vals), color=COLORS["test"], ls="--", lw=1.8, label=label)
 
-    ax.set_xlabel("epoch")
-    ax.set_ylabel(ylabel)
+    ax.set_xlabel("epoch", color=INK_SECONDARY)
+    ax.set_ylabel(ylabel, color=INK_SECONDARY)
     ax.set_title(title, fontsize=10)
-    ax.legend(frameon=True, fontsize=9)
-    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=True, fontsize=8)
+    ax.grid(True, color=GRIDLINE, lw=0.6)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
 
 
 def main():
@@ -162,6 +184,7 @@ def main():
                    help="one figure per (dataset, L, O) with a subplot per model")
     p.add_argument("--logy", action="store_true")
     args = p.parse_args()
+    plt.rcParams.update(rc_fonts("sans"))
 
     metrics = ["loss", "mae"] if args.metric == "both" else [args.metric]
 
