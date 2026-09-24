@@ -18,15 +18,20 @@ SPECS = RESULTS / "specs"
 # windows live in logs/_archive); the VoIP grids ran L48/O12 and L24/O6.
 WINDOWS = {"emf": [(336, 96)], "voip": [(48, 12), (24, 6)]}
 
-# The frozen report every published value is gated against (make.py tables /
-# reconcile). Re-frozen when a set of numbers is accepted as published; the
-# previous snapshots stay in archive/ as provenance. The changes expected
-# against it are declared in specs/gate.yaml, which names the snapshot its
-# rules were written for, so a re-freeze retires them.
+# The frozen report each family's published values are gated against
+# (make.py tables / reconcile), None until one is frozen: a family without one
+# is rendered ungated, and reconcile says so. Re-frozen when a set of numbers
+# is accepted as published; the previous snapshots stay in archive/ as
+# provenance. The changes expected against a family's snapshot are declared
+# in its block of specs/gate.yaml, which names the snapshot its rules were
+# written for, so a re-freeze retires them.
+#
+# Freezing a family F: render it (make.py tables --family F), copy its all.md
+# (tables/all.md, tables/voip/all.md) into archive/ as <date>_tables.md for
+# emf or <date>_voip_tables.md for voip, point SNAPSHOTS[F] at the copy, and
+# set F's `snapshot` in specs/gate.yaml to its name, with empty lists.
 PUBLISHED = RESULTS / "archive" / "2026-09-22_tables.md"
-# The snapshot per family. It covers the EMF corpus only: the VoIP tables are
-# ungated until a snapshot is frozen for them.
-SNAPSHOTS = {"emf": PUBLISHED}
+SNAPSHOTS: dict[str, Path | None] = {"emf": PUBLISHED, "voip": None}
 
 
 def spec_excludes() -> list[str]:
@@ -293,8 +298,8 @@ def run_gate(family: str, sections, snapshot: Path | None = None, verbose: bool 
 
     snapshot = SNAPSHOTS.get(family) if snapshot is None else snapshot
     if snapshot is None:
-        print(f"NOTE: no frozen snapshot for family {family!r} -- values are not "
-              f"gated against one", file=sys.stderr)
+        print(f"NOTE: family {family!r} has no frozen snapshot yet (SNAPSHOTS in "
+              f"emfres/cli.py) -- its values are not gated", file=sys.stderr)
         return None
     if not snapshot.exists():
         print(f"WARNING: the frozen snapshot {snapshot} is missing -- values are not "
@@ -348,7 +353,7 @@ def cmd_tables(args) -> int:
     if gate is not None:
         from difflib import unified_diff
 
-        published = SNAPSHOTS[family]
+        published = SNAPSHOTS[family]      # there is one: the gate ran against it
         blocks = R.split_blocks(published.read_text())
         titles = frozenset(title for _, title, _ in sections)
         for _, title, md in sections:
@@ -418,18 +423,56 @@ def cmd_tables(args) -> int:
 
 
 def cmd_reconcile(args) -> int:
+    """The value gate of every family asked for that has a frozen snapshot.
+
+    A family without one is named, not gated, and does not fail the run; a
+    frozen snapshot that is missing does. With more than one family, a last
+    line gives each one's verdict.
+    """
     for name in ("cells.csv", "runs.csv"):
         if not (FRAMES / name).exists():
             print(f"{FRAMES / name} not found -- run `make.py extract` first",
                   file=sys.stderr)
             return 1
-    if args.tables is None and args.family not in SNAPSHOTS:
-        print(f"no frozen snapshot for family {args.family!r}; pass --tables",
+    families = list(SNAPSHOTS) if args.family == "all" else [args.family]
+    if args.tables is not None and len(families) > 1:
+        print("--tables is one family's snapshot: pass --family with it",
               file=sys.stderr)
         return 1
-    sections = render_family(args.family)
-    gate = run_gate(args.family, sections, snapshot=args.tables, verbose=args.all)
-    return 0 if gate is not None and gate.ok else 1
+    if args.tables is None and len(families) == 1 and SNAPSHOTS.get(families[0]) is None:
+        print(f"no frozen snapshot for family {families[0]!r} yet (SNAPSHOTS in "
+              f"emfres/cli.py); pass --tables, or freeze one as specs/gate.yaml "
+              f"describes", file=sys.stderr)
+        return 1
+
+    ok, gated, verdicts = True, 0, []
+    for i, family in enumerate(families):
+        if i:
+            print()
+        snapshot = args.tables if args.tables is not None else SNAPSHOTS.get(family)
+        if snapshot is None:
+            print(f"value gate ({family}): no frozen snapshot yet -- the {family} tables "
+                  f"are not gated (SNAPSHOTS in emfres/cli.py; specs/gate.yaml describes "
+                  f"how to freeze one)", flush=True)
+            verdicts.append(f"{family} not gated (no frozen snapshot yet)")
+            continue
+        gated += 1
+        gate = run_gate(family, render_family(family), snapshot=snapshot, verbose=args.all)
+        if gate is None:              # frozen, but the file is gone: run_gate said so
+            ok = False
+            verdicts.append(f"{family} FAIL ({snapshot.name} is missing)")
+        elif not gate.ok:
+            ok = False
+            verdicts.append(f"{family} FAIL ({gate.n_unexpected} unexpected changes)")
+        else:
+            verdicts.append(f"{family} PASS" + (f" ({gate.n_expected} declared changes)"
+                                               if gate.n_expected else ""))
+    if len(families) > 1:
+        print(f"\nreconcile: {'; '.join(verdicts)}")
+    if not gated:
+        print("no family has a frozen snapshot: nothing was gated", file=sys.stderr)
+        return 1
+    return 0 if ok else 1
 
 
 def cmd_figures(args) -> int:
@@ -493,13 +536,15 @@ def main(argv: list[str] | None = None) -> int:
 
     rc = sub.add_parser(
         "reconcile", help="hold the frozen report's published values against frames/")
-    rc.add_argument("--family", default="emf", choices=["emf", "voip"],
-                    help="which corpus's render to hold it against (default: emf)")
+    rc.add_argument("--family", default="all", choices=[*SNAPSHOTS, "all"],
+                    help="which corpus to gate (default: all, every family with a "
+                         "frozen snapshot; each one without is named, not gated)")
     rc.add_argument("--tables", type=Path, default=None,
-                    help="the snapshot to hold (default: the family's frozen one, "
-                         f"archive/{PUBLISHED.name} for emf)")
+                    help="the snapshot to hold, with --family emf or voip (default: "
+                         "each family's frozen one, SNAPSHOTS in emfres/cli.py)")
     rc.add_argument("--all", action="store_true",
-                    help="list every expected change and every new value, uncapped")
+                    help="list every expected change and every new value, uncapped "
+                         "(of every family gated: all of them unless --family names one)")
     rc.set_defaults(func=cmd_reconcile)
 
     fg = sub.add_parser("figures", help="frames/ -> the paradigm-comparison figures")

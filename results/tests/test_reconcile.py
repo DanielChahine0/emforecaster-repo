@@ -687,3 +687,84 @@ def test_each_declared_change_is_pinned_to_a_value_the_snapshot_published(tmp_pa
     ]
     for change in others:
         assert not any(R.matches(rule, change) for rule in rules), change.label()
+
+
+# --------------------------------------------------------------------- the command
+
+def _voip_frames(path):
+    """frames/ for one VoIP cell per paradigm (multivariate, per-channel), 3 seeds."""
+    rows = []
+    for seed in (1, 2, 3):
+        for setup, mae in (("multivariate", 0.40), ("perchannel", 0.30)):
+            row = {f: "" for f in frames.RUN_FIELDS}
+            row.update(setup=setup, family="voip", model="DLinear", dataset="voip_mobile",
+                       seq_len=48, pred_len=12, k="", seed=str(seed), conf=1,
+                       channel="0" if setup == "perchannel" else "",
+                       mae=repr(mae), mse=repr(mae * 1.5))
+            rows.append(row)
+    frames.write_csv(path / "runs.csv", rows, frames.RUN_FIELDS)
+    frames.write_csv(path / "cells.csv", frames.build_cells(rows), frames.CELL_FIELDS)
+    frames.write_csv(path / "bands.csv", [], frames.BAND_FIELDS)
+
+
+def test_reconcile_gates_every_frozen_family_and_names_the_rest(tmp_path, monkeypatch,
+                                                                capsys):
+    import csv
+
+    import yaml
+    from emfres import cli
+
+    _voip_frames(tmp_path)
+    monkeypatch.setattr(cli, "FRAMES", tmp_path)
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    monkeypatch.setattr(cli, "SPECS", specs)
+    # A VoIP snapshot frozen the way specs/gate.yaml describes: today's
+    # render, named in SNAPSHOTS and in the family's block.
+    snapshot = tmp_path / "2026-01-01_voip_tables.md"
+    snapshot.write_text("\n\n".join(md.strip() for _, _, md in cli.render_family("voip")))
+    (specs / "gate.yaml").write_text(yaml.safe_dump(
+        {"voip": {"snapshot": snapshot.name, "held_elsewhere": [], "expected": []}}))
+    monkeypatch.setattr(cli, "SNAPSHOTS", {"emf": None, "voip": snapshot})
+    capsys.readouterr()
+
+    assert cli.main(["reconcile"]) == 0
+    out = capsys.readouterr().out
+    assert "value gate (emf): no frozen snapshot yet" in out
+    assert "value gate (voip): 2026-01-01_voip_tables.md against today's frames" in out
+    assert out.rstrip().endswith(
+        "reconcile: emf not gated (no frozen snapshot yet); voip PASS")
+    assert "cells         4 published, 4 reproduce" in out   # MV and PC, MSE and MAE
+
+    # A VoIP value that moved fails the run. The family with no snapshot
+    # still does not: it is named, not gated.
+    with open(tmp_path / "cells.csv") as f:
+        cells = list(csv.DictReader(f))
+    next(c for c in cells if c["setup"] == "multivariate")["mse"] = "0.7"
+    frames.write_csv(tmp_path / "cells.csv", cells, frames.CELL_FIELDS)
+    assert cli.main(["reconcile", "--all"]) == 1
+    out = capsys.readouterr().out
+    assert "multivariate/DLinear/VoIP Mobile L48/O12 [MSE]: 0.6000 -> 0.7000" in out
+    assert out.rstrip().endswith("voip FAIL (1 unexpected changes)")
+
+    # Asked for by name, a family with no snapshot is an error, not a pass;
+    # --tables is one family's snapshot; and a frozen snapshot that is gone fails.
+    assert cli.main(["reconcile", "--family", "emf"]) == 1
+    assert "no frozen snapshot for family 'emf' yet" in capsys.readouterr().err
+    assert cli.main(["reconcile", "--tables", str(snapshot)]) == 1
+    assert "pass --family with it" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "SNAPSHOTS", {"emf": None, "voip": tmp_path / "gone.md"})
+    assert cli.main(["reconcile"]) == 1
+    assert capsys.readouterr().out.rstrip().endswith("voip FAIL (gone.md is missing)")
+    monkeypatch.setattr(cli, "SNAPSHOTS", {"emf": None, "voip": None})
+    assert cli.main(["reconcile"]) == 1
+    assert "nothing was gated" in capsys.readouterr().err
+
+
+def test_every_family_has_a_snapshot_entry():
+    # None until one is frozen; a family missing here would never be gated
+    # and never be named as ungated either.
+    from emfres import cli
+
+    assert list(cli.SNAPSHOTS) == list(cli.WINDOWS)
+    assert cli.SNAPSHOTS["emf"] == cli.PUBLISHED
