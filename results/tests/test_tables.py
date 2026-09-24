@@ -106,3 +106,89 @@ def test_the_series_section_lists_its_trivial_forecasts(tmp_path):
     assert group == "Trivial forecasts" and "RevIN" in note
     assert lines[-1] == "| PTV2 | 336 | 96 | 1.3363 | 1.1619 |"
     assert tables.trivial_forecasts(path, "perchannel", "emf", er) == []
+
+
+# --------------------------------------------------------------- partial cells
+
+def _er_run(model, seed, mse, *, k=None, channel=None, dataset="ed2022"):
+    from emfres.runlogs import Run
+    return Run(model, dataset, 336, 96, True, mse, mse * 0.7, 60.0, 1.0, 10, None, None,
+               None, channel, k, str(seed), Path("x"))
+
+
+def _trees():
+    """Three seeds of plain DLinear and TSMixer, a finished DLinear sweep, and a
+    TSMixer sweep that has one seed of k=1 so far -- with the best numbers."""
+    import extract_results as er
+    mv = [_er_run(m, s, v + 0.001 * s) for s in SEEDS
+          for m, v in (("DLinear", 0.50), ("TSMixer", 0.60))]
+    cl = [_er_run("DLinear", s, v + 0.001 * s, k=k) for s in SEEDS
+          for k, v in ((1, 0.50), (2, 0.49))]
+    cl.append(_er_run("TSMixer", 1, 0.30, k=1))
+    return er, mv, cl
+
+
+def test_a_cell_short_of_its_seeds_shows_n_and_is_never_ranked():
+    er, mv, cl = _trees()
+    mv_cells, cl_cells = er.aggregate(mv), er.aggregate(cl)
+    targets = er.seed_targets(mv_cells, cl_cells)
+    assert targets[("ed2022", 336, 96, True)] == 3
+    key = ("TSMixer", "ed2022", 336, 96, True, 1)
+    assert er.shortfall(cl_cells[key], key, targets) == " (n=1)"
+    full = ("DLinear", "ed2022", 336, 96, True, 1)
+    assert er.shortfall(cl_cells[full], full, targets) == ""
+
+    md = er.render_report(er.CLUSTER_TITLE, cl, cl_cells, targets=targets)
+    row = next(line for line in md.splitlines() if line.startswith("| ED2022 | 336 | 96 | 1 |"))
+    # TSMixer's 0.3000 is the lowest, but one seed of three: shown, not bold.
+    assert "| **0.5020** | 0.3000 (n=1) |" in row
+    assert "`(n=…)`" in md
+    # A complete tree renders exactly as before: no marker, no legend.
+    assert "(n=" not in er.render_report(er.MULTIVARIATE_TITLE, mv, mv_cells, targets=targets)
+
+
+def test_a_per_channel_seed_missing_a_band_is_marked_partial():
+    import extract_results as er
+    runs = [_er_run("DLinear", s, 0.5, channel=ch) for s in SEEDS for ch in (0, 1)
+            if (s, ch) != (3, 1)]
+    cells = er.aggregate(runs)
+    key = ("DLinear", "ed2022", 336, 96, True, None)
+    assert (cells[key].n_seeds, cells[key].n_complete_seeds) == (3, 2)
+    assert er.shortfall(cells[key], key, er.seed_targets(cells)) == " (n=2 + partial)"
+
+
+def test_ccm_vs_base_leaves_a_partial_sweep_out_of_the_marks_and_imp():
+    er, mv, cl = _trees()
+    md = er.render_ccm_vs_base(er.CCM_TITLE, er.canonical_cells(er.aggregate(cl)),
+                               er.canonical_cells(er.aggregate(mv)), [])
+    row = next(line for line in md.splitlines() if line.startswith("| ED2022 | MSE"))
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    # Dataset, Metric, DLinear, + CCM, TSMixer, + CCM, IMP
+    assert cells[3] == "<u>**0.4920 (k=2)**</u>"             # best complete value
+    assert cells[5] == "0.3000 (k=1; partial: n=1, k 1 of 1,2)"
+    assert "**" not in cells[4] and "<u>" not in cells[5]
+    assert cells[6] == "+1.99 (1 of 2)"                   # DLinear's pair alone
+    assert "1 (partial)" in md                              # the config table's best k
+
+
+def test_the_ultimate_table_does_not_rank_a_cell_still_training():
+    er, mv, cl = _trees()
+    pipes = er.build_pipelines({er.MULTIVARIATE_TITLE: er.aggregate(mv),
+                                er.CLUSTER_TITLE: er.aggregate(cl)})
+    md = er.render_ultimate(er.ULTIMATE_TITLE, pipes)
+    row = next(line for line in md.splitlines() if "| Cluster (k=1) |" in line)
+    assert "| **0.5020** | 0.3000 (n=1) |" in row
+
+
+def test_the_mv_vs_univariate_scoreboard_counts_a_short_pair_as_pending():
+    import extract_results as er
+    mv = [_er_run(m, s, 0.5) for s in SEEDS for m in ("DLinear", "TSMixer")]
+    pc = [_er_run("DLinear", s, 0.4, channel=0) for s in SEEDS]
+    pc.append(_er_run("TSMixer", 1, 0.3, channel=0))
+    md = er.render_comparison(er.COMPARISON_TITLE, er.MULTIVARIATE_TITLE, er.aggregate(mv),
+                              [(er.PER_CHANNEL_TITLE, er.aggregate(pc))])
+    assert "| ED2022 | 336 | 96 | Transformer" not in md
+    row = next(line for line in md.splitlines() if line.startswith("| ED2022 | 336 | 96 | TSMixer"))
+    assert "0.3000 (n=1)" in row and "**" not in row
+    board = next(line for line in md.splitlines() if "| MSE |" in line and "Per-channel" in line)
+    assert board.endswith("| 0 | 1 | 0 | 1 |")          # DLinear won, TSMixer pending

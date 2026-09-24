@@ -92,6 +92,11 @@ def render_sections(runs_csv: Path, repo: Path, results: Path,
     import extract_results as er
 
     by_setup = runs_from_csv(runs_csv, repo, family)
+    cells = {setup: er.aggregate(runs) for setup, runs in by_setup.items()}
+    # A cell is complete when it has the seeds every setup's cells of its
+    # dataset and window have, so a sweep still training in one setup is
+    # judged against the others, not against itself.
+    targets = er.seed_targets(*cells.values())
     out = []
     for setup in SETUP_ORDER + sorted(set(by_setup) - set(SETUP_ORDER)):
         runs = by_setup.get(setup)
@@ -99,8 +104,8 @@ def render_sections(runs_csv: Path, repo: Path, results: Path,
             continue
         title = SETUP_TITLES.get(setup, setup.title())
         extra = trivial_forecasts(runs_csv, setup, family, er) if setup == "series" else None
-        out.append((setup, title, er.render_report(title, runs, er.aggregate(runs),
-                                                   extra=extra or None)))
+        out.append((setup, title, er.render_report(title, runs, cells[setup],
+                                                   extra=extra or None, targets=targets)))
     return out
 
 
@@ -168,6 +173,8 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
     by_setup = runs_from_csv(runs_csv, repo, family)
     cells = {SETUP_TITLES[s]: er.aggregate(r)
              for s, r in by_setup.items() if s in SETUP_TITLES}
+    # What a complete cell's seed count is, from every setup (as render_sections).
+    targets = er.seed_targets(*cells.values())
 
     out = []
     mv = cells.get(er.MULTIVARIATE_TITLE)
@@ -178,7 +185,7 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
         md = er.render_comparison(
             er.COMPARISON_TITLE, er.MULTIVARIATE_TITLE, mv, uv,
             concurrency={SETUP_TITLES["perchannel"]: er.concurrency_text(pc_runs)}
-            if pc_runs else None)
+            if pc_runs else None, targets=targets)
         if md:
             out.append(("mv-vs-univariate", er.COMPARISON_TITLE, md))
 
@@ -186,7 +193,7 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
     if mv and cl:
         cluster_runs = by_setup.get("cluster", [])
         md = er.render_ccm_vs_base(er.CCM_TITLE, er.canonical_cells(cl),
-                                   er.canonical_cells(mv), cluster_runs)
+                                   er.canonical_cells(mv), cluster_runs, targets=targets)
         if md:
             out.append(("ccm-vs-base", er.CCM_TITLE, md))
 
@@ -194,7 +201,8 @@ def _cross_sections(er, runs_csv: Path, repo: Path, family: Optional[str]):
     if pipelines:
         pc_runs = by_setup.get("perchannel", [])
         md = er.render_ultimate(er.ULTIMATE_TITLE, pipelines,
-                                er.concurrency_text(pc_runs) if pc_runs else None)
+                                er.concurrency_text(pc_runs) if pc_runs else None,
+                                targets=targets)
         if md:
             out.append(("pipelines", er.ULTIMATE_TITLE, md))
     return out

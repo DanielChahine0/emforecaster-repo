@@ -162,6 +162,12 @@ class Cell:
     n: int
     n_channels: Optional[int]
     n_seeds: Optional[int]
+    # Every seed with a run in the cell, and how many of them are complete --
+    # every band of the cell, one run each (frames.complete_seeds; for a joint
+    # cell, one run). A cell with fewer complete seeds than its dataset's
+    # other cells is still training (extract_results.shortfall).
+    seeds: tuple = ()
+    n_complete_seeds: Optional[int] = None
 
 
 def excluded(log_path: Path, exclude: list[str]) -> bool:

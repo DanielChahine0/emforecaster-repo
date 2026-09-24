@@ -72,7 +72,7 @@ ULTIMATE_SETTING = (336, 96)
 from emfres.runlogs import (  # noqa: E402
     Cell, Run, excluded, load_runs, parse_running_time,
 )
-from emfres.frames import family_of, is_archive  # noqa: E402
+from emfres.frames import complete_seeds, family_of, is_archive  # noqa: E402
 
 
 
@@ -97,6 +97,10 @@ def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
     for key, rs in group_runs(runs).items():
         channels = {r.channel for r in rs if r.channel is not None}
         seeds = {r.seed for r in rs if r.seed is not None}
+        by_seed: dict = defaultdict(list)
+        for r in rs:
+            if r.seed is not None:
+                by_seed[r.seed].append({"channel": r.channel})
         cells[key] = Cell(
             mse=mean_of(rs, "mse"),
             mae=mean_of(rs, "mae"),
@@ -109,8 +113,52 @@ def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
             n=len(rs),
             n_channels=len(channels) or None,
             n_seeds=len(seeds) or None,
+            seeds=tuple(sorted(seeds)),
+            n_complete_seeds=len(complete_seeds(by_seed)),
         )
     return cells
+
+
+def seed_targets(*cell_maps: dict[tuple, Cell]) -> dict[tuple, int]:
+    """{(dataset, L, O, conf): how many seeds a complete cell there has}.
+
+    The seeds any cell of that dataset and window has, over every tree passed
+    in: a cluster sweep that has reached one seed of three is judged against
+    the three the finished trees have, not against itself. Works on raw and
+    canonical_cells keys alike (both put dataset, L, O, conf at 1-4).
+    """
+    seen: dict[tuple, set] = defaultdict(set)
+    for cells in cell_maps:
+        for key, cell in cells.items():
+            seen[(key[1], key[2], key[3], key[4])].update(cell.seeds)
+    return {k: len(v) for k, v in seen.items()}
+
+
+def shortfall(cell: Optional[Cell], key: tuple, targets: Optional[dict]) -> str:
+    """'' for a complete cell, else the ' (n=…)' it is printed with.
+
+    A cell is short when it has fewer complete seeds (every band, one run
+    each) than seed_targets gives its dataset and window, or runs of a seed
+    that is not complete: it is still training, and its mean is over
+    whichever runs finished. n is its complete seeds; '+ partial' says runs
+    of an incomplete seed are averaged in too. Such a cell is never ranked,
+    bolded or pooled with complete ones.
+    """
+    if cell is None or not targets:
+        return ""
+    target = targets.get((key[1], key[2], key[3], key[4]), 0)
+    full = (cell.n_complete_seeds if cell.n_complete_seeds is not None
+            else cell.n_seeds or 0)
+    partial = len(cell.seeds) > full
+    if not target or (full >= target and not partial):
+        return ""
+    return f" (n={full}{' + partial' if partial else ''})"
+
+
+# The legend for shortfall's marker, added wherever one is printed.
+SHORT_NOTE = ("`(n=…)` = a cell with fewer complete seeds than the other cells of its "
+              "dataset and window, still training: its mean is over the runs that "
+              "finished, and it is never ranked, marked or averaged with complete cells.")
 
 
 def diagnose(runs: list[Run], cells: dict[tuple, Cell]) -> None:
@@ -226,16 +274,21 @@ def shows_k(row_keys: list[tuple]) -> bool:
     return any(k is not None for _, _, _, k in row_keys)
 
 
-def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool) -> list[list[str]]:
+def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool,
+                targets: Optional[dict] = None) -> list[list[str]]:
     show_k = shows_k(row_keys)
     rows = []
     for ds, sl, pl, k in row_keys:
-        vals = [getattr(cells.get((m, ds, sl, pl, conf, k)), attr, None) for m in models]
-        strs = [fmt(v) for v in vals]
+        keys = [(m, ds, sl, pl, conf, k) for m in models]
+        vals = [getattr(cells.get(key), attr, None) for key in keys]
+        notes = [shortfall(cells.get(key), key, targets) if v is not None else ""
+                 for key, v in zip(keys, vals)]
+        strs = [fmt(v) + note for v, note in zip(vals, notes)]
         if mark_best:
             # Ranked within one k: the models of a cluster row compete at the same
-            # cluster count, not against the other k's of the same window.
-            mark_ranks(strs, vals)
+            # cluster count, not against the other k's of the same window. A
+            # cell still training is not ranked against finished ones.
+            mark_ranks(strs, [None if note else v for v, note in zip(vals, notes)])
         head = [dataset_label(ds), str(sl), str(pl)]
         if show_k:
             head.append(MISSING if k is None else str(k))
@@ -243,12 +296,13 @@ def metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best: bool) -> li
     return rows
 
 
-def metric_table(cells, models, row_keys, conf, attr, fmt, mark_best=True) -> list[str]:
+def metric_table(cells, models, row_keys, conf, attr, fmt, mark_best=True,
+                 targets: Optional[dict] = None) -> list[str]:
     show_k = shows_k(row_keys)
     return md_table(
         ["Dataset", "$L$", "$O$"] + (["$k$"] if show_k else []) + [model_label(m) for m in models],
         "lrr" + ("r" if show_k else "") + "r" * len(models),
-        metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best),
+        metric_rows(cells, models, row_keys, conf, attr, fmt, mark_best, targets),
     )
 
 
@@ -367,9 +421,16 @@ def per_band_note(runs: list[Run]) -> str:
 
 
 def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
-                  extra: Optional[list[tuple]] = None) -> str:
+                  extra: Optional[list[tuple]] = None,
+                  targets: Optional[dict] = None) -> str:
     """One setup's section. ``extra`` appends (group, table title, lines, note)
-    groups after the model-size table -- what only the frames path knows."""
+    groups after the model-size table -- what only the frames path knows.
+    ``targets`` (seed_targets over every tree loaded; default: this tree's
+    cells alone) is the seed count a complete cell has."""
+    if targets is None:
+        targets = seed_targets(cells)
+    short = any(shortfall(c, key, targets) for key, c in cells.items())
+    legend = f" {SHORT_NOTE}" if short else ""
     models = sort_models({k[0] for k in cells})
     confs = [c for c in (False, True) if row_keys_for(cells, c)]
     settings = sorted({(r.seq_len, r.pred_len) for r in runs})
@@ -404,38 +465,44 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
 
         doc.group("Forecast accuracy" + suffix)
         doc.para(f"**Bold** = best (lowest) in the row, <u>underline</u> = runner-up. "
-                 f"`{MISSING}` = not logged.")
+                 f"`{MISSING}` = not logged." + legend)
         doc.table("MSE (`sl_test/loss`)",
-                  metric_table(cells, models, row_keys, conf, "mse", num_fmt(4)))
+                  metric_table(cells, models, row_keys, conf, "mse", num_fmt(4),
+                               targets=targets))
         if has_metric(cells, models, row_keys, conf, "mae"):
             doc.table("MAE (`sl_test/mae`)",
-                      metric_table(cells, models, row_keys, conf, "mae", num_fmt(4)))
+                      metric_table(cells, models, row_keys, conf, "mae", num_fmt(4),
+                                   targets=targets))
 
         doc.group("Training cost" + suffix)
         doc.para("**Bold** = fastest in the row, <u>underline</u> = runner-up."
                  + (f" `{MISSING}` = not logged (ARIMA is not gradient-trained)."
-                    if "ARIMA" in models else "") + per_band_note(runs))
+                    if "ARIMA" in models else "") + per_band_note(runs) + legend)
         doc.table("Total training time (`parameters/running_time`)",
-                  metric_table(cells, models, row_keys, conf, "running_time", format_seconds))
+                  metric_table(cells, models, row_keys, conf, "running_time", format_seconds,
+                               targets=targets))
         doc.table("Per-epoch training time (`running_time / len(sl_train/loss)`)",
-                  metric_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine))
+                  metric_table(cells, models, row_keys, conf, "per_epoch", format_seconds_fine,
+                               targets=targets))
         doc.table("Mean epoch cost by model", epoch_summary_table(runs, models, conf),
                   note="Pooled over every run of that model in this section.")
 
         if conf:
             doc.group("Conformal prediction")
             doc.para('Not marked -- "best" coverage means closest to the target, not highest, and '
-                     "a narrower interval only counts if that target is met.")
+                     "a narrower interval only counts if that target is met." + legend)
             if has_metric(cells, models, row_keys, True, "ic"):
                 doc.table("Marginal coverage % (`sl_test/ic`)",
-                          metric_table(cells, models, row_keys, True, "ic", num_fmt(2), mark_best=False))
+                          metric_table(cells, models, row_keys, True, "ic", num_fmt(2),
+                                       mark_best=False, targets=targets))
             if has_metric(cells, models, row_keys, True, "jc"):
                 doc.table("Joint coverage % (`sl_test/jc`)",
-                          metric_table(cells, models, row_keys, True, "jc", num_fmt(2), mark_best=False))
+                          metric_table(cells, models, row_keys, True, "jc", num_fmt(2),
+                                       mark_best=False, targets=targets))
             if has_metric(cells, models, row_keys, True, "interval_width"):
                 doc.table("Mean interval width (`sl_test/interval_width_mean`)",
                           metric_table(cells, models, row_keys, True, "interval_width",
-                                       num_fmt(3), mark_best=False))
+                                       num_fmt(3), mark_best=False, targets=targets))
 
     sizes = model_size_table(cells, models)
     if sizes:
@@ -471,18 +538,25 @@ def fmt_delta(value: float, decimals: int, unit: str) -> str:
     return f"{value:+.{decimals}f}{unit}"
 
 
-def pair_rows(keys, left, right, attr, fmt, lower_is_better: bool, delta: str):
-    rows, wins = [], [0, 0, 0]
+def pair_rows(keys, left, right, attr, fmt, lower_is_better: bool, delta: str,
+              targets: Optional[dict] = None):
+    """wins is [left, right, tie, pending]: a pair with a side still training
+    (shortfall) is pending, never a win."""
+    rows, wins = [], [0, 0, 0, 0]
     for key in keys:
         a = getattr(left.get(key), attr, None)
         b = getattr(right.get(key), attr, None)
-        sa, sb, sd = fmt(a), fmt(b), MISSING
+        na = shortfall(left.get(key), key, targets) if a is not None else ""
+        nb = shortfall(right.get(key), key, targets) if b is not None else ""
+        sa, sb, sd = fmt(a) + na, fmt(b) + nb, MISSING
         if a is not None and b is not None:
             if delta == "pct" and a:
                 sd = fmt_delta((b - a) / a * 100, 1, "%")
             elif delta == "pp":
                 sd = fmt_delta(b - a, 2, " pp")
-            if lower_is_better:
+            if lower_is_better and (na or nb):
+                wins[3] += 1
+            elif lower_is_better:
                 if b < a:
                     sb, wins[1] = f"**{sb}**", wins[1] + 1
                 elif a < b:
@@ -495,22 +569,28 @@ def pair_rows(keys, left, right, attr, fmt, lower_is_better: bool, delta: str):
 
 
 def pair_table(keys, left, right, left_label, right_label, attr, fmt,
-               lower_is_better=True, delta="pct"):
-    rows, wins = pair_rows(keys, left, right, attr, fmt, lower_is_better, delta)
+               lower_is_better=True, delta="pct", targets=None):
+    rows, wins = pair_rows(keys, left, right, attr, fmt, lower_is_better, delta, targets)
     return md_table(["Dataset", "$L$", "$O$", "Model", left_label, right_label, "Δ"],
                     "lrrlrrr", rows), wins
 
 
 def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
                       uv_roots: list[tuple[str, dict[tuple, Cell]]],
-                      concurrency: Optional[dict[str, str]] = None) -> str:
-    """``concurrency`` maps a univariate tree's title to concurrency_text of its runs."""
+                      concurrency: Optional[dict[str, str]] = None,
+                      targets: Optional[dict] = None) -> str:
+    """``concurrency`` maps a univariate tree's title to concurrency_text of its
+    runs; ``targets`` is seed_targets over every tree (default: these)."""
     mv = canonical_cells(mv_cells)
     matched = [(label, canonical_cells(c)) for label, c in uv_roots]
+    if targets is None:
+        targets = seed_targets(mv, *(c for _, c in matched))
     matched = [(label, c, shared_keys(mv, c)) for label, c in matched]
     matched = [(label, c, keys) for label, c, keys in matched if keys]
     if not matched:
         return ""
+    short = any(shortfall(side.get(key), key, targets)
+                for _, c, keys in matched for key in keys for side in (mv, c))
 
     left = short_label(mv_title)
     doc = Doc(title)
@@ -519,7 +599,9 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
         ("Matched on", "(dataset, L, O, model, conformal setting); only cells present in both "
                        "trees appear below"),
         ("Delta", f"Δ is the univariate value relative to {left}, so negative Δ means the "
-                  "univariate value is lower; **bold** = better of the two where lower is better"),
+                  "univariate value is lower; **bold** = better of the two where lower is better"
+                  + (f". {SHORT_NOTE[:-1]}; a pair with such a side is pending in the "
+                     f"scoreboard" if short else "")),
     ])
 
     all_wins: list[tuple[str, str, list[int]]] = []
@@ -531,7 +613,8 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
         doc.para(f"{len(keys)} matched cells, from `{mv_title}` and `{label}`.")
         for name, log_key, attr, decimals in [("MSE", "sl_test/loss", "mse", 4),
                                               ("MAE", "sl_test/mae", "mae", 4)]:
-            table, wins = pair_table(keys, mv, uv, left, right, attr, num_fmt(decimals))
+            table, wins = pair_table(keys, mv, uv, left, right, attr, num_fmt(decimals),
+                                     targets=targets)
             doc.table(f"{name} (`{log_key}`)", table)
             all_wins.append((right, name, wins))
 
@@ -571,17 +654,22 @@ def render_comparison(title: str, mv_title: str, mv_cells: dict[tuple, Cell],
             ]:
                 if any(getattr(mv.get(key), attr, None) is not None for key in conformal):
                     table, wins = pair_table(conformal, mv, uv, left, right, attr,
-                                             num_fmt(decimals), lower_is_better=lower, delta=kind)
+                                             num_fmt(decimals), lower_is_better=lower, delta=kind,
+                                             targets=targets)
                     doc.table(f"{name} (`{log_key}`)", table)
                     if lower:
                         all_wins.append((right, "Interval width", wins))
 
     doc.group("Scoreboard")
+    pending = any(w[3] for _, _, w in all_wins)
     doc.table("Matched-cell wins by metric",
-              md_table(["Comparison", "Metric", left, "Univariate", "Tie"], "llrrr",
+              md_table(["Comparison", "Metric", left, "Univariate", "Tie"]
+                       + (["Pending"] if pending else []), "llrrr" + ("r" if pending else ""),
                        [[f"{left} vs {label}", metric, str(w[0]), str(w[1]), str(w[2])]
+                        + ([str(w[3])] if pending else [])
                         for label, metric, w in all_wins]),
-              note="How many matched cells each pipeline wins, counted only where lower is better.")
+              note="How many matched cells each pipeline wins, counted only where lower is better."
+                   + (" Pending: a side still training, not counted." if pending else ""))
     return doc.render()
 
 
@@ -619,23 +707,29 @@ def ultimate_axes(pipelines: list[Pipeline], sl: int, pl: int,
             sorted({key[1] for key in keys}, key=dataset_rank))
 
 
-def ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt) -> list[list[str]]:
+def ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt,
+                  targets: Optional[dict] = None) -> list[list[str]]:
     rows = []
     for ds in datasets:
         for p in pipelines:
             vals = [pipeline_value(p, m, ds, sl, pl, conf, attr) for m in models]
             if all(v is None for v in vals):
                 continue
-            strs = [fmt(v) for v in vals]
+            keys = [(m, ds, sl, pl, conf, p.k) for m in models]
+            notes = [shortfall(p.cells.get(key), key, targets) if v is not None else ""
+                     for key, v in zip(keys, vals)]
+            strs = [fmt(v) + note for v, note in zip(vals, notes)]
             # Ranked across the row, i.e. model vs model under one strategy; the
             # strategies are compared by reading down a dataset block instead.
-            mark_ranks(strs, vals)
+            # A cell still training is not ranked against finished ones.
+            mark_ranks(strs, [None if note else v for v, note in zip(vals, notes)])
             rows.append([dataset_label(ds), p.label] + strs)
     return rows
 
 
-def ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt) -> list[str]:
-    rows = ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt)
+def ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt,
+                   targets: Optional[dict] = None) -> list[str]:
+    rows = ultimate_rows(pipelines, models, datasets, sl, pl, conf, attr, fmt, targets)
     if not rows:
         return []
     return md_table(["Dataset", "Pipeline"] + models, "ll" + "r" * len(models), rows)
@@ -655,13 +749,20 @@ def channel_counts(pipelines, datasets, sl, pl, conf) -> str:
 
 
 def render_ultimate(title: str, pipelines: list[Pipeline],
-                    pc_concurrency: Optional[str] = None) -> str:
-    """``pc_concurrency`` is concurrency_text of the per-channel runs."""
+                    pc_concurrency: Optional[str] = None,
+                    targets: Optional[dict] = None) -> str:
+    """``pc_concurrency`` is concurrency_text of the per-channel runs;
+    ``targets`` is seed_targets over every tree (default: the pipelines')."""
     sl, pl = ULTIMATE_SETTING
     axes = [(conf,) + ultimate_axes(pipelines, sl, pl, conf) for conf in (False, True)]
     axes = [a for a in axes if a[1]]
     if not axes:
         return ""
+    if targets is None:
+        targets = seed_targets(*(p.cells for p in pipelines))
+    short = any(shortfall(cell, key, targets) for p in pipelines
+                for key, cell in p.cells.items()
+                if key[2] == sl and key[3] == pl and key[5] == p.k)
 
     doc = Doc(title)
     items = [
@@ -703,16 +804,17 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
                  f"block to see what the same model does per channel, jointly, or with a "
                  f"k-cluster head. `{MISSING}` = that combination was not run "
                  f"(ARIMA and Persistence never are: they fit one model per band, so "
-                 f"there is nothing to cluster).")
+                 f"there is nothing to cluster)." + (f" {SHORT_NOTE}" if short else ""))
 
         for name, log_key, attr, fmt in [("MSE", "sl_test/loss", "mse", num_fmt(4)),
                                          ("MAE", "sl_test/mae", "mae", num_fmt(4))]:
-            table = ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt)
+            table = ultimate_table(pipelines, models, datasets, sl, pl, conf, attr, fmt,
+                                   targets)
             if table:
                 doc.table(f"{name} (`{log_key}`)", table)
 
         table = ultimate_table(pipelines, models, datasets, sl, pl, conf,
-                               "running_time", format_seconds)
+                               "running_time", format_seconds, targets)
         if table:
             chans = channel_counts(pipelines, datasets, sl, pl, conf)
             doc.table("Total training time (`parameters/running_time`)", table,
@@ -736,8 +838,34 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
 CCM_REPRESENTATIVE = {"emf": ("ed2022", 5), "voip": ("voip_mobile", 3)}
 
 
+def ccm_choice(cluster_cells: dict[tuple, Cell], model: str, ds: str, sl: int, pl: int,
+               conf: bool, grid: list[int], targets: Optional[dict]) -> tuple:
+    """(k, lacks) of a + CCM cell: the k with the best test MSE over the
+    model's sweep -- the post-hoc (oracle) choice the section's caveat names
+    -- and "" when that sweep is complete, else what it lacks: its fewest
+    complete seeds, when a k is short of the family's (shortfall), and the k
+    values it has so far, when some are not run yet. (None, "") with no k.
+    """
+    keys = [(model, ds, sl, pl, conf, k) for k in grid
+            if (model, ds, sl, pl, conf, k) in cluster_cells]
+    scored = [(cluster_cells[key].mse, key[5]) for key in keys
+              if cluster_cells[key].mse is not None]
+    if not scored:
+        return None, ""
+    lacks = []
+    short = [cluster_cells[key] for key in keys
+             if shortfall(cluster_cells[key], key, targets)]
+    if short:
+        lacks.append(f"n={min(c.n_complete_seeds or 0 for c in short)}")
+    if len(keys) < len(grid):
+        lacks.append(f"k {','.join(str(key[5]) for key in keys)} of "
+                     f"{','.join(str(k) for k in grid)}")
+    return min(scored)[1], ", ".join(lacks)
+
+
 def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
-                       mv_cells: dict[tuple, Cell], cluster_runs: list[Run]) -> str:
+                       mv_cells: dict[tuple, Cell], cluster_runs: list[Run],
+                       targets: Optional[dict] = None) -> str:
     """The CCM paper's Table 4 shape: base | + CCM per backbone, IMP(%) last.
 
     Both inputs are canonical_cells-keyed. "Base" is the plain multivariate
@@ -748,6 +876,12 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     post-hoc (oracle) choice, unlike the paper's validation-tuned k. A second
     table mirrors the paper's Table 10 configuration summary, read from the
     cluster runs' own logs.
+
+    Partial data (a sweep still training) is shown, never scored as complete:
+    a base cell short of seeds prints its n (shortfall), a + CCM cell whose
+    sweep lacks a k or a seed prints what it lacks (ccm_choice), and neither
+    is marked or averaged into IMP. ``targets`` is seed_targets over every
+    tree (default: these two).
     """
     sl, pl = ULTIMATE_SETTING
     conf = True
@@ -758,6 +892,11 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
                       key=dataset_rank)
     if not models or not datasets:
         return ""
+    if targets is None:
+        targets = seed_targets(cluster_cells, mv_cells)
+    # The family's k values at this window: a model's sweep is complete when it
+    # has every one of them, at every seed.
+    grid = sorted({k[5] for k in cluster_cells if at(k) and k[5] is not None})
 
     family = family_of(datasets[0])
     rep_ds, rep_k = CCM_REPRESENTATIVE.get(family, (datasets[0], None))
@@ -797,48 +936,56 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
         headers += [m, "+ CCM"]
     headers.append("IMP (%)")
     rows = []
+    partial = False
     for ds in datasets:
-        ks_of = lambda m: sorted({k[5] for k in cluster_cells
-                                  if k[0] == m and k[1] == ds and at(k)
-                                  and k[5] is not None})
-        best_k = {}
-        for m in models:
-            scored = [(cluster_cells[(m, ds, sl, pl, conf, k)].mse, k)
-                      for k in ks_of(m)
-                      if cluster_cells[(m, ds, sl, pl, conf, k)].mse is not None]
-            if scored:
-                best_k[m] = min(scored)[1]
+        choice = {m: ccm_choice(cluster_cells, m, ds, sl, pl, conf, grid, targets)
+                  for m in models}
         for attr, name in (("mse", "MSE"), ("mae", "MAE")):
             strs: list[str] = []
             vals: list[Optional[float]] = []
             imps = []
+            pairs = 0
             for m in models:
-                base_cell = mv_cells.get((m, ds, sl, pl, conf, None))
+                base_key = (m, ds, sl, pl, conf, None)
+                base_cell = mv_cells.get(base_key)
                 base = getattr(base_cell, attr, None)
-                k = best_k.get(m)
+                short = shortfall(base_cell, base_key, targets) if base is not None else ""
+                k, lacks = choice[m]
                 ccm_cell = cluster_cells.get((m, ds, sl, pl, conf, k)) if k else None
                 ccm = getattr(ccm_cell, attr, None)
-                bs, cs = fmt_num(base, 4), fmt_num(ccm, 4)
+                bs, cs = fmt_num(base, 4) + short, fmt_num(ccm, 4)
                 if ccm is not None:
-                    cs = f"{cs} (k={k})"
+                    cs = f"{cs} (k={k}" + (f"; partial: {lacks}" if lacks else "") + ")"
+                partial |= bool(short or (ccm is not None and lacks))
                 if base is not None and ccm is not None:
-                    if ccm < base:
-                        cs = f"**{cs}**"
-                    elif base < ccm:
-                        bs = f"**{bs}**"
-                    imps.append((base - ccm) / base * 100.0)
+                    pairs += 1
+                    if not (short or lacks):
+                        if ccm < base:
+                            cs = f"**{cs}**"
+                        elif base < ccm:
+                            bs = f"**{bs}**"
+                        imps.append((base - ccm) / base * 100.0)
                 strs += [bs, cs]
-                vals += [base, ccm]
+                vals += [None if short else base, None if lacks else ccm]
             ranked = sorted((v, i) for i, v in enumerate(vals) if v is not None)
             if ranked:
                 i = ranked[0][1]
                 strs[i] = f"<u>{strs[i]}</u>"
             imp = f"{statistics.mean(imps):+.2f}" if imps else MISSING
+            if imps and len(imps) < pairs:
+                imp += f" ({len(imps)} of {pairs})"
             rows.append([dataset_label(ds), name] + strs + [imp])
     doc.table("Long-horizon forecasting, base vs + CCM",
               md_table(headers, "ll" + "r" * (2 * len(models) + 1), rows),
               note="IMP (%) = mean over the backbones of (base − CCM) / base × 100 "
-                   "for that row's metric; positive = CCM ahead.")
+                   "for that row's metric; positive = CCM ahead."
+                   + (f" A base cell short of its dataset's seeds shows `(n=…)`; a + CCM "
+                      f"cell whose sweep is not complete -- a k of {', '.join(map(str, grid))} "
+                      f"not run yet, or run at fewer seeds -- shows what it lacks "
+                      f"(`partial: n=…` = its fewest seeds at any k, `k … of …` = the k "
+                      f"values run so far). Such cells are still training: they are not "
+                      f"marked, and IMP averages only the complete pairs, counting them "
+                      f"when that is not every backbone." if partial else ""))
 
     # --- the paper's Table 10 analogue, from the cluster runs' own logs ------- #
     def ccm_log(m: str) -> dict:
@@ -856,12 +1003,8 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     def best_k_line(m: str) -> str:
         parts = []
         for ds in datasets:
-            scored = [(cluster_cells[(m, ds, sl, pl, conf, k)].mse, k)
-                      for k in sorted({key[5] for key in cluster_cells
-                                       if key[0] == m and key[1] == ds and at(key)
-                                       and key[5] is not None})
-                      if cluster_cells[(m, ds, sl, pl, conf, k)].mse is not None]
-            parts.append(str(min(scored)[1]) if scored else MISSING)
+            k, lacks = ccm_choice(cluster_cells, m, ds, sl, pl, conf, grid, targets)
+            parts.append(MISSING if k is None else f"{k} (partial)" if lacks else str(k))
         return " / ".join(parts)
 
     cfg_rows = [
@@ -1077,7 +1220,11 @@ def main() -> None:
         print(f"Wrote {args.output} ({len(runs)} runs, {len(cells)} aggregated cells).", file=sys.stderr)
         return
 
-    updates = [(title, render_report(title, runs, cells)) for title, runs, cells in loaded]
+    # A complete cell has the seeds every tree's cells of its dataset and window
+    # have: a sweep still training is judged against the finished trees.
+    targets = seed_targets(*(cells for _, _, cells in loaded))
+    updates = [(title, render_report(title, runs, cells, targets=targets))
+               for title, runs, cells in loaded]
 
     by_title = {title: cells for title, _, cells in loaded}
     mv_cells = by_title.get(MULTIVARIATE_TITLE)
@@ -1090,7 +1237,8 @@ def main() -> None:
     if mv_cells and uv_roots:
         comparison = render_comparison(COMPARISON_TITLE, MULTIVARIATE_TITLE, mv_cells, uv_roots,
                                        concurrency={t: concurrency_text(r)
-                                                    for t, r, _ in loaded if per_band_note(r)})
+                                                    for t, r, _ in loaded if per_band_note(r)},
+                                       targets=targets)
         if comparison:
             updates.append((COMPARISON_TITLE, comparison))
         else:
@@ -1101,14 +1249,16 @@ def main() -> None:
     if mv_cells and cl_cells:
         cluster_runs = next((r for t, r, _ in loaded if t == CLUSTER_TITLE), [])
         ccm_section = render_ccm_vs_base(CCM_TITLE, canonical_cells(cl_cells),
-                                         canonical_cells(mv_cells), cluster_runs)
+                                         canonical_cells(mv_cells), cluster_runs,
+                                         targets=targets)
         if ccm_section:
             updates.append((CCM_TITLE, ccm_section))
 
     pipelines = build_pipelines(by_title)
     pc_runs = next((r for t, r, _ in loaded if t == PER_CHANNEL_TITLE), [])
     ultimate = (render_ultimate(ULTIMATE_TITLE, pipelines,
-                                concurrency_text(pc_runs) if pc_runs else None)
+                                concurrency_text(pc_runs) if pc_runs else None,
+                                targets=targets)
                 if pipelines else "")
     if ultimate:
         updates.append((ULTIMATE_TITLE, ultimate))
