@@ -593,6 +593,7 @@ def build_overlay_figure(
     *,
     outdir: Path,
     split: str,
+    group: str,
     grid: str | None,
     formats: list[str],
     style: Style,
@@ -600,6 +601,12 @@ def build_overlay_figure(
     subtitle_text: str | None,
 ) -> list[Path]:
     """One MAE panel holding both setups: multivariate lines over per-channel.
+
+    ``split`` is the roles ("dataset split" or "model split", as build_figures
+    takes them) and ``group`` the directory the figure lands in. They used to
+    be one argument: main passed the directory name ("by-model") where the
+    roles were tested, so the model split was never drawn and
+    ``overlay/by-model`` was byte-identical to ``overlay/by-dataset``.
 
     Hue keeps its usual identity (datasets in the dataset split, models in the
     model split); the setup rides on the second-cycle idiom - multivariate
@@ -704,7 +711,7 @@ def build_overlay_figure(
         fig.text(0.985, 0.008, "ARIMA is channel-independent - both setups coincide",
                  ha="right", va="bottom", fontsize=style.footnote, color=INK_MUTED)
     add_x_label(fig, [ax], style, x_title)
-    directory, base = artifact_path(outdir, "overlay", group=split,
+    directory, base = artifact_path(outdir, "overlay", group=group,
                                     subject="mv-vs-perchannel", configs=drawn,
                                     metric="MAE")
     directory.mkdir(parents=True, exist_ok=True)
@@ -947,7 +954,8 @@ def main(argv: list[str] | None = None) -> int:
             for path in build_overlay_figure(
                 records,
                 outdir=outdir,
-                split=family,
+                split=split,
+                group=family,
                 grid=args.grid,
                 formats=formats,
                 style=style,
