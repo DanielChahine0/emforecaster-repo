@@ -455,6 +455,38 @@ def test_a_dash_that_now_has_a_value_is_new_not_a_change(tmp_path):
         "its tables other than MSE/MAE are text only")
 
 
+def test_every_dataset_label_reads_back_to_its_cells_slug():
+    import extract_results as er
+
+    for slug in er.DATASET_ORDER:
+        assert R.dataset_slug(er.dataset_label(slug)) == slug
+
+
+def test_a_voip_cell_is_held_against_its_cells_row(tmp_path):
+    # A VoIP label is not its slug lower-cased: "VoIP Mobile" is voip_mobile's
+    # row, not a value that is no longer published.
+    published = tmp_path / "2026-01-01_voip_tables.md"
+    published.write_text("\n".join([
+        "# Univariate (Per Channel)", "", "### 1.1 · MSE (`sl_test/loss`)", "",
+        "| Dataset | $L$ | $O$ | Transformer (2017) | Persistence |",
+        "|:---|---:|---:|---:|---:|",
+        "| VoIP Mobile | 48 | 12 | 0.2948 | 0.2663 |",
+        "| VoIP Fixed | 24 | 6 | 0.3451 | 0.2152 |", ""]))
+    cells = tmp_path / "cells.csv"
+    base = {f: "" for f in frames.CELL_FIELDS}
+    frames.write_csv(cells, [
+        dict(base, setup="perchannel", family="voip", model=model, dataset=ds, seq_len=sl,
+             pred_len=pl, k="", conf=1, mse=mse)
+        for model, ds, sl, pl, mse in (("RF_EMF_Transformer", "voip_mobile", 48, 12, "0.29481"),
+                                       ("Persistence", "voip_mobile", 48, 12, "0.2663"),
+                                       ("RF_EMF_Transformer", "voip_fixed", 24, 6, "0.3451"),
+                                       ("Persistence", "voip_fixed", 24, 6, "0.21524"))],
+        frames.CELL_FIELDS)
+    g = R.gate(published, cells, [], runs_spec=tmp_path / "none.yaml",
+               gate_spec=tmp_path / "none.yaml", out=io.StringIO())
+    assert g.ok and g.held["cells"].published == 4 and not g.held["cells"].changes
+
+
 def _cluster_gate(tmp_path, *, batch_key="sl_test/loss", mse="0.5350", mse_fixed="0.5352",
                   rules=()):
     """A snapshot publishing one cluster k=2 MSE of 0.5350 under ``batch_key``."""

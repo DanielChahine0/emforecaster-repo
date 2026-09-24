@@ -65,11 +65,21 @@ DISPLAY_IDS = {
     "ARIMA": ["ARIMA"],
 }
 
-# Dataset display -> slug.
+# Dataset display -> slug, where the slug is not the display lower-cased
+# (extract_results.DATASET_DISPLAY): without these a VoIP cell finds no
+# cells.csv row and reads as no longer published.
 DATASET_SLUG = {
     "EMF2023 (University-5 w/ PTV)": "emf_2023_university_5_with_ptv",
     "EMF2023": "emf_2023_university_5_with_ptv",
+    "VoIP Mobile": "voip_mobile",
+    "VoIP Fixed": "voip_fixed",
 }
+
+
+def dataset_slug(label: str) -> str:
+    """The cells.csv slug of a dataset as the tables print it."""
+    short = re.sub(r"\s*\(.*\)\s*$", "", label).strip() or label
+    return DATASET_SLUG.get(label, DATASET_SLUG.get(short, short.lower()))
 
 # The heading of the paradigm comparison; its other windows render as
 # "Paradigm Comparison · L24/O6".
@@ -530,8 +540,7 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
     n_batch = 0
 
     def lookup(setup, model_disp, dataset, lookback, horizon, k):
-        ds = pm.short_dataset(dataset)
-        slug = DATASET_SLUG.get(dataset, DATASET_SLUG.get(ds, ds.lower()))
+        slug = dataset_slug(dataset)
         for mid in DISPLAY_IDS.get(model_disp, [model_disp]):
             for conf in (1, 0):
                 row = cells.get((setup, mid, slug, lookback, horizon, k, conf))
