@@ -93,6 +93,17 @@ PROTOCOLS = ("fixed", "batch")
 # No gradient path, one model per band: MV == PC == k = C by construction.
 DETERMINISTIC = ("ARIMA", "Persistence")
 
+# The models each family's cluster grid trains, by model id: forecasting/
+# grids.py CLUSTER_MODELS, the list both GRIDS["cluster"] and
+# GRIDS["voip_cluster"] use (the results package does not import the training
+# one; test_paradigms checks the two agree). A planned model whose sweep has
+# not started is pending in every cluster comparison, not absent from it --
+# on VoIP, EMForecaster, LSTM and the Transformer until the sweep reaches them.
+CLUSTERED = {
+    family: ("DLinear", "PatchTST", "TSMixer", "RF_EMF_Transformer", "EMForecaster", "LSTM")
+    for family in ("emf", "voip")
+}
+
 # The models whose seeds are checked for training. A seed trains when its
 # skill over the lookback-mean forecast (1 - MSE / lookback-mean MSE, ratio
 # of sums over the bands) is at least TRAINS_FRACTION of the reference: the
@@ -282,7 +293,8 @@ class Board:
     seeds: tuple                      # the family's seeds at this window
     grid: tuple                       # the family's k values at this window
     protocol: str
-    clusterable: frozenset = field(default_factory=frozenset)  # models with cluster runs
+    # Models with cluster runs, or planned ones (CLUSTERED) still to come.
+    clusterable: frozenset = field(default_factory=frozenset)
     sweeps: dict = field(default_factory=dict)  # {(dataset, model): {k: {seed: metrics}}}
 
     def complete(self, cell, pipe) -> bool:
@@ -293,17 +305,20 @@ class Board:
         return pipe != BEST or not self.choices[cell].partial
 
     def applies(self, cell, pipe) -> bool:
-        """Whether the pipeline exists for this model (ran, or should run)."""
+        """Whether the pipeline exists for this model (ran, or is planned to)."""
         if cell[1] in DETERMINISTIC:
             return pipe in (MV, PC)
         return pipe in (MV, PC) or cell[1] in self.clusterable
 
 
-def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None) -> Board:
+def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
+          planned: tuple = ()) -> Board:
     """The Board of seed_values' output under ``protocol``.
 
     ``seeds`` keeps only those seeds (the descriptive trained-seed row); the
-    family's seed set is then that set.
+    family's seed set is then that set. ``planned`` names the models the
+    family's cluster grid trains (CLUSTERED[family]): one with no cluster run
+    yet still counts as pending there.
     """
     if protocol not in PROTOCOLS:
         raise ValueError(f"unknown cluster protocol {protocol!r}")
@@ -330,7 +345,8 @@ def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None) ->
         choices[cell] = choice
         if choice.k is not None:
             cells[cell][BEST] = ks[choice.k]
-    clusterable = frozenset(key[2] for key in values if isinstance(key[0], tuple))
+    clusterable = (frozenset(key[2] for key in values if isinstance(key[0], tuple))
+                   | frozenset(planned))
     return Board(dict(cells), choices, tuple(sorted(family_seeds)), grid, protocol,
                  clusterable, dict(by_cell_k))
 
@@ -592,8 +608,9 @@ def render(runs_csv: Path, family: str, setting: tuple,
     """
     seq_len, pred_len = setting
     values = seed_values(runs_csv, family, seq_len, pred_len)
-    board = build(values, "fixed")
-    batch = build(values, "batch")
+    planned = CLUSTERED.get(family, ())
+    board = build(values, "fixed", planned=planned)
+    batch = build(values, "batch", planned=planned)
     cells = board.cells
     if not any(len(p) > 1 for p in cells.values()):
         return ""

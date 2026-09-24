@@ -153,6 +153,26 @@ def test_a_cell_short_of_the_family_seeds_is_shown_but_not_counted(tmp_path):
     assert "(n=1)" in md and "3/1/-/-" in md
 
 
+def test_the_planned_cluster_models_are_the_cluster_grids(tmp_path):
+    from forecasting.grids import GRIDS
+    for family, grid in (("emf", "cluster"), ("voip", "voip_cluster")):
+        assert set(paradigms.CLUSTERED[family]) == {m[1] for m in GRIDS[grid]["models"]}
+
+
+def test_a_planned_sweep_not_yet_started_is_pending(tmp_path):
+    rows = _sweep() + [_run("multivariate", s, 0.40, model="LSTM") for s in SEEDS]
+    rows += [_run("perchannel", s, 0.39, model="LSTM", channel=0) for s in SEEDS]
+    order = [("ed2022", "DLinear"), ("ed2022", "LSTM")]
+    unplanned = paradigms.build(_values(tmp_path, rows))
+    assert paradigms.tally(unplanned, MV, K1, "mae", order)["pending"] == 0
+    board = paradigms.build(_values(tmp_path, rows), planned=paradigms.CLUSTERED["emf"])
+    t = paradigms.tally(board, MV, K1, "mae", order)
+    assert (t["cells"], t["pending"]) == (1, 1)        # LSTM's sweep has not started
+    md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96))
+    row = next(line for line in md.splitlines() if "Cluster (k=1) vs Multivariate" in line)
+    assert "| 1 | 1 | 0 |" in row                      # Cells, Pending, Identical
+
+
 # --------------------------------------------------------------- comparisons
 
 def test_comparisons_use_matched_seeds_and_a_seed_noise_tie_band(tmp_path):
