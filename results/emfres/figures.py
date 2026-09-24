@@ -31,7 +31,7 @@ FIGURES = {
     "P5": (("emf", "voip"), "clustering gain against k, per model"),
     "P6": (("emf", "voip"), "scoreboard of every comparison"),
     "P7": (("emf",), "accuracy against uncontended training cost"),
-    "P8": (("emf", "voip"), "coverage against interval width"),
+    "P8": (("emf", "voip"), "coverage and interval width by paradigm"),
     "P9": (("emf", "voip"), "per-seed skill: who collapses"),
     "P10": (("emf",), "the single-series grid, a separate dataset"),
 }
