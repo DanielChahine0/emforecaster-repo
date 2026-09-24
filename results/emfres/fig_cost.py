@@ -170,7 +170,7 @@ def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *
                 ax = fig.add_subplot(gs[r, 3 * d + j], sharey=first)
                 first = first or ax
                 style_axes(ax, style)
-                xs, part = dot_panel(
+                xs, part, _ = dot_panel(
                     ax, corpus, dataset, models,
                     lambda cell, pipe, key=key: (cal.get((cell, pipe)) or {}).get(key),
                     style, k_labels=False)

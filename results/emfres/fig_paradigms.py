@@ -25,10 +25,10 @@ from . import paradigms as PG
 
 from .figkit import (
     BAND_FILL, BURNT_PEACH, CHARCOAL, INK_MUTED, INK_PRIMARY, INK_SECONDARY,
-    MUTED_COLOR, OUTCOME, PARTIAL_ALPHA, SURFACE, VERDIGRIS, dataset_name,
-    footnote, label_color, layout, legend, mark_kwargs, model_name, outcome_handles,
-    pad_range, panel_title, paradigm_handles, seed_ticks, style_axes, title,
-    window_label, write, xlabel,
+    LABEL_BOX, MUTED_COLOR, OUTCOME, PARTIAL_ALPHA, SURFACE, VERDIGRIS, dataset_name,
+    fit_texts, footnote, label_color, layout, legend, mark_kwargs, model_name,
+    outcome_handles, pad_range, panel_title, paradigm_handles, seed_ticks, style_axes,
+    title, window_label, write, xlabel,
 )
 
 METRIC_NAME = dict(PG.METRICS)          # {"mae": "MAE", "mse": "MSE"}
@@ -68,17 +68,22 @@ def _model_ticks(ax, models, flagged_models, style) -> None:
 
 def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
               *, per_seed: bool = False, k_labels: bool = True) -> tuple:
-    """Draw every model's paradigms on one dataset; returns (x values, any partial).
+    """Draw every model's paradigms on one dataset.
+
+    Returns (x values, any partial, labels); the labels hang off their marks
+    by a fixed offset, so pass them to figkit.fit_texts once the layout is set.
 
     Three lanes per model row: multivariate (filled), per-channel (hollow),
     cluster (k = 1 as a small dot, the validation-chosen k as a diamond,
-    labelled with its k). Seeds are ticks behind the means, or, with
+    joined to it by a hairline and labelled with its k on its own outer side,
+    away from the k = 1 dot). Seeds are ticks behind the means, or, with
     ``per_seed``, each seed is its own mark and no mean is drawn.
     ``metric`` is a seed-metric name (figdata.marks) or a function
     (cell, pipe) -> figdata.Marks for values the seed metrics do not hold.
     """
     get = metric if callable(metric) else (lambda cell, pipe: FD.marks(corpus, cell, pipe, metric))
     xs: list = []
+    labels: list = []
     partial = False
     n = len(models)
     for i, model in enumerate(models):
@@ -118,17 +123,26 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
                         **mark_kwargs(PG.BEST, style, alpha=0.85 * alpha, scale=0.8))
             else:
                 seed_ticks(ax, vals, y, VERDIGRIS, style, alpha=0.55 * alpha)
+                if k1 is not None:
+                    ax.plot([k1.mean, best.mean], [y, y], color=VERDIGRIS, lw=0.7,
+                            alpha=0.7 * alpha, zorder=4, solid_capstyle="butt")
                 ax.plot([best.mean], [y], zorder=6, **mark_kwargs(PG.BEST, style, alpha=alpha))
-            at = max(([k1.mean] if k1 else []) + ([max(vals)] if per_seed else [best.mean]))
             xs += vals
             if not per_seed and k_labels:
-                ax.annotate(f"k={best.k}" if best.complete else "partial", (at, y),
-                            xytext=(style.marker * 0.9, 0), textcoords="offset points",
-                            ha="left", va="center", fontsize=style.context * 0.95,
-                            color=label_color(VERDIGRIS) if best.complete else INK_MUTED,
-                            zorder=7, bbox=dict(boxstyle="square,pad=0.1", fc=SURFACE,
-                                                ec="none", alpha=0.85))
-    return xs, partial
+                # The label sits on the diamond's own outer side -- left of it
+                # when clustering beat k = 1 -- so it never lands beside the
+                # k = 1 dot, and past its seed ticks, so it covers none.
+                left = k1 is not None and best.mean < k1.mean
+                at = min([best.mean] + vals) if left else \
+                    max([best.mean] + vals + ([k1.mean] if k1 is not None else []))
+                labels.append(ax.annotate(
+                    f"k={best.k}" if best.complete else "partial", (at, y),
+                    xytext=(-style.marker * 0.9 if left else style.marker * 0.9, 0),
+                    textcoords="offset points", ha="right" if left else "left", va="center",
+                    fontsize=style.context * 0.95,
+                    color=label_color(VERDIGRIS) if best.complete else INK_MUTED,
+                    zorder=7, bbox=LABEL_BOX))
+    return xs, partial, labels
 
 
 def _grid_height(n_models: int, nrow: int) -> float:
@@ -159,11 +173,12 @@ def fig_dots(corpora: list, metric: str, style, root: Path, formats, *,
     partial = False
     flagged_any = False
     ref_drawn: set = set()
+    labels = {}
     for r, corpus in enumerate(corpora):
         for c, dataset in enumerate(datasets):
             ax = axes[r][c]
             style_axes(ax, style)
-            xs, part = dot_panel(ax, corpus, dataset, models, metric, style)
+            xs, part, labels[ax] = dot_panel(ax, corpus, dataset, models, metric, style)
             partial |= part
             refs = []
             for ref in ref_models:
@@ -173,7 +188,7 @@ def fig_dots(corpora: list, metric: str, style, root: Path, formats, *,
                     refs.append(m.mean)
                     ref_drawn.add(ref)
             if xs:
-                ax.set_xlim(*pad_range(xs + refs, 0.05, right=0.12))
+                ax.set_xlim(*pad_range(xs + refs, 0.05))
             flagged = _flagged_models(corpus, dataset)
             flagged_any |= bool(flagged)
             _model_ticks(ax, models, flagged, style)
@@ -190,6 +205,8 @@ def fig_dots(corpora: list, metric: str, style, root: Path, formats, *,
                 for ref in sorted(ref_drawn)]
     legend(fig, handles, style, y=1 - 0.24 / fig.get_size_inches()[1])
     layout(fig, style, top=0.86, bottom=0.42, wspace=0.08, hspace=0.3 if nrow > 1 else 0.2)
+    for ax, texts in labels.items():
+        fit_texts(ax, texts)
     xlabel(fig, axes[-1], METRIC_NAME[metric], style)
     if flagged_any:
         footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
@@ -419,7 +436,7 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
         for c, dataset in enumerate(datasets):
             ax = axes[r][c]
             style_axes(ax, style)
-            xs, part = dot_panel(ax, corpus, dataset, models, "skill", style, per_seed=True)
+            xs, part, _ = dot_panel(ax, corpus, dataset, models, "skill", style, per_seed=True)
             partial |= part
             ax.axvline(0, color=INK_SECONDARY, lw=0.6, zorder=2)
             thr = FD.trains_threshold(corpus, dataset)

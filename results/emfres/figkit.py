@@ -237,11 +237,40 @@ def pad_range(values, frac: float = 0.06, right: float = 0.0) -> tuple:
     return lo - frac * span, hi + (frac + right) * span
 
 
+# A label's box: opaque, so a rule or gridline under it never crosses the text.
+LABEL_BOX = dict(boxstyle="square,pad=0.1", fc=SURFACE, ec="none")
+
+
+def fit_texts(ax, texts, pad: float = 2.0, rounds: int = 4) -> None:
+    """Widen a linear x axis until every text in ``texts`` lies inside it.
+
+    Labels hang off data points by a fixed offset in points, so how much room
+    they need depends on the final axes width: call this after the figure's
+    layout. Each round widens by the overhang at the current scale, which
+    over-covers it slightly as the scale compresses, so a few rounds settle.
+    """
+    texts = [t for t in texts if t is not None]
+    if not texts:
+        return
+    renderer = ax.figure.canvas.get_renderer()
+    for _ in range(rounds):
+        box = ax.get_window_extent(renderer)
+        ext = [t.get_window_extent(renderer) for t in texts]
+        over_l = max(0.0, box.x0 + pad - min(e.x0 for e in ext))
+        over_r = max(0.0, max(e.x1 for e in ext) - (box.x1 - pad))
+        if over_l < 0.5 and over_r < 0.5:
+            return
+        lo, hi = ax.get_xlim()
+        per_px = (hi - lo) / box.width
+        ax.set_xlim(lo - over_l * per_px, hi + over_r * per_px)
+
+
 __all__ = [
     "AXIS_RULE", "BAND_FILL", "BURNT_PEACH", "CHARCOAL", "FAMILY_DIR", "GRIDLINE",
-    "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "MUTED_COLOR", "OUTCOME", "PARADIGM",
-    "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS", "dataset_name",
-    "diverging_cmap", "footnote", "label_color", "legend", "mark_kwargs", "model_name",
-    "layout", "outcome_handles", "pad_range", "panel_title", "paradigm_handles", "ranks",
-    "seed_ticks", "setup", "style_axes", "title", "window_label", "write", "xlabel",
+    "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "MUTED_COLOR", "OUTCOME",
+    "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS",
+    "dataset_name", "diverging_cmap", "fit_texts", "footnote", "label_color", "legend",
+    "mark_kwargs", "model_name", "layout", "outcome_handles", "pad_range",
+    "panel_title", "paradigm_handles", "ranks", "seed_ticks", "setup", "style_axes",
+    "title", "window_label", "write", "xlabel",
 ]
