@@ -232,6 +232,15 @@ def cmd_tables(args) -> int:
     if not runs_csv.exists():
         print(f"{runs_csv} not found -- run `make.py extract` first", file=sys.stderr)
         return 1
+    # The paradigm comparison's band variants read bands.csv beside runs.csv.
+    # Without it they are left out (the section's note says so) -- which the
+    # tracked frames alone cannot tell apart from bands that changed nothing.
+    if not (FRAMES / "bands.csv").exists():
+        print(f"WARNING: {FRAMES / 'bands.csv'} not found: the paradigm comparison is "
+              f"rendered WITHOUT its band-level sensitivity rows and per-cell band "
+              f"table. Run `make.py extract` to rebuild it; it has to be committed "
+              f"with runs.csv for the tracked frames to reproduce those rows.",
+              file=sys.stderr)
 
     family = args.family
     # The benchmark window every cross-setup section is built for, per corpus.

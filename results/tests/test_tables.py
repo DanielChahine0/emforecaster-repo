@@ -194,3 +194,23 @@ def test_the_mv_vs_univariate_scoreboard_counts_a_short_pair_as_pending():
     assert "0.3000 (n=1)" in row and "**" not in row
     board = next(line for line in md.splitlines() if "| MSE |" in line and "Per-channel" in line)
     assert board.endswith("| 0 | 1 | 0 | 1 |")          # DLinear won, TSMixer pending
+
+
+def test_make_tables_warns_when_bands_csv_is_missing(tmp_path, monkeypatch, capsys):
+    from emfres import cli
+
+    rows = []
+    for s in SEEDS:
+        for setup, v in (("multivariate", 0.40), ("perchannel", 0.30)):
+            row = _run(setup, s, v, dataset="voip_mobile", seq_len=48, pred_len=12,
+                       family="voip")
+            row["channel"] = "0" if setup == "perchannel" else ""
+            rows.append(row)
+    frames.write_csv(tmp_path / "runs.csv", rows, frames.RUN_FIELDS)
+    monkeypatch.setattr(cli, "FRAMES", tmp_path)
+    assert cli.main(["tables", "--family", "voip", "--check"]) == 0
+    assert "bands.csv not found" in capsys.readouterr().err
+
+    frames.write_csv(tmp_path / "bands.csv", [], frames.BAND_FIELDS)
+    assert cli.main(["tables", "--family", "voip", "--check"]) == 0
+    assert "bands.csv not found" not in capsys.readouterr().err

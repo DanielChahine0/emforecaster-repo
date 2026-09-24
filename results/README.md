@@ -289,7 +289,12 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
   2026-09-24), more than half again what `results/` tracks (2.28 MB), and the
   CCM sweep's cluster runs add roughly 5,000 rows more. Whether to track it
   as is, round it, or regenerate it on demand is still open; decide before
-  the regenerated frames are next committed.
+  the regenerated frames are next committed. It is neither tracked nor
+  ignored today, and `tables/paradigms.md`'s band-level sensitivity rows and
+  per-cell band table come from it: `make.py tables` on the tracked frames
+  alone renders them out (the section's note says so, and `make.py tables`
+  prints a WARNING). Committing it with `runs.csv` is what makes those rows
+  reproducible from the tracked frames.
 - `frames/epochs.csv` (per-epoch losses) is opt-in behind `--epochs` and
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
 - `emfres/fig_curves.py` still walks `logs/` directly rather than reading
