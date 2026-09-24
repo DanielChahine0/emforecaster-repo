@@ -232,3 +232,15 @@ def test_a_chosen_k_of_one_is_labelled_beside_its_diamond_not_past_an_outlier(tm
     assert near <= 2 * style.marker
     assert not _meets(ax, label.text, list(ax.lines))
     plt.close(fig)
+
+
+def test_a_cluster_lane_with_no_run_yet_reads_pending(tmp_path):
+    import matplotlib.pyplot as plt
+
+    rows = [_run(setup, s, 0.4, lookback=1.0, **kw) for s in SEEDS
+            for setup, kw in (("multivariate", {}), ("perchannel", {"channel": 0}))]
+    fig, ax, labels, style = _lane_panel(tmp_path, rows)
+    # DLinear has a cluster pipeline that has not run here: "pending", not a
+    # blank lane (ARIMA's, which has none, reads "n/a").
+    assert [lab.text.get_text() for lab in labels] == ["pending"]
+    plt.close(fig)

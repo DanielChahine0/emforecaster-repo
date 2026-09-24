@@ -89,10 +89,11 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
     cluster (k = 1 as a small dot, the validation-chosen k as a diamond,
     joined to it by a hairline and labelled with its k, on its own outer side
     -- away from the k = 1 dot -- unless that side is far and the other
-    nearer; either side when the chosen k is 1; "n/a" for a model that is
-    per-band by construction, whose footnote is na_note's). Seeds are ticks
-    behind the means, or, with ``per_seed``, each seed is its own mark and no
-    mean is drawn.
+    nearer; either side when the chosen k is 1). A cluster lane with nothing
+    to draw reads "n/a" for a model that is per-band by construction (whose
+    footnote is na_note's) and "pending" for one whose sweep has no run here
+    yet. Seeds are ticks behind the means, or, with ``per_seed``, each seed
+    is its own mark and no mean is drawn.
     ``metric`` is a seed-metric name (figdata.marks) or a function
     (cell, pipe) -> figdata.Marks for values the seed metrics do not hold.
     """
@@ -105,7 +106,7 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
     for i, model in enumerate(models):
         y0 = n - 1 - i
         cell = (dataset, model)
-        row: list = []
+        means: list = []
         for pipe in (PG.MV, PG.PC):
             m = get(cell, pipe)
             if m is None:
@@ -121,25 +122,21 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
                 seed_ticks(ax, vals, y, CHARCOAL, style, alpha=0.5 * alpha)
                 ax.plot([m.mean], [y], zorder=5, **mark_kwargs(pipe, style, alpha=alpha))
             xs += vals
-            row += vals + [m.mean]
+            means.append(max(vals) if per_seed else m.mean)
         y = y0 + LANE["cluster"]
-        if model in PG.DETERMINISTIC:
-            # Not "not run yet": there is no cluster pipeline to run. Written
-            # where a k label would be, clear of the row's marks.
-            if row:
-                x = max(row)
-                labels.append(lane_label(ax, "n/a", y, x, x, x, color=INK_MUTED, **lane_kw))
-            continue
-        k1 = get(cell, PG.K1)
-        best = get(cell, PG.BEST)
+        k1 = best = None
+        if model not in PG.DETERMINISTIC:
+            k1, best = get(cell, PG.K1), get(cell, PG.BEST)
         # The marks a lane label names (the k = 1 dot, the diamond and the
         # hairline between them); their seed ticks are obstacles like any mark.
         own: list = []
+        drawn = False
         if k1 is not None and not per_seed:
             k1_alpha = 1.0 if k1.complete else PARTIAL_ALPHA
             own += ax.plot([k1.mean], [y], zorder=5, **mark_kwargs(PG.K1, style, alpha=k1_alpha))
             xs.append(k1.mean)
             partial |= not k1.complete
+            drawn = True
         if best is not None:
             alpha = 1.0 if best.complete else PARTIAL_ALPHA
             partial |= not best.complete
@@ -155,17 +152,35 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
                 own += ax.plot([best.mean], [y], zorder=6,
                                **mark_kwargs(PG.BEST, style, alpha=alpha))
             xs += vals
-            if not per_seed and k_labels:
-                # The outer side is the one away from the k = 1 dot, so the
-                # label never reads as naming it; with k = 1 chosen there is
-                # no dot to avoid and the nearer side wins.
-                ends = [best.mean] + ([k1.mean] if k1 is not None else [])
-                one = k1 is None or best.k == 1
-                sides = (-1, 1) if not one and best.mean < k1.mean else (1, -1)
+            drawn = True
+        if not drawn:
+            # Nothing to draw in the lane: say why, right of the row's means
+            # (of its seeds, where each seed is a mark). ARIMA's is not "not
+            # run yet": it has no cluster pipeline to run.
+            if means and (model in PG.DETERMINISTIC or corpus.board.applies(cell, PG.BEST)):
+                x = max(means)
                 labels.append(lane_label(
-                    ax, f"k={best.k}" if best.complete else "partial", y, min(ends), max(ends),
-                    best.mean, sides=sides, prefer=not one, own=own,
-                    color=label_color(VERDIGRIS) if best.complete else INK_MUTED, **lane_kw))
+                    ax, "n/a" if model in PG.DETERMINISTIC else "pending", y, x, x, x,
+                    color=INK_MUTED, **lane_kw))
+            continue
+        if per_seed or not k_labels:
+            continue
+        if best is not None:
+            ends = [best.mean] + ([k1.mean] if k1 is not None else [])
+            # The outer side is the one away from the k = 1 dot, so the label
+            # never reads as naming it; with k = 1 chosen there is no dot to
+            # avoid and the nearer side wins.
+            one = k1 is None or best.k == 1
+            sides = (-1, 1) if not one and best.mean < k1.mean else (1, -1)
+            labels.append(lane_label(
+                ax, f"k={best.k}" if best.complete else "partial", y, min(ends), max(ends),
+                best.mean, sides=sides, prefer=not one, own=own,
+                color=label_color(VERDIGRIS) if best.complete else INK_MUTED, **lane_kw))
+        else:
+            # A sweep with k = 1 but no chosen k yet.
+            labels.append(lane_label(ax, "partial", y, k1.mean, k1.mean, k1.mean,
+                                     sides=(1, -1), prefer=False, own=own, color=INK_MUTED,
+                                     **lane_kw))
     return xs, partial, labels
 
 
