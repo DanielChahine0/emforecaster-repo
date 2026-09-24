@@ -179,8 +179,9 @@ CELL_FIELDS = [
     "val_loss", "running_time", "per_epoch",
     "num_params", "ic", "jc", "interval_width",
     # Cluster cells: the fixed-membership twins of the columns above, blank
-    # unless every run of the cell has a value; fixed_sources lists the
-    # runs' fixed_source values, ';'-joined.
+    # unless every run of the cell has a value (the tables print `-` there
+    # too, extract_results.fixed_cells); fixed_sources lists the runs'
+    # fixed_source values, ';'-joined.
     "mse_fixed", "mse_fixed_std", "mae_fixed", "mae_fixed_std", "val_loss_fixed",
     "ic_fixed", "jc_fixed", "interval_width_fixed", "fixed_sources",
     # n_seeds counts every seed with a run, as mse and mae average every run

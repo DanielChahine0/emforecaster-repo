@@ -119,25 +119,39 @@ def aggregate(runs: list[Run]) -> dict[tuple, Cell]:
     return cells
 
 
-def fixed_view(runs: list[Run]) -> list[Run]:
-    """A cluster tree's runs under the fixed train-mean membership, the primary protocol.
+# A cluster cell's metrics that have a fixed-membership twin (runlogs.Run.*_fixed).
+FIXED_TWINS = (("mse", "mse_fixed"), ("mae", "mae_fixed"), ("ic", "ic_fixed"),
+               ("jc", "jc_fixed"), ("interval_width", "interval_width_fixed"))
 
-    Each run's mse, mae, val_loss, ic, jc and interval_width are swapped for
-    their fixed-membership twins (runlogs.Run.*_fixed): every channel keeps the
-    cluster weights computed once from the training split, so a forecast
-    depends on its own window only. Time, epochs and size stay the run's own.
-    A run with no fixed metrics (fixed_source "none") is left out rather than
-    averaged in with a batch-protocol number, so its cell prints the seeds it
-    has, with its (n=…). Runs outside a cluster tree (k None) pass unchanged.
+
+def lacks_fixed(run: Run) -> bool:
+    """Whether a cluster run has no fixed-membership MSE/MAE (fixed_source "none")."""
+    return run.k is not None and (run.mse_fixed is None or run.mae_fixed is None)
+
+
+def fixed_cells(runs: list[Run], cells: dict[tuple, Cell]) -> dict[tuple, Cell]:
+    """A cluster tree's cells under the fixed train-mean membership, the primary protocol.
+
+    ``cells`` is aggregate(runs). Each cluster cell's mse, mae, ic, jc and
+    interval_width are swapped for the mean of its runs' fixed-membership
+    twins (FIXED_TWINS): every channel keeps the cluster weights computed
+    once from the training split, so a forecast depends on its own window
+    only. A twin is all or nothing, as in cells.csv (frames.build_cells): a
+    cell with a run that lacks it prints `-` (not logged) there, never a mean
+    over the other seeds. Time, epochs, size and seed counts are the cell's
+    own, over every run: they have no protocol. Cells outside a cluster tree
+    (k None) pass unchanged.
     """
-    out = []
-    for r in runs:
-        if r.k is None:
-            out.append(r)
-        elif r.mse_fixed is not None and r.mae_fixed is not None:
-            out.append(replace(r, mse=r.mse_fixed, mae=r.mae_fixed, val_loss=r.val_loss_fixed,
-                               ic=r.ic_fixed, jc=r.jc_fixed,
-                               interval_width=r.interval_width_fixed))
+    out = dict(cells)
+    for key, rs in group_runs(runs).items():
+        if key[5] is None:
+            continue
+        swap = {}
+        for attr, twin in FIXED_TWINS:
+            vals = [getattr(r, twin) for r in rs]
+            swap[attr] = (statistics.mean(vals) if all(v is not None for v in vals)
+                          else None)
+        out[key] = replace(cells[key], **swap)
     return out
 
 
@@ -470,10 +484,10 @@ def render_report(title: str, runs: list[Run], cells: dict[tuple, Cell],
     ``targets`` (seed_targets over every tree loaded; default: this tree's
     cells alone) is the seed count a complete cell has.
 
-    ``batch`` is for a cluster tree whose ``runs`` and ``cells`` are its
-    fixed_view, the primary protocol: the same runs' logged batch-protocol
-    cells, printed as the section's last group, a labelled sensitivity. A
-    cluster tree rendered without it is the batch protocol, and says so."""
+    ``batch`` is for a cluster tree whose ``cells`` are its fixed_cells, the
+    primary protocol: the same runs' logged batch-protocol cells, printed as
+    the section's last group, a labelled sensitivity. A cluster tree
+    rendered without it is the batch protocol, and says so."""
     if targets is None:
         targets = seed_targets(cells, *([batch] if batch else []))
     short = any(shortfall(c, key, targets) for key, c in cells.items())
@@ -607,7 +621,7 @@ def render_setup(title: str, runs: list[Run], cells: dict[tuple, Cell],
                  extra: Optional[list[tuple]] = None) -> str:
     """render_report for any tree; a cluster tree leads with its fixed-protocol view.
 
-    ``cells`` is aggregate(runs). A cluster tree's section prints fixed_view's
+    ``cells`` is aggregate(runs). A cluster tree's section prints fixed_cells'
     numbers as its primary tables and ``cells``, the logged batch protocol, as
     its last group. A cluster tree none of whose runs has fixed metrics (frames
     written before those columns existed) is rendered under the batch protocol,
@@ -615,32 +629,32 @@ def render_setup(title: str, runs: list[Run], cells: dict[tuple, Cell],
     """
     if not any(r.k is not None for r in runs):
         return render_report(title, runs, cells, extra=extra, targets=targets)
-    fixed = fixed_view(runs)
-    if not any(r.k is not None for r in fixed):
+    if all(lacks_fixed(r) for r in runs if r.k is not None):
         print(f"WARNING: no run of '{title}' has fixed-membership metrics: rendered under "
               f"the logged batch protocol, labelled as such. Re-extract the frames "
               f"(make.py extract) for the primary protocol.", file=sys.stderr)
         return render_report(title, runs, cells, extra=extra, targets=targets)
-    missing = len(runs) - len(fixed)
+    missing = sum(lacks_fixed(r) for r in runs)
     if missing:
         print(f"WARNING: {missing} runs of '{title}' have no fixed-membership metrics "
-              f"(fixed_source none): left out of its fixed-protocol cells, which print "
-              f"the seeds they have; the batch-protocol group keeps them.", file=sys.stderr)
-    return render_report(title, fixed, aggregate(fixed), extra=extra, targets=targets,
-                         batch=cells)
+              f"(fixed_source none): their cells print '-' under the fixed protocol, as "
+              f"cells.csv leaves them blank; the batch-protocol group and the cost "
+              f"tables keep them. Re-score them (forecasting/ccm_rescore.py).",
+              file=sys.stderr)
+    return render_report(title, runs, fixed_cells(runs, cells), extra=extra,
+                         targets=targets, batch=cells)
 
 
 def protocol_cells(runs: list[Run], cells: dict[tuple, Cell]) -> tuple:
     """(primary cells, batch cells or None) of a cluster tree, for the cross tables.
 
-    ``cells`` is aggregate(runs). The primary cells are fixed_view's, and the
+    ``cells`` is aggregate(runs). The primary cells are fixed_cells', and the
     logged ones are kept as the batch-protocol sensitivity; when no run has
     fixed metrics (frames written before those columns existed) the logged
     cells are all there is, and no sensitivity is returned.
     """
-    fixed = fixed_view(runs)
-    if any(r.k is not None for r in fixed):
-        return aggregate(fixed), cells
+    if any(r.k is not None and not lacks_fixed(r) for r in runs):
+        return fixed_cells(runs, cells), cells
     return cells, None
 
 
@@ -880,7 +894,7 @@ def render_ultimate(title: str, pipelines: list[Pipeline],
     """``pc_concurrency`` is concurrency_text of the per-channel runs;
     ``targets`` is seed_targets over every tree (default: the pipelines').
 
-    ``batch`` is for cluster pipelines built from fixed_view's cells, the
+    ``batch`` is for cluster pipelines built from fixed_cells, the
     primary protocol: the same k's under the logged batch protocol
     (cluster_pipelines of the logged cells), printed after the time table as
     a labelled sensitivity. Without it, the cluster rows are whatever cells
@@ -1069,8 +1083,8 @@ def render_ccm_vs_base(title: str, cluster_cells: dict[tuple, Cell],
     test split never picks it: the configuration table reports the k it would
     pick as an oracle, labelled, and nothing else uses it.
 
-    ``cluster_cells`` is the primary protocol's: extract_results.fixed_view's
-    cells when ``batch``, the same runs' logged batch-protocol cells, is
+    ``cluster_cells`` is the primary protocol's: extract_results.fixed_cells
+    when ``batch``, the same runs' logged batch-protocol cells, is
     given -- then a second table repeats the comparison under the batch
     protocol, k chosen on its own validation loss (``batch_choices``), as a
     labelled sensitivity. Without ``batch`` the cells are the batch

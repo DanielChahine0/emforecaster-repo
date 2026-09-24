@@ -338,7 +338,8 @@ declare is fatal.
   EMF DLinear sweep. So a k chosen on `val_loss_fixed` may only rank runs of
   one origin: `runlogs.comparable_fixed` says whether a sweep's
   `fixed_source` values allow it (all 22 live sweeps do today). A cell's fixed means are blank unless every
-  run of it has one; `fixed_sources` lists what went in.
+  run of it has one, and its fixed-protocol table cells print `-` then too;
+  `fixed_sources` lists what went in.
 - **`mse_std` / `mae_std` are the seed standard deviation in every setup.** For
   a per-channel cell that is the sd of its per-seed band means, over the seeds
   that have every band. Until 2026-09-24 it was the spread over every band x
@@ -429,6 +430,10 @@ docstring has the full rules.
   `protocol_cells` do the split for the frames path and the logs walk alike.
   The legacy plotters' records (`emfres/records.py`) read a cluster cell's
   fixed twins as well, so a regenerated figure plots what the table prints.
+  A fixed twin is all or nothing in the tables as in `cells.csv`
+  (`extract_results.fixed_cells`): a cell with a run that has no fixed
+  metrics prints `-` there, not a mean over its other seeds, while its time,
+  epochs and size keep every run (no run lacks them today).
 
 ## Which runs count
 

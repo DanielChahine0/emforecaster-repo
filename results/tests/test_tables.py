@@ -197,16 +197,28 @@ def test_a_cluster_section_leads_with_the_fixed_protocol_the_batch_one_last():
     assert "Total training time (`parameters/running_time`)" in t
 
 
-def test_a_cluster_run_without_fixed_metrics_is_short_in_the_fixed_cells(capsys):
+def test_a_cluster_run_without_fixed_metrics_blanks_only_its_fixed_cells(capsys):
     import extract_results as er
+    from dataclasses import replace
     cl = [_fixed(_er_run("DLinear", s, 0.5, k=k), 0.6) for s in SEEDS for k in (1, 2)]
-    cl[-1].mse_fixed = cl[-1].mae_fixed = None          # seed 3, k=2: fixed_source none
+    # seed 3, k=2: fixed_source none, and the slowest run of its cell
+    cl[-1] = replace(cl[-1], mse_fixed=None, mae_fixed=None, running_time=120.0)
     cells = er.aggregate(cl)
     md = er.render_setup(er.CLUSTER_TITLE, cl, cells, targets=er.seed_targets(cells))
     t = _section_tables(md)
-    assert t["MSE (`sl_test_fixed/loss`)"][2][4] == "0.6000 (n=2)"
+    # All or nothing, as cells.csv: '-' (not logged), never a 2-seed mean
+    # passed off as a cell still training.
+    assert t["MSE (`sl_test_fixed/loss`)"][2][4] == er.MISSING
+    assert t["MSE (`sl_test_fixed/loss`)"][1][4] == "**0.6000**"
     assert t["MSE (`sl_test/loss`)"][2][4] == "**0.5000**"
+    # Time has no protocol: the cost tables keep every run, unmarked.
+    assert t["Total training time (`parameters/running_time`)"][2][4] == "**1m 20s**"
+    assert "(n=" not in md
     assert "1 runs of 'Cluster (k-Grouped Channels)' have no fixed" in capsys.readouterr().err
+    primary, batch = er.protocol_cells(cl, cells)
+    key = ("DLinear", "ed2022", 336, 96, True, 2)
+    assert (primary[key].mse, primary[key].running_time) == (None, 80.0)
+    assert batch is cells
 
     # Frames written before the fixed columns: the batch protocol, labelled so.
     bare = [_er_run("DLinear", s, 0.5, k=k) for s in SEEDS for k in (1, 2)]

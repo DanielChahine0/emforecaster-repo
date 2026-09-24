@@ -82,7 +82,7 @@ def runs_from_csv(path: Path, repo: Path, family: Optional[str] = None):
                 path=repo / row["path"],
                 concurrency=_i(row.get("concurrency", "")),
                 # A cluster run's fixed-membership twins (the primary cluster
-                # protocol, extract_results.fixed_view) and the validation
+                # protocol, extract_results.fixed_cells) and the validation
                 # losses a k is chosen on. .get: frames written before a
                 # column existed leave it None.
                 val_loss=_f(row.get("val_loss", "")),
