@@ -330,18 +330,22 @@ def cmd_tables(args) -> int:
         from difflib import unified_diff
 
         published = SNAPSHOTS[family]
-        have = dict(R.split_blocks(published.read_text()))
+        blocks = R.split_blocks(published.read_text())
+        titles = frozenset(title for _, title, _ in sections)
         for _, title, md in sections:
-            old = have.get(title)
-            if old is None:
+            old = R.find_blocks(blocks, title, claimed=titles - {title})
+            if not old:
                 print(f"NOTE: '{title}' is new -- not in {published.name}", file=sys.stderr)
                 continue
-            diff = list(unified_diff(old.splitlines(), md.strip().splitlines(),
+            was = "\n\n".join(block for _, block in old)
+            diff = list(unified_diff(was.splitlines(), md.strip().splitlines(),
                                      lineterm="", n=0))
             add = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
             rem = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
             if add or rem:
-                print(f"NOTE: '{title}' changed since {published.name} "
+                heading = (f"'{title}'" if [h for h, _ in old] == [title] else
+                           f"'{title}' (was {', '.join(repr(h) for h, _ in old)})")
+                print(f"NOTE: {heading} changed since {published.name} "
                       f"(+{add}/-{rem} lines; {gate.coverage(title)})", file=sys.stderr)
     if args.check:
         if gate is None:

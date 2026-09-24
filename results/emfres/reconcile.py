@@ -172,6 +172,22 @@ def titled(heading: str, title: str) -> bool:
     return heading == title or heading.startswith(title + " · ")
 
 
+def find_blocks(blocks: list[tuple[str, str]], title: str,
+                claimed: frozenset = frozenset()) -> list[tuple[str, str]]:
+    """The snapshot sections a rendered section corresponds to.
+
+    An exact heading wins. Otherwise every heading that is ``title`` plus a
+    " · " suffix and that no other rendered section claims exactly: so the
+    old per-dataset sweep headings find today's one sweep, while
+    "Paradigm Comparison · L24/O6" never stands in for "Paradigm Comparison"
+    when both are rendered.
+    """
+    exact = [b for b in blocks if b[0] == title]
+    if exact:
+        return exact
+    return [b for b in blocks if titled(b[0], title) and b[0] not in claimed]
+
+
 def _cell(text: str, keep_bold: bool = False) -> str:
     text = re.sub(r"</?u>", "", text).replace("`", "").replace("$", "")
     if not keep_bold:

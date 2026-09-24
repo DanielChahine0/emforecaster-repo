@@ -70,6 +70,22 @@ def test_the_text_around_a_value_is_part_of_it():
     assert not R.same("0.3768 ±0.0002", "0.3768")  # the sd vanished
 
 
+# --------------------------------------------------------------------- headings
+
+def test_a_sweep_rendered_per_dataset_is_found_by_its_prefix():
+    blocks = [(f"{tables.SWEEP_TITLE} · ED2022 · MAE", "a"), ("Multivariate", "b")]
+    assert R.find_blocks(blocks, tables.SWEEP_TITLE) == [blocks[0]]
+
+
+def test_an_exact_heading_wins_and_a_claimed_one_is_never_borrowed():
+    both = [("Paradigm Comparison", "a"), ("Paradigm Comparison · L24/O6", "b")]
+    assert R.find_blocks(both, "Paradigm Comparison") == [both[0]]
+    assert R.find_blocks(both, "Paradigm Comparison · L24/O6") == [both[1]]
+    only_l24 = [("Paradigm Comparison · L24/O6", "b")]
+    claimed = frozenset({"Paradigm Comparison · L24/O6"})
+    assert R.find_blocks(only_l24, "Paradigm Comparison", claimed=claimed) == []
+
+
 # --------------------------------------------------------------------- reading
 
 def test_scoreboard_rows_are_keyed_by_comparison_not_by_wording():
