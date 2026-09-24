@@ -115,7 +115,12 @@ on a dirty tree and resolved by an evidenced rule), `dirty` (unresolved),
 `skill`: the error of forecasting each window's lookback mean on the same
 windows, and the run's skill over it (1 - mse / lookback_mse; zero means no
 better than the trivial forecast, see `emfres/baselines.py` for why that is a
-measure and not a collapse flag). `cells.csv` carries
+measure and not a collapse flag), and `train_mean_mse`, the error of
+forecasting the training split's mean (0 in the scaled space), where a model
+without RevIN lands when it collapses. The single-series tree is scored with
+its own package's loader. `best_epoch` is the 0-based epoch of `val_loss`, the
+checkpoint early stopping kept; 0-2 marks a run that never trained (the
+failed per-channel PatchTST bands). `cells.csv` carries
 `code_versions`, the distinct versions behind a cell (`?` for a run whose code
 is unknown); more than one means the cell is not a single-code seed mean.
 
@@ -206,6 +211,40 @@ reported as a `NOTE`; only a changed value is fatal.
   `.personal/timing/`), with the fastest and slowest measured band as the
   bracket, beside the logged contended sum and the multivariate run of the same
   seed. EMF only: VoIP had no solo pass and shows no measurable contention.
+
+## The paradigm comparison
+
+`tables/paradigms.md` (and, for VoIP, `paradigms-l24.md` at the second window)
+is the seed-aware answer to which paradigm forecasts best, and
+`tables/ccm-sweep.md` shows every cluster sweep of the family behind it. Both
+come from `emfres/paradigms.py`, so they cannot name different best k's; its
+docstring has the full rules.
+
+- **Fixed membership is the primary cluster protocol.** Cluster cells read
+  `mse_fixed` / `mae_fixed`, and the best k is the lowest seed-mean
+  `val_loss_fixed` of the cell's sweep, ranked only over k values with every
+  seed of the sweep and only when the ranked runs' fixed metrics share one
+  origin (`runlogs.comparable_fixed`). The logged batch protocol, k chosen on
+  the logged `val_loss`, is a sensitivity row and a per-cell table.
+- **Counted cells are complete.** A comparison counts a cell only when both
+  sides have every seed of the family and the best k comes from a finished
+  sweep; anything else is shown with its n and counted as *pending*. ARIMA
+  and Persistence are the same computation in the multivariate and
+  per-channel grids: shown once (n = 1), *identical*, left out of every count
+  and test, and n/a for clustering.
+- **Whether the Transformer trains.** A Transformer seed trains when its skill
+  is at least half the best multivariate skill of the other models on the
+  dataset; the tables give a trains count per pipeline, a descriptive row over
+  the seeds whose multivariate run trains (EMF: 69421), and flag a cell where
+  no seed of any paradigm trains (the VoIP Transformer), with the scoreboard
+  repeated without it.
+- **Sensitivity rows** re-count the comparisons on the ratio-of-sums skill,
+  without the two near-unforecastable bands (UH2022 ch21, EMF2023 ch24), and
+  without the failed per-channel bands (`best_epoch` <= 2), both sides
+  recomputed from `bands.csv`.
+- The cluster sweep marks the validation k and prints the test-best k as an
+  *oracle* when they differ; per-channel times everywhere are labelled per
+  band and contended.
 
 ## Which runs count
 
