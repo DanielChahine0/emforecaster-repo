@@ -1,0 +1,104 @@
+# Which published values the value gate may find changed, and why.
+#
+# `make.py tables` and `make.py reconcile` hold every value the frozen
+# snapshot (PUBLISHED in emfres/cli.py) publishes against the value today's
+# frames give (emfres/reconcile.py). Three kinds are held:
+#
+#   cells       the MSE/MAE tables of Multivariate, Univariate Series,
+#               Univariate (Per Channel) and Cluster (k-Grouped Channels),
+#               recomputed from frames/cells.csv;
+#               fields: setup, model, dataset, window, k, metric
+#   scoreboard  the Paradigm Comparison's scoreboard and sensitivity rows,
+#               against today's render;
+#               fields: section, table, comparison, variant, metric, column
+#   sweep       the Channel Clustering (CCM) vs. plain section: each model's
+#               plain cell, its cell at every k, its val k and oracle k,
+#               against today's render;
+#               fields: dataset, window, metric, model, column, k
+#
+# A published value that no longer reproduces is a change. A change a rule
+# below matches prints as EXPECTED, under the rule's reason; any other is
+# UNEXPECTED and fails the gate. A rule matches on the fields it names (a value
+# or a list; case does not matter) plus an optional k_min, and every field it
+# omits is a wildcard. A rule with no reason, an unknown kind, or a field its
+# kind does not have is ignored with a warning: dropping a rule can only make
+# the gate stricter. Values today's report has and the snapshot does not --
+# new models, new rows, new columns -- are counted as new and need no rule.
+#
+# The rules belong to one snapshot. Against any other they are ignored, so
+# re-freezing is the step that retires them: once the changes below are
+# reviewed and accepted (after the 2026-09-24 CCM sweep ends), copy
+# tables/all.md into archive/, repoint PUBLISHED, and set `snapshot` to the new
+# file with an empty `expected` list.
+#
+# Deliberately NOT expected: the cluster k >= 2 cells of Cluster (k-Grouped
+# Channels). That section and frames/cells.csv still print the logged batch
+# protocol (b6e394191), whose runs have not changed, so a change there would be
+# a real one. If that section moves to the fixed protocol, add the rule in the
+# same commit.
+
+snapshot: 2026-09-22_tables.md
+
+expected:
+  - kind: cells
+    setup: perchannel
+    model: EMForecaster
+    reason: >
+      16 per-channel EMForecaster bands (seed 69421: 8 ED2022, 3 UH2022,
+      5 EMF2023) had trained at 512x1 instead of the grid's 128x4. The
+      2026-09-24 sweep retrained them at 128x4 and moved the old copies to
+      logs/_archive/2026-09-24_pc-emf-512x1/, so the three per-channel
+      EMForecaster cells may move in the fourth decimal (ED2022 and EMF2023 do,
+      UH2022 does not).
+
+  - kind: scoreboard
+    comparison: Per-channel vs Multivariate
+    column: [Tie, Cells]
+    reason: >
+      ARIMA's three cells are identical by construction (one model per band,
+      no gradient path) and now sit in the scoreboard's Identical column
+      instead of counting as ties (audit 2026-09-24, step 7.2): Tie and Cells
+      each drop by 3, the wins and losses do not change.
+
+  - kind: scoreboard
+    comparison: Per-channel vs Multivariate
+    column: Median gap
+    reason: >
+      The median relative gap moves with the retrained per-channel
+      EMForecaster bands (the first cells rule): MSE +1.03% -> +1.04%. ARIMA
+      was already left out of the median and of the test.
+
+  - kind: scoreboard
+    comparison: Cluster (k=1) vs Multivariate
+    reason: >
+      EMForecaster, the Transformer and LSTM are clustered for the first time
+      by the 2026-09-24 sweep. Their k = 1 cells are pending until every seed
+      finishes and then enter the count, so every column of this comparison
+      may change. The k = 1 values themselves stay guarded by the sweep and
+      cells kinds.
+
+  - kind: scoreboard
+    comparison: [Cluster (best k) vs Cluster (k=1), Cluster (best k) vs Multivariate]
+    reason: >
+      The fixed train-mean membership is now the primary cluster protocol
+      (owner decision, 2026-09-24): the best k is chosen on sl_val_fixed/loss
+      and scored on sl_test_fixed/*, where the snapshot used the logged batch
+      protocol (still rendered, as a sensitivity row). The newly clustered
+      EMForecaster, Transformer and LSTM also enter once complete.
+
+  - kind: sweep
+    column: k
+    k_min: 2
+    reason: >
+      The sweep now prints the fixed train-mean membership protocol
+      (sl_test_fixed/*); the snapshot printed the logged batch protocol, under
+      which a k > 1 forecast depends on its neighbouring test windows. At
+      k = 1 the two are one forecast, so k = 1 and plain are not expected to
+      move.
+
+  - kind: sweep
+    column: oracle k
+    reason: >
+      The snapshot underlined the k with the best test value, which the sweep
+      now prints as the oracle k; it is chosen over the k >= 2 values that
+      moved with the protocol, so it may change with them.

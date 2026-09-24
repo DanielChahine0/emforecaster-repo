@@ -235,3 +235,27 @@ def test_a_dash_that_now_has_a_value_is_new_not_a_change(tmp_path):
     held = g.held["cells"]
     assert g.ok and held.published == 1 and len(held.new) == 1
     assert g.coverage("Multivariate").startswith("its 1 gated values")
+
+
+# --------------------------------------------------------------------- the spec
+
+def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
+    from emfres import cli
+
+    rules, notes = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
+    assert rules and notes == []
+    sweep = dict(dataset="ED2022", window="L336/O96", metric="MAE", model="DLinear")
+    cells = dict(setup="cluster", model="DLinear", dataset="ED2022", window="L336/O96",
+                 metric="MSE")
+    must_reproduce = [
+        R.Change("sweep", dict(sweep, column="k", k="1"), "0.3771", "0.3772"),
+        R.Change("sweep", dict(sweep, column="plain", k=""), "0.3771", "0.3772"),
+        # The Cluster section still prints the batch protocol: its runs did not change.
+        R.Change("cells", dict(cells, k="2"), "0.5350", "0.5352"),
+        R.Change("cells", dict(cells, setup="multivariate", k=""), "0.5353", "0.5354"),
+        R.Change("scoreboard", dict(section="Paradigm Comparison", table="scoreboard",
+                                    comparison="Per-channel vs Multivariate", variant="",
+                                    metric="MAE", column="Wilcoxon p"), "0.0268", "0.03"),
+    ]
+    for change in must_reproduce:
+        assert not any(R.matches(rule, change) for rule in rules), change.label()
