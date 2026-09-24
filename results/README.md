@@ -12,7 +12,8 @@ regenerated on demand and git-ignored. `results/` tracks about 2.3 MB.
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
 python results/make.py reconcile    # hold the frozen report's values against frames/
-python -m pytest results/tests      # provenance, paradigm comparison, baselines
+python results/make.py figures      # frames/      -> the paradigm-comparison figures
+python -m pytest results/tests      # provenance, paradigm comparison, baselines, figures
 
 python results/plot_metrics.py          # the benchmark families
 python results/plot_complexity.py
@@ -52,7 +53,8 @@ file means.
 ```
 figures/<family>/[<setup>/]<axes...>_<metric>[_<view>].<ext>
 
-figures/by-dataset/multivariate/l48-480x48_o96_mse.png
+figures/paradigm-compare/emf/gap-forest_l336_o96_mae.png
+figures/per-band/uh2022/pc-vs-mv_l336_o96_mse.png
 figures/cluster-sweep/ed2022_l336_o96_kall_mae.png
 figures/trustworthiness/multivariate/l336_o96_coverage.png
 figures/l-ladder/ed2022_l48-480x48_o96_mse_facet-model.png
@@ -72,6 +74,53 @@ The rules:
   ladder is `l48-480x48_o96`, not a bare `mse.png`. This is the important one:
   omission would let today's filename quietly mean something else the day
   another window is added.
+
+## Figures
+
+`make.py figures` draws the paradigm comparison from `frames/` alone
+(`emfres/figures.py`); `--family emf|voip|all`, `--only P1,P5`, `--frames`
+and `--outdir` pick what is drawn, from which frames, under which root. Every
+number goes through `emfres/figdata.py`, which takes it from
+`emfres/paradigms.py`, the module behind `tables/paradigms.md`: the same seed
+means, matched seeds, tie band, Wilcoxon test and validation-chosen k (fixed
+membership, the primary cluster protocol), so a figure cannot name a winner
+or a best k the table does not.
+
+| Id | Path under `figures/` | Question |
+| :--- | :--- | :--- |
+| P1 | `paradigm-compare/emf/dots_l336_o96_{mae,mse}` | each model under each paradigm, seeds as ticks |
+| P2 | `paradigm-compare/<family>/gap-forest_<window>_{mae,mse}` | every cell's gap against the seed-noise tie band; W/T/L and p per panel |
+| P3 | `per-band/<dataset>/{pc-vs-mv,best-k-vs-k1}_<window>_mse` | is a gap broad, or carried by a few bands (needs `bands.csv`) |
+| P4 | `paradigm-compare/voip/dots_l24-48_o6-12_{mae,mse}` | VoIP, datasets x windows, Persistence as a rule |
+| P5 | `paradigm-compare/<family>/k-gain_<window>_{mae,mse}` | clustering gain against k per model; val k ringed, test-best k marked, batch protocol dashed |
+| P6 | `paradigm-compare/scoreboard_<windows>` | the four comparisons' W/T/L, EMF and both VoIP windows, with and without a cell that does not train |
+| P7 | `paradigm-compare/emf/cost_l336_o96_{mae,mse}` | error and uncontended cost relative to the multivariate run (needs `timing.csv`) |
+| P8 | `paradigm-compare/<family>/calibration_<windows>` | coverage and interval width per paradigm |
+| P9 | `paradigm-compare/<family>/seed-skill_<windows>` | every seed's skill over the lookback mean, with the Transformer's trains threshold |
+| P10 | `series/dots_l336_o96_{mae,mse}` | the single-series grid, titled as the separate dataset it is |
+
+The paradigm owns the colour: multivariate Charcoal Blue filled, per-channel
+the same hue hollow, cluster Verdigris (a diamond for the chosen k, a small
+dot for k = 1). Models are rows or facets, named in text; outcomes are
+Verdigris (challenger better), Burnt Peach (baseline better) and a hollow
+muted ring (tie). Type is IBM Plex Sans (`style.rc_fonts`), sizes the
+IEEEtran `paper` preset unless `--style slide`.
+
+The figures render from whatever the frames hold. A model whose sweep is still
+training is drawn faded (and hollow in P5), labelled partial, and left out of
+every count, exactly as the tables count it pending; re-extracting after the
+sweep draws it in full with no code change. The model list, datasets and k
+values all come from the frames. ED2024 and UH2024 never appear
+(`figdata.HIDDEN_DATASETS`; the EDA tool leaves them out unless named). Each
+run spot-checks every plotted multivariate, complete per-channel and cluster
+seed mean against `cells.csv` and exits non-zero on a mismatch, so the
+figures cannot drift from the tables.
+
+`figures/_archive/` holds the 56 figures of 2026-08-14 (`l192_o96_*`,
+`l48-480x48_o96_*`: the ED2022 lookback ladder and the L192 window of the
+multivariate, per-channel and cluster sweeps, whose runs are now in
+`logs/_archive`) that no current frame regenerates; it is git-ignored like the
+rest of `figures/`.
 
 ## Vocabulary
 
@@ -383,3 +432,6 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
   git-ignored: 11.7 MB of diagnostic curves is not a published number.
 - `emfres/fig_curves.py` still walks `logs/` directly rather than reading
   `epochs.csv`, so loss curves are the one family outside the frames pipeline.
+  It draws every seed's curve and a mean only over the epochs every seed
+  reached, with each seed's own best validation epoch; the NaN-padded mean it
+  drew before let a collapsed, early-stopped seed drop out of the average.
