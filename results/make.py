@@ -2,6 +2,7 @@
 """Entry point for the results/ pipeline.
 
     python results/make.py extract            # logs/ -> frames/*.csv
+    python results/make.py figures            # frames/ -> the paradigm figures
 
 No install step: this puts results/ on sys.path itself, the way the plotters
 already rely on.

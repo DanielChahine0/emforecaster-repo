@@ -432,6 +432,35 @@ def cmd_reconcile(args) -> int:
     return 0 if gate is not None and gate.ok else 1
 
 
+def cmd_figures(args) -> int:
+    from . import figures
+
+    frames_dir = args.frames or FRAMES
+    if not (frames_dir / "runs.csv").exists():
+        print(f"{frames_dir / 'runs.csv'} not found -- run `make.py extract` first",
+              file=sys.stderr)
+        return 1
+    families = ("emf", "voip") if args.family == "all" else (args.family,)
+    only = [f.strip().upper() for f in args.only.split(",") if f.strip()] if args.only else None
+    formats = [f.strip() for f in args.formats.split(",") if f.strip()]
+    try:
+        written, problems = figures.render(frames_dir, args.outdir or RESULTS / "figures",
+                                           families=families, only=only, formats=formats,
+                                           style_name=args.style)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    for path in written:
+        print(f"wrote {path.relative_to(REPO) if path.is_relative_to(REPO) else path}")
+    if problems:
+        for key, metric, got, want in problems[:10]:
+            print(f"SPOT CHECK: {key} {metric}: plotted {got!r}, cells.csv {want!r}",
+                  file=sys.stderr)
+        print(f"{len(problems)} plotted values disagree with cells.csv", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="make.py", description="Build the results/ frames, tables and figures.")
@@ -472,6 +501,22 @@ def main(argv: list[str] | None = None) -> int:
     rc.add_argument("--all", action="store_true",
                     help="list every expected change and every new value, uncapped")
     rc.set_defaults(func=cmd_reconcile)
+
+    fg = sub.add_parser("figures", help="frames/ -> the paradigm-comparison figures")
+    fg.add_argument("--family", default="all", choices=["emf", "voip", "all"],
+                    help="which corpus to draw (default: both; each figure is one corpus, "
+                         "except the scoreboard, which stacks them)")
+    fg.add_argument("--only", default="",
+                    help="comma-separated figure ids, e.g. P1,P5 (default: every one; "
+                         "see emfres/figures.py)")
+    fg.add_argument("--frames", type=Path, default=None,
+                    help=f"frames directory to read (default: {FRAMES})")
+    fg.add_argument("--outdir", type=Path, default=None,
+                    help="figures root the generated paths hang off (default: results/figures)")
+    fg.add_argument("--formats", default="png", help="comma-separated output formats")
+    fg.add_argument("--style", default="paper", choices=["paper", "slide"],
+                    help="type and mark sizes (default: paper, IEEEtran)")
+    fg.set_defaults(func=cmd_figures)
 
     args = parser.parse_args(argv)
     return args.func(args)
