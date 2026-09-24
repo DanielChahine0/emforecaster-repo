@@ -1,0 +1,341 @@
+{
+  "torch": "2.11.0+cu129",
+  "cpu_capability": "AVX2",
+  "commit": "f84e58dae1f6cddb9e9930de77d7e2adb0c6a088",
+  "seed": 69421,
+  "input_seed": 0,
+  "batch": 4,
+  "num_threads": 1,
+  "cases": {
+    "emf-DLinear": {
+      "state": "3e574e532b6b634cc3a021c20c5717ba3a2ff4e5883982212decd13a800ead6a",
+      "rng": "d4a503d08bdc5f27abed08037c73626e100dbb89670a2225c13da479e0fce3e6",
+      "forward": "1c5a6274ada7cb64f5476dee6d8d1275538bfcedc72ac45800c7d0ae832cb505",
+      "num_params": 64704,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-PatchTST": {
+      "state": "35aa2c34b99cd29e279cdfe3723bfd731db4da5b5cf955959b318d743fbaf6c3",
+      "rng": "776a8b4cbcdf875636986dff36c05fab23e910e842b9073ef4b50849d395c713",
+      "forward": "2653474fd463dfa4291528e3202a803e5706f3f7192eb01d2ec2cf4db3939d54",
+      "num_params": 72182,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-TSMixer": {
+      "state": "2b335da0b983472f7909037fdaae51ab45e00616c853fd84fba34c53a0fd6add",
+      "rng": "5187753a75ba5aa00a9c3ca9b19769ab7678468c5951552bb91cd2b70a6c29b6",
+      "forward": "daf7892252abaef3fb84ecea2a0a2daf571c971968a0c673005fea8bae2050df",
+      "num_params": 56065,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-RF_EMF_Transformer": {
+      "state": "e61706f78efc95dad18f1b883becbafad8b5a39962e68b716ddabb089d0fa358",
+      "rng": "532476f381c5197f8931a61b46ff0ab1e2e641221476253e6355db98c4e7bbbf",
+      "forward": "76fa905a33ef168b7709af1233cc51d6d2ab96e35d8e2939bde5b771c302bb08",
+      "num_params": 372738,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-EMForecaster": {
+      "state": "dd0c4375eedc205f6ab1a7f9e02fef664ea077bc63f56e3ee402582899cc4a04",
+      "rng": "466acff80cdbc73c70c3b55cabd393f4cf1d20fcc608b252b206c73ba656e937",
+      "forward": "c8902ba4639721ec5598e4b856cc36373caaac824296464de2575694ee009b8a",
+      "num_params": 2416959,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-LSTM": {
+      "state": "4cfdd8b80f6dbc976174a608920e6a0d422295a5def0eb5494f0e9b79a761efe",
+      "rng": "2ac09cee32c4423985f8da410adea3ad41ef8c3a43bd44661eabe5cb2f46f33f",
+      "forward": "3afb286aebab642d701d63f8edd6370b77fc66a0e58abe70b7895b395f6ba585",
+      "num_params": 20726,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-DLinear-k1": {
+      "state": "a975a96ae7a5742b5295893da2b51f7daf31d99c3eb5f037f085907b613cf80f",
+      "rng": "b64f02400422e9a4d72b9044101ff71968bb32490a7d91520f0e8110ef2c21c1",
+      "forward": "1c5a6274ada7cb64f5476dee6d8d1275538bfcedc72ac45800c7d0ae832cb505",
+      "num_params": 107840,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-DLinear-k3": {
+      "state": "5928d953528c505fb6ec6195eac3b8abd80948fb8e69c734a11b451d4e8a16f7",
+      "rng": "a3551025b79110b095737e85b818a82384985f5f7f57cf8d261d9829116aa499",
+      "forward": "b96b30fa4811bd4efa94ca98f0545a6538de90524133502ef71233e82064511e",
+      "num_params": 237248,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-DLinear-k9": {
+      "state": "0569688232a37078c8824aae94d95b8b4dad3edd0ce8fef1416500fdd8135b52",
+      "rng": "30ccc7f1f92def6a106750650e80bbf89bfc4b6be10e8d07dae17ecca3a5befb",
+      "forward": "963a7ed98c03a743aa3b179f5ccf07feb8ac3bc2a673ca87ca7202659e3f0603",
+      "num_params": 625472,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-PatchTST-k1": {
+      "state": "8b6615ba759e52c530e6a64a4c3df3fb07c4315f8be54e7a0dd1333049ace926",
+      "rng": "125db2cb3f0cca7bb9fc2e2a1ef91fba38b6b22147797232a6bcf99c1cf619eb",
+      "forward": "2653474fd463dfa4291528e3202a803e5706f3f7192eb01d2ec2cf4db3939d54",
+      "num_params": 77574,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-PatchTST-k3": {
+      "state": "eaa6fe9c43be677be3dcac6725d19d85d083568e1fc98b4bbdba2b3728910d44",
+      "rng": "7806fa32c6a18a4de774e846608a8fee5bed98b5a5ceca5610ddb3e8e0800925",
+      "forward": "1506089ccd0f69acb4ef024d79e1a39165dc27d6206c0c93fce86ea7f1e94849",
+      "num_params": 206790,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-PatchTST-k9": {
+      "state": "96593a509bf5d0ec86374720eb01101efdbe7cbcdb82a4189d33a18878a1c147",
+      "rng": "aa499a89acbaf0c4c305ff959a187b88307d59c7f61b9a98382c813713d66303",
+      "forward": "f5e75ade555c86bc31aab5d3f8e5d9464651bd2abb9b67baf32f2a56df37e6cd",
+      "num_params": 594438,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-TSMixer-k1": {
+      "state": "153b55992f011c0fbd08dd5d81ee7a95a50342491531639df7f3096df761ffe3",
+      "rng": "1edcd39e98e5b6a1d0fddb8c14f04721509d1b2a59559ea792273acc68800fcb",
+      "forward": "daf7892252abaef3fb84ecea2a0a2daf571c971968a0c673005fea8bae2050df",
+      "num_params": 66849,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-TSMixer-k3": {
+      "state": "a1e076a6b84763224dc05dce15d7755ae3e4fdb0c2d8238f243035281bc3bd49",
+      "rng": "136457e93ba83883813300bc2d075d5396d6ee0ac376d148955837949826a38d",
+      "forward": "3e439e14bf482651f7480ceadf3826c42c04442d8d9441676147d278f3680b6a",
+      "num_params": 175297,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "emf-TSMixer-k9": {
+      "state": "d358da4c1a96df0bd9fc2dfb8165e7cef89a3814917ccc63511baaae8328797d",
+      "rng": "36424da4150835cfd5e1978e9eb8b1059799824cc9f1160f8fb76c66b7f473e5",
+      "forward": "58e76bacf28579bf49d0396b57f939e59061aae653d137b5d170d17cb1e6a4be",
+      "num_params": 500641,
+      "out_shape": [
+        4,
+        27,
+        96
+      ]
+    },
+    "voip-DLinear": {
+      "state": "2c99148cece63cfd368533ec79ec006cc264a3c31d40981d9212b74b07bab8ec",
+      "rng": "b64d5b63834cd55173311adb69bc7b2434112f331203cd69fcd5d626b4afa8b3",
+      "forward": "010e09b158bff3a41a1fbe51650f7ed32837abac0857399d311e23762608696d",
+      "num_params": 1176,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-PatchTST": {
+      "state": "c76bebecd9165a27baa849ad68e3040b62b3041573e773d6306aa6d65a893b1b",
+      "rng": "2fc601fa49e233fe47f8adce68cd7a4787777d8019ddca02cf6039d3bb905847",
+      "forward": "bde60665b4f851f831d540ad71473cac69a4fa3eed02b16e1e93b192f5541018",
+      "num_params": 8120,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-TSMixer": {
+      "state": "19242bfd944cbb0bf2fa0816075cd04b59169a97aeb88257c209b607440ac64b",
+      "rng": "c0357fcdbb8c2159a1035ff92f8eb3414f87bfe870aa1646531fdc94aa7dc4ec",
+      "forward": "b6c702e2c25ee52808de7cb1060e0a4217ccb21687e55e2252b6f3cdc580f9f6",
+      "num_params": 4174,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-RF_EMF_Transformer": {
+      "state": "807d728e6f1a24aad28e0e43fa0c52ef04e2e449b9de1efedf9c4394e4ddab38",
+      "rng": "5a5f8d5c8ecd77ed23ff235de181d993c89c9475a49116dd28475fae1592817d",
+      "forward": "7837f2aa7670c82af3c370d39d3b8ce0d426f27ff53144c1afda33c74146f58e",
+      "num_params": 7782,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-EMForecaster": {
+      "state": "18427e93f50e0a8146101a72736f4c219e1484d6805ae0aa7cf1fa161c3f9562",
+      "rng": "466acff80cdbc73c70c3b55cabd393f4cf1d20fcc608b252b206c73ba656e937",
+      "forward": "c5bfc09c6aa140886e5a32698e34f5c9ebe6ed6de05561531c11027d40abd036",
+      "num_params": 315441,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-LSTM": {
+      "state": "ad85d508af45d6d99839c1bbc1676ff524de26eb2c736aeb838fca1a283ff34b",
+      "rng": "3057d95786d19d8b70fc5a1ea2b808433bdaa3895861d6a2493b49e2b3abbacd",
+      "forward": "35ac006258dfcc91b7272b56b1dc9410f4fadf01f9de166dad895ab1a083a278",
+      "num_params": 17912,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-DLinear-k1": {
+      "state": "e9913e0365dee9260edbb01680c28cbc9085a3307eaafee5ea6dabf080651c43",
+      "rng": "4fb5dd97f0add6b220a8a7373d555e9640d031a08bfbbb37125fca1ef209ea5b",
+      "forward": "010e09b158bff3a41a1fbe51650f7ed32837abac0857399d311e23762608696d",
+      "num_params": 7448,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-DLinear-k3": {
+      "state": "64358e47b6a13b09fc19f06ad275eb95e477fdb8aad2490421381bd09fd61cfd",
+      "rng": "d964aca773ff98eeb59cc9ab769e0b365be7856b85c96ccb50fd11a15460eda5",
+      "forward": "bd30a56f317fcc23ad86a7bc6f3f082e33e7b644e85165724eaa22b72514cac6",
+      "num_params": 9800,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-DLinear-k9": {
+      "state": "16d7f4ba6cbc4a28da7e9c7290bc98ab3b05e226fbaa3383dc6b691ac1faa012",
+      "rng": "6b324a15ddc555082f97f06a3a1ebd7512543cdc951c5631093cfd5c1117d528",
+      "forward": "0c26bc11b62c89af3cda0e39a12a8c944e6fda20596a378241236d5697355e8d",
+      "num_params": 16856,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-PatchTST-k1": {
+      "state": "e7aea1ee26178ef24c8d506243b171ee309ceaa5271e45c5d37ddcd128995f06",
+      "rng": "c5f405f172d9d0673bd821f15ccfce30fd8e0dbc1c3bcb3552e90467b6bf3304",
+      "forward": "bde60665b4f851f831d540ad71473cac69a4fa3eed02b16e1e93b192f5541018",
+      "num_params": 8904,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-PatchTST-k3": {
+      "state": "5ffadcdc3e494a2b3e524359cdcfd6c4b391e141a1dc536469152b1952c815f6",
+      "rng": "3f494761b0581d9e177c40c66c243fd608b9d1612c45c4a31e6dd33158789410",
+      "forward": "a952a371135fc10b83f48f1ef8919c24824467d565a77f20e103e0c9c716b654",
+      "num_params": 11232,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-PatchTST-k9": {
+      "state": "65e7003776d830fe2bfe07b7dd6362ad27320034f4c4bec58a006b38cf1d9d26",
+      "rng": "61ec0d551f90b6099b08cbfc3c147dd736368b63ec186e13afec8a4700a2d9fe",
+      "forward": "7ab58944ab64025c408535c25c085b8d6212407b2c2ec7f7bc962380704eb681",
+      "num_params": 18216,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-TSMixer-k1": {
+      "state": "e11c89cafdaa6c252fddfad92578791645f55cbd496281bccfbd3f989bdc1c5b",
+      "rng": "39605f1edfce554ca7cde06e9d50c97a70408a6a726770fe9403bc2fe7b7fcd9",
+      "forward": "b6c702e2c25ee52808de7cb1060e0a4217ccb21687e55e2252b6f3cdc580f9f6",
+      "num_params": 5742,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-TSMixer-k3": {
+      "state": "401f66d44ea95fa65323898fb126a1c5cc80f4e2015f0890cea9c9ae9723383c",
+      "rng": "c7124f488bb890a103e5ca5164d42950ce91ceba66ce15b3b780c0e9f01b5bd0",
+      "forward": "3ccb1d1ee19a7a8095bc0a735dbae810a51ce6777bf315233687e805072b83df",
+      "num_params": 13222,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    },
+    "voip-TSMixer-k9": {
+      "state": "3b88e9f7d67dc3ea57b44cfa80d09315b78e1312257672b95cc45929277e55b4",
+      "rng": "824ce2d7309dadc98f86e3e8bd5b2b98667343b9513b04956cc8bd1721be7438",
+      "forward": "cf03d1cf891130a77e2587a32369ef9cf9021610b36db0dfe1c3ae8107d74c86",
+      "num_params": 35662,
+      "out_shape": [
+        4,
+        6,
+        12
+      ]
+    }
+  }
+}
