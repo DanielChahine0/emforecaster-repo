@@ -309,21 +309,22 @@ class BandGrid:
     n: dict                      # {model: matched seeds}
 
     def share(self, skip=()) -> dict:
-        """Each band's signed share of the summed absolute band gap.
+        """Each band's signed share of the dataset's band gaps.
 
-        sum over models of (challenger - baseline) on the band, divided by the
-        sum of |challenger - baseline| over every (model, band): the shares'
-        absolute values sum to one, so a gap carried by a few bands shows as a
-        few long bars. Positive = the baseline is better on that band.
-        Models in ``skip`` (a model that does not train here, whose band gaps
-        say nothing about the paradigms) enter neither the sum nor the total.
+        A band's gap is the sum over models of (challenger - baseline) band
+        MSE, so models that disagree in sign on a band cancel there; its
+        share is that gap over the sum of every band's |gap|. The shares'
+        absolute values therefore sum to one, and a gap carried by a few
+        bands shows as a few long bars. Positive = the baseline is better on
+        that band. Models in ``skip`` (a model that does not train here,
+        whose band gaps say nothing about the paradigms) enter no band's gap.
         """
         models = [m for m in self.models if m not in set(skip)]
-        total = sum(abs(v) for (m, _), v in self.diff.items() if m in models)
+        gap = {ch: sum(self.diff.get((m, ch), 0.0) for m in models) for ch in self.channels}
+        total = sum(abs(v) for v in gap.values())
         if not total:
             return {}
-        return {ch: sum(self.diff.get((m, ch), 0.0) for m in models) / total
-                for ch in self.channels}
+        return {ch: v / total for ch, v in gap.items()}
 
 
 def band_grids(corpus: Corpus, bands_csv: Path, base: str = PG.MV,

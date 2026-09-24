@@ -4,10 +4,11 @@ One figure per dataset and comparison. The heatmap is log2(challenger /
 baseline) of each band's test MSE, seed-mean over the seeds both pipelines
 have: Verdigris where the challenger is better on that band, Burnt Peach
 where the baseline is. The strip under it gives each band's signed share of
-the summed absolute band gap over the dataset's models (figdata.BandGrid.share),
-so a gap concentrated in a few bands shows as a few long bars. A model that
-does not train on the dataset (corpus.flagged) keeps its row, marked with a
-dagger and muted, but is left out of the strip. A model the
+the dataset's band gaps (figdata.BandGrid.share: the band's gap summed over
+models, over the sum of every band's absolute gap), so the bars' lengths add
+up to 100% and a gap concentrated in a few bands shows as a few long bars. A
+model that does not train on the dataset (corpus.flagged) keeps its row,
+marked with a dagger and muted, but is left out of the strip. A model the
 comparison applies to but that has no row -- a side still training, or no
 band vectors -- is named in a note.
 
