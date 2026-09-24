@@ -33,9 +33,12 @@
 # snapshot counted (model ids as in runs.csv) and a reason. The gate re-counts
 # today's paradigm comparison over those models alone and holds every value of
 # those scoreboard rows against that sensitivity row, where it has to
-# reproduce like any other; today's scoreboard values under the old name count
-# as new. An entry missing a field is ignored with a warning, and its rows are
-# then held under their own name.
+# reproduce like any other. Under the old name the rows are still held, but
+# only for being printed: what today's row prints there is a quantity the
+# snapshot never published and counts as new, but a value missing from it, or
+# printed '-' where the snapshot printed one, fails the gate, and no rule
+# forgives it. An entry missing a field is ignored with a warning, and its rows
+# are then held under their own name.
 #
 # Both lists belong to one snapshot. Against any other they are ignored, so
 # re-freezing is the step that retires them: once the changes below are
@@ -62,10 +65,11 @@ held_elsewhere:
       scoreboard rows of the same name are the fixed train-mean membership
       protocol (primary since the owner's 2026-09-24 decision), over six models
       as EMForecaster, the Transformer and LSTM complete: a quantity the
-      snapshot never published. The snapshot's quantity is today's
-      batch-protocol sensitivity row, re-counted over DLinear, PatchTST and
-      TSMixer, whose cluster runs the sweep does not touch -- so every value
-      of those rows has to reproduce there.
+      snapshot never published, so their values are new, though each still
+      has to be printed. The snapshot's quantity is today's batch-protocol
+      sensitivity row, re-counted over DLinear, PatchTST and TSMixer, whose
+      cluster runs the sweep does not touch -- so every value of those rows
+      has to reproduce there.
 
 expected:
   - kind: cells

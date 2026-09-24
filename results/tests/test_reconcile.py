@@ -260,6 +260,44 @@ def test_a_row_held_elsewhere_is_held_against_the_recounted_row(tmp_path):
     assert "held against today's 'batch protocol" in g.unexpected[0].label()
 
 
+def test_a_row_held_elsewhere_still_has_to_be_printed_under_its_own_name(tmp_path):
+    before = _scoreboard([(BEST, "MAE", 9, 0, 0, 9, "0.00391")])
+    recount = _recount([("Cluster (best k) vs Cluster (k=1)", BATCH,
+                         9, 0, 0, 9, "+1.00%", "0.00391")])
+    everything = {"kind": "scoreboard", "reason": "The primary protocol changed."}
+
+    # Other numbers under the old name: a quantity the snapshot never
+    # published, so new, not a change.
+    other = _scoreboard([(BEST, "MAE", 10, 1, 0, 11, "0.00195")])
+    g, _ = _gate_held(tmp_path, before, other, recount, _held([everything]))
+    assert g.ok and len(g.held["scoreboard"].new) == 6
+
+    # The row collapses to nothing counted: the recount still reproduces, but
+    # its own row prints '-' where the snapshot printed a value.
+    collapsed = _scoreboard([(BEST, "MAE", 0, 0, 0, 0, "-")]).replace("+1.00%", "-")
+    g, _ = _gate_held(tmp_path, before, collapsed, recount, _held([everything]))
+    assert not g.ok and g.n_expected == 0
+    assert sorted(c.key["column"] for c in g.unexpected) == ["Median gap", "Wilcoxon p"]
+    assert all(c.via == R.OWN_ROW and c.vanished for c in g.unexpected)
+    assert "held against its own row" in g.unexpected[0].label()
+    assert not any(c.key["column"] == "Wilcoxon p" for c in g.held["scoreboard"].new)
+
+    # The row is gone: each of its six values fails, whatever a rule says.
+    g, _ = _gate_held(tmp_path, before, _scoreboard([]), recount, _held([everything]))
+    assert not g.ok and g.n_unexpected == 6 and g.n_expected == 0
+    assert {c.current for c in g.unexpected} == {None}
+    assert g.held["scoreboard"].changed == 6 and not g.held["scoreboard"].new
+
+    # Moved at the recount and gone from its own row: one value, two changes.
+    moved = _recount([("Cluster (best k) vs Cluster (k=1)", BATCH,
+                       9, 0, 0, 9, "+1.00%", "0.00781")])
+    g, _ = _gate_held(tmp_path, before, _scoreboard([]), moved, _held())
+    assert len(g.unexpected) == 7 and g.n_unexpected == 6
+    assert g.held["scoreboard"].changed == 6
+    assert g.coverage("Paradigm Comparison").startswith("6 of its 6 gated values")
+    assert "0 expected, 6 unexpected" in g.coverage("Paradigm Comparison")
+
+
 def test_a_row_held_elsewhere_with_nothing_to_hold_it_against_fails(tmp_path):
     before = _scoreboard([(BEST, "MAE", 9, 0, 0, 9, "0.00391")])
     everything = {"kind": "scoreboard", "reason": "anything"}

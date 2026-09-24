@@ -23,10 +23,12 @@ whatever a rule says: a rule declares a value that moved, never one that went
 missing. A snapshot row whose quantity today's report prints under another
 name -- the cluster comparisons, whose scoreboard rows are now the fixed
 protocol over more models -- is held against the row that carries it
-(HeldElsewhere). A value today's report has and the snapshot does not is
-*new*: counted, never fatal, since a cell the snapshot never had is a cell it
-cannot contradict. Once the expected changes are reviewed, re-freezing the
-snapshot is what retires them.
+(HeldElsewhere), and its own row still has to print a value wherever the
+snapshot did: what it prints is new, that it prints nothing is a failure. A
+value today's report has and the snapshot does not is *new*: counted, never
+fatal, since a cell the snapshot never had is a cell it cannot contradict.
+Once the expected changes are reviewed, re-freezing the snapshot is what
+retires them.
 
     python results/make.py reconcile
 """
@@ -94,6 +96,17 @@ KIND_TEXT_ONLY = {
 }
 
 
+def _blank(value: str | None) -> bool:
+    """Not printed at all, or printed as '-' (with or without a note after it)."""
+    return value is None or value == "-" or value.startswith("- ")
+
+
+# What a row held elsewhere is still held to under its own name. Its values
+# there are a quantity the snapshot never published, so they are not compared;
+# but where the snapshot printed a value, today's row has to print one too.
+OWN_ROW = "its own row, which still has to be printed"
+
+
 @dataclass
 class Change:
     """One published value that no longer reproduces."""
@@ -112,7 +125,14 @@ class Change:
         moves a value, none removes one, so a value that vanished under a rule
         is a failure the rule was not written for.
         """
-        return self.current is None or self.current == "-" or self.current.startswith("- ")
+        return _blank(self.current)
+
+    @property
+    def ident(self) -> tuple:
+        """The published value this is a change of. A value held elsewhere can
+        change twice: at the row it is held against, and by vanishing from its
+        own."""
+        return (self.kind,) + tuple(self.key.values())
 
     def where(self) -> str:
         k = self.key
@@ -452,6 +472,11 @@ class Held:
         n[0] += 1
         n[1] += changed
 
+    @property
+    def changed(self) -> int:
+        """Published values that changed (a value can have two changes)."""
+        return sum(c for _, c in self.by_section.values())
+
 
 def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Held:
     """Every published MSE/MAE cell of the per-setup sections, from cells.csv."""
@@ -520,24 +545,33 @@ def hold_rendered(kind: str, published_text: str, current_text: str, parse,
     ``elsewhere(key)`` is (today's value, where it was read) for a snapshot
     value held against another row than its own (specs/gate.yaml
     held_elsewhere, see gate), or None. Today's value under that snapshot key
-    is then one the snapshot never published, so it counts as new.
+    is then one the snapshot never published: what it is counts as new, but
+    that it is there is still held (OWN_ROW). Where the snapshot printed a
+    value, a key missing from today's row, or printed '-' there, is a change
+    no rule forgives, however well the row it is held against reproduces.
     """
     names = KINDS[kind]
     before, after = parse(published_text), parse(current_text)
     held = Held()
-    moved = set()
+    new = set(after.keys() - before.keys())
     for key, value in before.items():
+        fields = dict(zip(names, key[1:]))
         other = elsewhere(key) if elsewhere else None
         now, via = (after.get(key), "") if other is None else other
+        found = []
+        if now is None or not same(value, now):
+            found.append(Change(kind, fields, value, now, via))
         if other is not None:
-            moved.add(key)
             n = held.elsewhere.setdefault(section_of(key), {})
             n[via] = n.get(via, 0) + 1
-        changed = now is None or not same(value, now)
-        held.tally(section_of(key), changed)
-        if changed:
-            held.changes.append(Change(kind, dict(zip(names, key[1:])), value, now, via))
-    for key in sorted((after.keys() - before.keys()) | (moved & after.keys())):
+            own = Change(kind, fields, value, after.get(key), OWN_ROW)
+            if not own.vanished:
+                new.add(key)
+            elif not _blank(value):
+                found.append(own)
+        held.tally(section_of(key), bool(found))
+        held.changes += found
+    for key in sorted(new):
         held.new.append(Change(kind, dict(zip(names, key[1:])), "", after[key]))
     return held
 
@@ -617,7 +651,9 @@ class HeldElsewhere:
     protocol over more models, values the snapshot never published. The
     snapshot's quantity lives on as today's ``variant`` sensitivity row, and
     re-counted over ``models`` alone it has to reproduce: each value is held
-    there, and today's scoreboard value under the old name counts as new.
+    there. Today's scoreboard value under the old name counts as new, but it
+    has to be there: missing or '-' where the snapshot printed a value is a
+    change no rule forgives (hold_rendered).
     """
 
     comparisons: tuple         # casefolded, as the scoreboard key has them
@@ -694,6 +730,11 @@ class Gate:
     def n_expected(self) -> int:
         return sum(len(cs) for _, cs in self.expected)
 
+    @property
+    def n_unexpected(self) -> int:
+        """Published values with a change no rule expects."""
+        return len({c.ident for c in self.unexpected})
+
     def coverage(self, title: str) -> str:
         """What the gate held of one rendered section, for the text-drift note."""
         for kind, held in self.held.items():
@@ -701,12 +742,12 @@ class Gate:
                 continue
             n, changed = held.by_section[title]
             where = "(" + KIND_WHERE[kind] + "".join(
-                f"; {m} of them against {via}"
+                f"; {m} of them against {via}, and their own row only for being printed"
                 for via, m in held.elsewhere.get(title, {}).items()) + ")"
             rest = f"; {KIND_TEXT_ONLY[kind]}" if kind in KIND_TEXT_ONLY else ""
             if not changed:
                 return f"its {n} gated values {where} all reproduce{rest}"
-            bad = sum(1 for c in self.unexpected if _section(c) == title)
+            bad = len({c.ident for c in self.unexpected if _section(c) == title})
             return (f"{changed} of its {n} gated values {where} changed: "
                     f"{changed - bad} expected, {bad} unexpected{rest}")
         return "text only -- none of its values is gated"
@@ -767,8 +808,8 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
     for s in stand_ins:
         n = sum(v.get(s.via(), 0) for v in held["scoreboard"].elsewhere.values())
         held["scoreboard"].notes.append(
-            f"{n} of them held against {s.via()}, not their own row "
-            f"(specs/gate.yaml held_elsewhere {s.n}: {_headline(s.reason)})"
+            f"{n} of them held against {s.via()}; their own row only has to print "
+            f"them (specs/gate.yaml held_elsewhere {s.n}: {_headline(s.reason)})"
             + ("" if n else " -- matched nothing"))
     rules, more = load_expected(gate_spec, published.name)
     notes += more
@@ -787,7 +828,7 @@ def gate(published: Path, cells_csv: Path, sections: list[tuple[str, str, str]],
 def report(g: Gate, *, verbose: bool = False, out=sys.stdout) -> None:
     print(f"value gate: {g.snapshot} against today's frames", file=out)
     for kind, h in g.held.items():
-        changed = len(h.changes)
+        changed = h.changed
         print(f"  {kind:<10} {h.published:>4} published, {h.published - changed} "
               f"reproduce, {changed} changed"
               + (f", {len(h.new)} new" if h.new else "")
@@ -827,6 +868,6 @@ def report(g: Gate, *, verbose: bool = False, out=sys.stdout) -> None:
               + (f" or is one of the {g.n_expected} declared changes" if g.n_expected
                  else ""), file=out)
     else:
-        print(f"FAIL: {len(g.unexpected)} published values changed and no rule in "
+        print(f"FAIL: {g.n_unexpected} published values changed and no rule in "
               f"specs/gate.yaml expects it", file=out)
     out.flush()           # before make.py's own messages on stderr

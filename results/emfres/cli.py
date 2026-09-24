@@ -372,7 +372,7 @@ def cmd_tables(args) -> int:
                   f"frozen snapshot, so no value was gated")
             return 0
         if not gate.ok:
-            print(f"\nchecked {len(sections)} sections -- {len(gate.unexpected)} "
+            print(f"\nchecked {len(sections)} sections -- {gate.n_unexpected} "
                   f"published values changed unexpectedly (see above)")
             return 1
         print(f"\nchecked {len(sections)} sections -- every published value reproduces"
