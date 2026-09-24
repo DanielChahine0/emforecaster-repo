@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 
-from emfres import cli, contention as C
+from emfres import cli, contention as C, frames
 from emfres.runlogs import MARKER, load_runs
 
 
@@ -183,3 +183,70 @@ def test_a_loaded_run_knows_its_training_window_and_its_flag(tmp_path):
     # No windows: no overlap, and the flag from the concurrency stamp alone.
     (r,) = load_runs(tmp_path, [])
     assert r.foreign_overlap is None and r.contended == "concurrent"
+
+
+def test_the_frames_carry_the_overlap_and_the_flag(tmp_path):
+    c = C.derive(GPU_LOG, SWEEP_LOG)
+    for seed, (start, secs, conc) in {"1": ("10:01:00", 240, 1), "2": ("10:04:00", 300, 1),
+                                      "3": ("10:11:00", 60, 8)}.items():
+        run = tmp_path / "multivariate" / "LSTM" / "ed2022" / "L336_O96_cp" / seed
+        run.mkdir(parents=True)
+        (run / "log.json").write_text(json.dumps(_log(T(start), secs, conc)))
+    loaded = frames.load_all(tmp_path, [], contention=c)
+    rows = {r["seed"]: r for r in frames.build_runs(tmp_path, tmp_path, [], loaded=loaded)}
+    assert float(rows["1"]["foreign_overlap"]) == pytest.approx(0.5)
+    assert (rows["1"]["contended"], rows["2"]["contended"], rows["3"]["contended"]) == \
+        ("foreign", "none", "concurrent;foreign")
+    assert rows["2"]["foreign_overlap"] == "0.0"
+    (cell,) = frames.build_cells(list(rows.values()))
+    assert cell["n_foreign"] == 2 and cell["contended"] == "none;concurrent;foreign"
+    # Without the windows a run keeps its concurrency flag and no overlap.
+    plain = {r.seed: r for r in load_runs(tmp_path / "multivariate", [], setup="multivariate")}
+    assert plain["1"].foreign_overlap is None and plain["1"].contended == "none"
+    assert plain["3"].contended == "concurrent"
+
+
+def test_timing_names_the_contention_of_a_seeds_bands_and_its_multivariate_run():
+    solo = {"seq_len": 336, "pred_len": 96, "bands": [
+        {"model": "DLinear", "dataset": "ed2022", "channel": 0, "epochs": 10,
+         "seconds": 10.0, "twin_epochs": 10, "twin_seconds": 20.0}]}
+
+    def row(setup, channel, contended, **kw):
+        r = {f: "" for f in frames.RUN_FIELDS}
+        r.update(setup=setup, family="emf", model="DLinear", dataset="ed2022", seq_len=336,
+                 pred_len=96, seed="1", conf=1, channel=channel, epochs=10,
+                 running_time="20.0", contended=contended, **kw)
+        return r
+
+    rows = [row("perchannel", 0, "concurrent"),
+            row("perchannel", 1, "concurrent;foreign", foreign_overlap="0.3"),
+            row("multivariate", "", "none")]
+    (t,) = frames.build_timing(rows, solo)
+    assert (t["contended"], t["mv_contended"]) == ("concurrent;foreign", "none")
+
+
+def test_extract_flags_every_run_and_warns_when_the_spec_ends_before_a_run(
+        tmp_path, monkeypatch, capsys):
+    specs, logs = tmp_path / "specs", tmp_path / "logs"
+    specs.mkdir()
+    running = SWEEP_LOG.splitlines()[0] + "\n"            # the sweep is still training
+    (specs / "contention.yaml").write_text(
+        C.dump(C.derive(GPU_LOG, running, until=T("10:12:00"))))
+    for seed, (start, secs) in {"1": ("10:01:00", 240), "2": ("10:11:00", 180)}.items():
+        run = logs / "multivariate" / "LSTM" / "toy" / "L336_O96_cp" / seed
+        run.mkdir(parents=True)
+        (run / "log.json").write_text(json.dumps(
+            _log(T(start), secs, 1, **{"parameters/data/dataset": "TOY"})))
+    monkeypatch.setattr(cli, "SPECS", specs)
+    monkeypatch.setattr(cli, "FRAMES", tmp_path / "frames")
+    monkeypatch.setattr(cli, "REPO", tmp_path)
+    assert cli.main(["extract", "--logs", str(logs), "--no-spec"]) == 0
+    err = capsys.readouterr().err
+    assert "contended timings: 2 foreign" in err and "its last span still open" in err
+    assert "1 runs finished after specs/contention.yaml's observed_until" in err
+    import csv
+    with open(tmp_path / "frames" / "runs.csv") as f:
+        rows = {r["seed"]: r for r in csv.DictReader(f)}
+    assert rows["1"]["contended"] == "foreign"
+    # 10:11-10:14 against windows to 10:12 (the spec's end): a lower bound.
+    assert float(rows["2"]["foreign_overlap"]) == pytest.approx(1 / 3)

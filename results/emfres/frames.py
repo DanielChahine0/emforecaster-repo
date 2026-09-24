@@ -22,6 +22,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .contention import flag as contention_flag
+from .contention import tokens as contention_tokens
 from .runlogs import Run, equivalent_code, load_runs
 
 # logs/ directory name -> the setup vocabulary results/ uses. "univariate"
@@ -165,6 +167,12 @@ RUN_FIELDS = [
     # trainings shared the GPU.
     "git_commit", "git_dirty", "commit_source", "code_version", "code_equivalent",
     "concurrency",
+    # Whether the running_time is contended (emfres.contention): the fraction
+    # of the training window [exp/time, + running_time] with another user's
+    # process on the GPU (specs/contention.yaml; blank where no GPU record
+    # covers the run), and the flag -- concurrent (concurrency > 1), foreign
+    # (an overlap), both ';'-joined, none, or ? (concurrency not stamped).
+    "foreign_overlap", "contended",
     "source", "path",
 ]
 
@@ -196,6 +204,10 @@ CELL_FIELDS = [
     # unless code_equivalents, the same under the equivalent_code rules,
     # shows one.
     "code_versions", "code_equivalents",
+    # The distinct contended tokens of the cell's runs (runs.csv contended),
+    # and n_foreign, how many of its runs overlapped another user's GPU
+    # process: running_time and per_epoch may be inflated where it is > 0.
+    "contended", "n_foreign",
 ]
 
 # One row per (run, band): the per-band test error behind every joint and
@@ -230,6 +242,9 @@ TIMING_FIELDS = [
     "epochs", "solo_bands", "solo_per_epoch", "solo_total", "solo_lo", "solo_hi",
     "contention_mean", "contended_total", "concurrency", "mv_running_time",
     "solo_x_mv", "contended_x_mv",
+    # The contended tokens (runs.csv contended) of the seed's bands, whose
+    # logged sum is contended_total, and of the multivariate run.
+    "contended", "mv_contended",
 ]
 
 EPOCH_FIELDS = ["setup", "model", "dataset", "seq_len", "pred_len", "k",
@@ -317,6 +332,8 @@ def _row(run: Run, setup: str, repo: Path,
         "code_version": version,
         "code_equivalent": equivalent_code(equivalent or [], version),
         "concurrency": "" if run.concurrency is None else run.concurrency,
+        "foreign_overlap": _num(run.foreign_overlap),
+        "contended": run.contended or contention_flag(run.concurrency, run.foreign_overlap),
         "source": "log",
         "path": run.path.relative_to(repo).as_posix(),
     }
@@ -522,6 +539,8 @@ def build_cells(runs: list[dict]) -> list[dict]:
             "code_versions": ";".join(sorted({r["code_version"] or "?" for r in rs})),
             "code_equivalents": ";".join(sorted({r.get("code_equivalent", r["code_version"])
                                                  or "?" for r in rs})),
+            "contended": contention_tokens(r.get("contended", "") for r in rs),
+            "n_foreign": sum(1 for r in rs if (_f(r.get("foreign_overlap", "")) or 0) > 0),
         })
     return out
 
@@ -604,6 +623,7 @@ def build_timing(runs: list[dict], solo: Optional[dict]) -> list[dict]:
 
     pc: dict = defaultdict(lambda: defaultdict(list))
     mv: dict = {}
+    mv_flag: dict = {}
     for r in runs:
         if int(r["seq_len"]) != seq_len or int(r["pred_len"]) != pred_len:
             continue
@@ -611,6 +631,7 @@ def build_timing(runs: list[dict], solo: Optional[dict]) -> list[dict]:
             pc[(r["model"], r["dataset"])][r["seed"]].append(r)
         elif r["setup"] == "multivariate" and r["seed"] and r["running_time"]:
             mv[(r["model"], r["dataset"], r["seed"])] = float(r["running_time"])
+            mv_flag[(r["model"], r["dataset"], r["seed"])] = r.get("contended", "")
 
     out = []
     for (model, dataset), bands in sorted(measured.items()):
@@ -645,6 +666,8 @@ def build_timing(runs: list[dict], solo: Optional[dict]) -> list[dict]:
                 "solo_x_mv": _num(total / mv_t if mv_t else None),
                 "contended_x_mv": _num(contended / mv_t
                                        if mv_t and contended is not None else None),
+                "contended": contention_tokens(r.get("contended", "") for r in rs),
+                "mv_contended": mv_flag.get((model, dataset, seed), ""),
             })
     return out
 

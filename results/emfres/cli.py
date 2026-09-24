@@ -112,6 +112,11 @@ LOG_PAIRS = [
 ]
 
 
+def _rel(path: Path) -> str:
+    """A path as the repo spells it, or as given when it lies outside the repo."""
+    return path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else str(path)
+
+
 def spec_contention():
     """The foreign GPU windows of specs/contention.yaml, or None (see emfres.contention)."""
     from . import contention
@@ -158,12 +163,9 @@ def cmd_contention(args) -> int:
     else:
         until = datetime.now().replace(microsecond=0)
 
-    def rel(path: Path) -> str:
-        return path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else str(path)
-
     derived = C.combine([
         C.derive(g.read_text(), w.read_text() if w is not None and w.exists() else None,
-                 until=until, source=rel(g))
+                 until=until, source=_rel(g))
         for g, w in pairs])
     exclude = [] if args.no_spec else spec_excludes()
     loaded = frames.load_all(args.logs or LOGS, exclude, contention=derived)
@@ -199,11 +201,13 @@ def cmd_contention(args) -> int:
                  f"{C._fmt(until)}" if later else ""))
         return 0 if same and not later else 1
     spec.write_text(text)
-    print(f"wrote {rel(spec)}")
+    print(f"wrote {_rel(spec)}")
     return 0
 
 
 def cmd_extract(args) -> int:
+    from datetime import timedelta
+
     logs = args.logs or LOGS
     if not logs.is_dir():
         print(f"not a directory: {logs}", file=sys.stderr)
@@ -216,8 +220,9 @@ def cmd_extract(args) -> int:
             print(f"specs/runs.yaml excludes: {', '.join(spec)}", file=sys.stderr)
         exclude += spec
 
+    contention = spec_contention()
     loaded = frames.load_all(logs, exclude, inferred=spec_inferred(),
-                             attested=spec_attested())
+                             attested=spec_attested(), contention=contention)
     runs = frames.build_runs(logs, REPO, exclude, equivalent=spec_equivalent(),
                              loaded=loaded)
     if not runs:
@@ -297,6 +302,26 @@ def cmd_extract(args) -> int:
         print(f"WARNING: {len(off)} k=1 cluster runs have a fixed-membership MSE more "
               f"than 1e-3 (relative) from their batch MSE, e.g. {off[0]['path']}",
               file=sys.stderr)
+
+    # Whose running_time is contended (specs/contention.yaml, emfres.contention).
+    flags: dict = {}
+    for r in runs:
+        for token in (r["contended"] or "none").split(";"):
+            flags[token] = flags.get(token, 0) + 1
+    print("contended timings: " + ", ".join(f"{n} {t}" for t, n in sorted(flags.items()))
+          + (f" (foreign windows: specs/contention.yaml, observed until "
+             f"{contention.observed_until:%Y-%m-%d %H:%M:%S}"
+             + (", its last span still open" if contention.open else "") + ")"
+             if contention is not None and contention.observed_until else
+             " (no specs/contention.yaml: nothing is flagged foreign)"), file=sys.stderr)
+    if contention is not None and contention.observed_until:
+        late = [s for s, r in loaded if r.started is not None and r.running_time
+                and r.started + timedelta(seconds=r.running_time) > contention.observed_until
+                and r.started >= contention.monitored[0][0]] if contention.monitored else []
+        if late:
+            print(f"WARNING: {len(late)} runs finished after specs/contention.yaml's "
+                  f"observed_until, so part of their time was never held against the GPU "
+                  f"log; rerun `make.py contention`, then extract", file=sys.stderr)
 
     counts = {"runs": len(runs), "cells": len(cells), "bands": len(bands),
               "timing": len(timing)}
@@ -671,12 +696,12 @@ def main(argv: list[str] | None = None) -> int:
         "contention", help="the sweep's GPU log -> specs/contention.yaml (foreign GPU windows)")
     ct.add_argument("--gpu-log", type=Path, action="append", default=None,
                     help="a GPU log to read, repeatable (default: every one of "
-                         + ", ".join(g.relative_to(REPO).as_posix() for g, _ in LOG_PAIRS)
+                         + ", ".join(_rel(g) for g, _ in LOG_PAIRS)
                          + " that exists)")
     ct.add_argument("--sweep-log", type=Path, action="append", default=None,
                     help="the sweep log beside each --gpu-log, in order, whose start/STOP/"
                          "DONE lines bound its monitored spans (default: "
-                         + ", ".join(w.relative_to(REPO).as_posix() for _, w in LOG_PAIRS)
+                         + ", ".join(_rel(w) for _, w in LOG_PAIRS)
                          + ")")
     ct.add_argument("--until", default=None,
                     help="end of a span still running, 'YYYY-MM-DD HH:MM:SS' (default: now)")

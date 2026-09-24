@@ -93,6 +93,9 @@ def runs_from_csv(path: Path, repo: Path, family: Optional[str] = None):
                 jc_fixed=_f(row.get("jc_fixed", "")),
                 interval_width_fixed=_f(row.get("interval_width_fixed", "")),
                 fixed_source=row.get("fixed_source", "") or "",
+                # Whether the run's time is contended (emfres.contention).
+                foreign_overlap=_f(row.get("foreign_overlap", "")),
+                contended=row.get("contended", "") or "",
             ))
     return by_setup
 
