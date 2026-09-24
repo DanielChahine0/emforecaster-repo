@@ -20,10 +20,16 @@
 # under `expected` matches prints as EXPECTED, under the rule's reason; any
 # other is UNEXPECTED and fails the gate. A rule matches on the fields it names
 # (a value or a list; case does not matter) plus an optional k_min, and every
-# field it omits is a wildcard. A rule with no reason, an unknown kind, or a
-# field its kind does not have is ignored with a warning: dropping a rule can
-# only make the gate stricter. No rule forgives a value that vanished or turned
-# into '-': a rule declares a value that moved, not one that went missing.
+# field it omits is a wildcard. `now` pins what the values it matches print
+# today, so that the rule forgives the transition its reason declares and not
+# any value in its columns: either one printed value, for every value the rule
+# matches, or a list of entries, each naming some of the kind's fields and the
+# `value` the values those fields pick out print today. A matched value that
+# prints anything else is unexpected. A rule with no reason, an unknown kind, a
+# field its kind does not have or a malformed `now` is ignored with a warning:
+# dropping a rule can only make the gate stricter. No rule forgives a value
+# that vanished or turned into '-': a rule declares a value that moved, not
+# one that went missing.
 # Values today's report has and the snapshot does not -- new models, new rows,
 # new columns -- are counted as new and need no rule.
 #
@@ -75,34 +81,51 @@ expected:
   - kind: cells
     setup: perchannel
     model: EMForecaster
+    window: L336/O96
+    now:
+      - {dataset: ED2022, metric: MSE, value: "0.4882"}
+      - {dataset: ED2022, metric: MAE, value: "0.3441"}
+      - {dataset: EMF2023, metric: MSE, value: "1.5060"}
+      - {dataset: EMF2023, metric: MAE, value: "0.4499"}
     reason: >
       16 per-channel EMForecaster bands (seed 69421: 8 ED2022, 3 UH2022,
       5 EMF2023) had trained at 512x1 instead of the grid's 128x4. The
       2026-09-24 sweep retrained them at 128x4 and moved the old copies to
-      logs/_archive/2026-09-24_pc-emf-512x1/, so the three per-channel
-      EMForecaster cells may move in the fourth decimal (ED2022 and EMF2023 do,
-      UH2022 does not).
+      logs/_archive/2026-09-24_pc-emf-512x1/. All 16 have landed: ED2022 moves
+      MSE 0.4879 -> 0.4882 and MAE 0.3440 -> 0.3441, EMF2023 MSE 1.5059 ->
+      1.5060 and MAE 0.4498 -> 0.4499; UH2022 does not move.
 
   - kind: scoreboard
     comparison: Per-channel vs Multivariate
     column: [Tie, Cells]
+    now:
+      - {column: Tie, metric: MAE, value: "7"}
+      - {column: Tie, metric: MSE, value: "5"}
+      - {column: Cells, value: "18"}
     reason: >
       ARIMA's three cells are identical by construction (one model per band,
       no gradient path) and now sit in the scoreboard's Identical column
       instead of counting as ties (audit 2026-09-24, step 7.2): Tie and Cells
-      each drop by 3, the wins and losses do not change.
+      each drop by 3 (Tie MAE 10 -> 7, MSE 8 -> 5; Cells 21 -> 18), the wins
+      and losses do not change.
 
   - kind: scoreboard
     comparison: Per-channel vs Multivariate
+    metric: MSE
     column: Median gap
+    now: "+1.04%"
     reason: >
       The median relative gap moves with the retrained per-channel
-      EMForecaster bands (the first cells rule): MSE +1.03% -> +1.04%. ARIMA
-      was already left out of the median and of the test.
+      EMForecaster bands (the first cells rule): MSE +1.03% -> +1.04%; the
+      MAE median does not move. ARIMA was already left out of the median and
+      of the test.
 
   - kind: scoreboard
     comparison: Cluster (k=1) vs Multivariate
     column: Median gap
+    now:
+      - {metric: MAE, value: "+0.00%"}
+      - {metric: MSE, value: "-0.00%"}
     reason: >
       The median gap is now taken over every counted cell (e54f8910b); it
       used to leave out the cells whose two sides differ by less than 5e-05,
@@ -113,18 +136,43 @@ expected:
       p still reproduce.
 
   - kind: sweep
+    dataset: ED2022
+    window: L336/O96
+    metric: MAE
     column: k
     k_min: 2
+    now:
+      - {model: DLinear, k: 2, value: "0.3764 ±0.0001"}
+      - {model: DLinear, k: 3, value: "0.3764 ±0.0002"}
+      - {model: DLinear, k: 5, value: "0.3766 ±0.0002"}
+      - {model: DLinear, k: 9, value: "0.3771 ±0.0006"}
+      - {model: PatchTST, k: 2, value: "0.3865 ±0.0151"}
+      - {model: PatchTST, k: 3, value: "0.3757 ±0.0141"}
+      - {model: PatchTST, k: 5, value: "0.3906 ±0.0124"}
+      - {model: PatchTST, k: 9, value: "0.3692 ±0.0025"}
+      - {model: TSMixer, k: 2, value: "0.3619 ±0.0021"}
+      - {model: TSMixer, k: 3, value: "0.3684 ±0.0176"}
+      - {model: TSMixer, k: 5, value: "0.3600 ±0.0039"}
+      - {model: TSMixer, k: 9, value: "0.3671 ±0.0099"}
     reason: >
       The sweep now prints the fixed train-mean membership protocol
       (sl_test_fixed/*); the snapshot printed the logged batch protocol, under
       which a k > 1 forecast depends on its neighbouring test windows. At
       k = 1 the two are one forecast, so k = 1 and plain are not expected to
-      move.
+      move. The snapshot's three models take their fixed-protocol values from
+      the eval_fixed.json sidecars of runs the sweep does not touch, so each
+      k >= 2 value is pinned to the one they give.
 
   - kind: sweep
+    dataset: ED2022
+    window: L336/O96
+    metric: MAE
     column: oracle k
+    now:
+      - {model: DLinear, value: "3"}
+      - {model: TSMixer, value: "5"}
     reason: >
       The snapshot underlined the k with the best test value, which the sweep
       now prints as the oracle k; it is chosen over the k >= 2 values that
-      moved with the protocol, so it may change with them.
+      moved with the protocol, and moves with them: DLinear 2 -> 3, TSMixer
+      2 -> 5. PatchTST's stays at 9.

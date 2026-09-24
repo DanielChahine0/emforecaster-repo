@@ -489,3 +489,54 @@ def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
     ]
     for change in must_reproduce:
         assert not any(R.matches(rule, change) for rule in rules), change.label()
+
+
+def test_each_declared_change_is_pinned_to_a_value_the_snapshot_published(tmp_path):
+    from emfres import cli
+
+    rules, _ = R.load_expected(RESULTS / "specs" / "gate.yaml", cli.PUBLISHED.name)
+    assert all("now" in rule for rule in rules)
+
+    # Every value the snapshot publishes, by kind (the cells against no frames
+    # at all, so each comes back as a change carrying its key).
+    empty = tmp_path / "cells.csv"
+    frames.write_csv(empty, [], frames.CELL_FIELDS)
+    text = SNAPSHOT.read_text()
+    published = {"cells": [(c.key, c.published)
+                           for c in R.hold_cells(SNAPSHOT, empty, []).changes]}
+    for kind, parse in (("scoreboard", R.scoreboard_values), ("sweep", R.sweep_values)):
+        published[kind] = [(dict(zip(R.KINDS[kind], k[1:])), v)
+                           for k, v in parse(text).items()]
+
+    # Each pin is the transition of a value the snapshot published: no pin
+    # names a value that is not there, so none can go stale unnoticed.
+    for rule in rules:
+        for pin in R._pins(rule):
+            hits = [key for key, was in published[rule["kind"]]
+                    if R.matches(rule, R.Change(rule["kind"], key, was, pin["value"]))
+                    and R._fields_match({n: v for n, v in pin.items() if n != "value"},
+                                        key)]
+            assert hits, (rule["_n"], pin)
+
+    # And the same columns at any other value are not forgiven.
+    board = dict(section="Paradigm Comparison", table="scoreboard",
+                 comparison="Per-channel vs Multivariate", variant="")
+    sweep = dict(dataset="ED2022", window="L336/O96", metric="MAE")
+    others = [
+        R.Change("scoreboard", dict(board, metric="MAE", column="Tie"), "10", "0"),
+        R.Change("scoreboard", dict(board, metric="MSE", column="Tie"), "8", "7"),
+        R.Change("scoreboard", dict(board, metric="MSE", column="Cells"), "21", "5"),
+        R.Change("scoreboard", dict(board, metric="MAE", column="Median gap"),
+                 "+1.31%", "+1.04%"),
+        R.Change("scoreboard", dict(board, comparison="Cluster (k=1) vs Multivariate",
+                                    metric="MAE", column="Median gap"), "+0.09%", "+0.50%"),
+        R.Change("sweep", dict(sweep, model="DLinear", column="k", k="2"),
+                 "0.3768 ±0.0002", "0.3780 ±0.0001"),
+        R.Change("sweep", dict(sweep, model="PatchTST", column="oracle k", k=""), "9", "5"),
+        R.Change("cells", dict(setup="perchannel", model="EMForecaster", dataset="UH2022",
+                               window="L336/O96", k="", metric="MSE"), "0.8316", "0.8320"),
+        R.Change("cells", dict(setup="perchannel", model="EMForecaster", dataset="ED2022",
+                               window="L336/O96", k="", metric="MSE"), "0.4879", "0.4890"),
+    ]
+    for change in others:
+        assert not any(R.matches(rule, change) for rule in rules), change.label()
