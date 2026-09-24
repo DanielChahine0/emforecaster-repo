@@ -257,10 +257,12 @@ def fig_forest(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     fig, axes = plt.subplots(1, len(comps), figsize=(WIDTH, height), sharey=True, squeeze=False)
     axes = axes[0]
     pending_any = False
+    counts = {}
     for ax, (base, chal, label) in zip(axes, comps):
         style_axes(ax, style)
         by_cell = {g.cell: g for g in FD.gaps(corpus, base, chal, metric)}
         xs, bands = [0.0], []
+        counts[ax] = []
         for y, _, cell in rows:
             g = by_cell.get(cell) if cell else None
             if g is None:
@@ -274,9 +276,12 @@ def fig_forest(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
                     markeredgewidth=style.line_width * 0.5)
             if g.outcome == "pending":
                 pending_any = True
-                ax.annotate(f"n={g.n}", (100 * g.rel, y), xytext=(style.marker * 0.9, 0),
-                            textcoords="offset points", va="center", ha="left",
-                            fontsize=style.context * 0.9, color=INK_MUTED)
+                # Opaque and above the zero rule and the tie band, which a
+                # pending gap near 0 would otherwise draw through the count.
+                counts[ax].append(ax.annotate(
+                    f"n={g.n}", (100 * g.rel, y), xytext=(style.marker * 0.9, 0),
+                    textcoords="offset points", va="center", ha="left",
+                    fontsize=style.context * 0.9, color=INK_MUTED, zorder=5, bbox=LABEL_BOX))
             xs.append(100 * g.rel)
             bands.append(100 * g.band)
         ax.axvline(0, color=INK_SECONDARY, lw=0.6, zorder=2)
@@ -309,6 +314,8 @@ def fig_forest(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
           f"Wilcoxon p")
     legend(fig, outcome_handles(style, pending=pending_any), style, y=1 - 0.24 / height)
     layout(fig, style, top=0.96, bottom=0.42, left=0.14, wspace=0.1)
+    for ax, texts in counts.items():
+        fit_texts(ax, texts)
     if corpus.flagged:
         footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
     return write(fig, root, group=corpus.family, subject="gap-forest",
