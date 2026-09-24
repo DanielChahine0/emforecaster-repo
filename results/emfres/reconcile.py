@@ -9,7 +9,9 @@ Three kinds of published value are held (KINDS):
 - ``cells``: the MSE/MAE tables of the four per-setup sections, recomputed
   from frames/cells.csv -- a cluster cell from its fixed-protocol mean, the
   column its section leads with, and one the snapshot printed under the batch
-  protocol also from the batch mean, where it has to reproduce;
+  protocol also from the batch mean, where it has to reproduce; a snapshot
+  whose cluster section leads with the fixed protocol has its batch-protocol
+  group's MSE/MAE cells held against the batch means too;
 - ``scoreboard``: the Paradigm Comparison's scoreboard and sensitivity rows
   (the challenger/tie/baseline counts, cells, median gap and Wilcoxon p),
   against today's render of the same section;
@@ -144,8 +146,11 @@ class Change:
     def ident(self) -> tuple:
         """The published value this is a change of. A value held elsewhere can
         change twice: at the row it is held against, and by vanishing from its
-        own."""
-        return (self.kind,) + tuple(self.key.values())
+        own. A cell of a cluster section's batch-protocol group shares its key
+        with the same cell of the section's first tables, but is a value of
+        its own."""
+        group = (BATCH_GROUP,) if self.via == BATCH_GROUP_VIA else ()
+        return (self.kind,) + tuple(self.key.values()) + group
 
     def where(self) -> str:
         k = self.key
@@ -472,6 +477,16 @@ PRIMARY_COLUMN = {"cluster": {"MSE": "mse_fixed", "MAE": "mae_fixed"}}
 BATCH_VIA = "cells.csv's batch-protocol mse/mae, the protocol the snapshot printed"
 
 
+# The group a cluster section prints the logged batch protocol under once it
+# leads with the fixed one (extract_results.BATCH_GROUP), and where the MSE and
+# MAE cells of that group are held: the batch columns they are printed from.
+# As with BATCH_VIA, no rule forgives a change there (matches): a rule cannot
+# tell a cell's two protocols apart, so what it declares is the fixed one.
+BATCH_GROUP = "Batch protocol (sensitivity)"
+BATCH_GROUP_VIA = ("cells.csv's batch-protocol mse/mae, as the section's batch-protocol "
+                   "group prints it")
+
+
 def primary_column(setup: str, metric: str) -> str:
     """The cells.csv column a setup's section publishes ``metric`` (MSE/MAE) from."""
     return PRIMARY_COLUMN.get(setup, {}).get(metric, metric.lower())
@@ -492,6 +507,37 @@ def cluster_printed_batch(text: str) -> bool:
             if m and re.search(r"\bMSE\b", m.group(1)):
                 return "`sl_test/loss`" in m.group(1)
     return False
+
+
+def batch_group_records(text: str) -> list:
+    """The MSE/MAE cells of a cluster section's batch-protocol group.
+
+    plot_metrics.parse_tables reads each section's first MSE and MAE tables
+    (1.1, 1.2) only. A cluster section that leads with the fixed protocol
+    prints the logged batch one in its last group (BATCH_GROUP): its MSE and
+    MAE tables, read here as parse_tables reads the others, into the same
+    records. A snapshot that printed the batch protocol first has no such
+    group.
+    """
+    import plot_metrics as pm
+
+    out = []
+    for heading, block in split_blocks(text):
+        if SECTION_SETUP.get(heading) != "cluster":
+            continue
+        for heads, header, rows in _tables(block):
+            metric = re.search(r"\b(MSE|MAE)\b", _cell(heads.get(3, "")))
+            if (BATCH_GROUP not in _cell(heads.get(2, "")) or metric is None
+                    or header[:4] != ["Dataset", "L", "O", "k"]):
+                continue
+            for cells in rows:
+                for col, (model, raw) in enumerate(zip(header[4:], cells[4:])):
+                    out.append(pm.Record(
+                        section=heading, metric=metric.group(1), dataset=_cell(cells[0]),
+                        lookback=int(_cell(cells[1])), horizon=int(_cell(cells[2])),
+                        model=model, model_order=(pm.model_rank(model), col),
+                        value=pm.parse_value(_cell(raw)), cluster=int(_cell(cells[3]))))
+    return out
 
 
 def load_cells(path: Path) -> dict:
@@ -536,7 +582,9 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
     printed under the logged batch protocol (cluster_printed_batch) is held
     against the batch column as well, where it has to reproduce: today's
     section prints it in its batch-protocol group, and no rule forgives a
-    change there.
+    change there. A snapshot whose cluster section led with the fixed protocol
+    printed that group itself: its MSE/MAE cells (batch_group_records) are
+    held against the batch column, and no rule forgives a change there either.
     """
     results = str(Path(__file__).resolve().parent.parent)
     if results not in sys.path:
@@ -546,8 +594,12 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
     cells = load_cells(cells_csv)
     held = Held()
     absent = archived = 0
-    batch_printed = cluster_printed_batch(tables.read_text())
-    n_batch = 0
+    text = tables.read_text()
+    batch_printed = cluster_printed_batch(text)
+    n_batch = n_group = 0
+    records = [(r, "") for r in pm.parse_tables(tables)]
+    if not batch_printed:
+        records += [(r, BATCH_GROUP_VIA) for r in batch_group_records(text)]
 
     def lookup(setup, model_disp, dataset, lookback, horizon, k):
         slug = dataset_slug(dataset)
@@ -558,7 +610,7 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
                     return row
         return None
 
-    for r in pm.parse_tables(tables):
+    for r, group in records:
         setup = SECTION_SETUP.get(r.section)
         if setup is None or r.metric not in ("MSE", "MAE"):
             continue          # training time is a formatted duration, not held here
@@ -568,14 +620,15 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
         key = dict(setup=setup, model=model, dataset=ds,
                    window=f"L{r.lookback}/O{r.horizon}", k=k, metric=r.metric)
         row = lookup(setup, model, r.dataset, r.lookback, r.horizon, k)
-        column = primary_column(setup, r.metric)
+        # A batch-protocol group's cell is printed from the batch column.
+        column = r.metric.lower() if group else primary_column(setup, r.metric)
         if math.isnan(r.value):
             # A '-' in the table: that grid cell was never run. A frames row
             # for it now is a value the snapshot never had -- new, not a change.
             absent += 1
             got = row and row.get(column, "")
             if got:
-                held.new.append(Change("cells", key, "-", f"{float(got):.4f}"))
+                held.new.append(Change("cells", key, "-", f"{float(got):.4f}", group))
             continue
         if row is None and is_archived(archived_rules, setup, ds, r.lookback, r.horizon):
             # Published once, deliberately withdrawn since. Not held: there is
@@ -586,8 +639,10 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
         # Against the column the section prints it from today, and a cluster
         # value the snapshot printed under the batch protocol also against
         # that protocol's column, where its runs still have to reproduce it.
-        against = [(column, "")]
-        if setup == "cluster" and batch_printed:
+        against = [(column, group)]
+        if group:
+            n_group += 1
+        elif setup == "cluster" and batch_printed:
             against.append((r.metric.lower(), BATCH_VIA))
             n_batch += 1
         found = []
@@ -605,6 +660,10 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
         held.notes.append(f"{n_batch} cluster cells the snapshot printed under the batch "
                           f"protocol: held against today's fixed-protocol cells, the "
                           f"section's primary, and against {BATCH_VIA}")
+    if n_group:
+        held.notes.append(f"{n_group} cluster cells of the snapshot's batch-protocol group: "
+                          f"held against cells.csv's batch-protocol mse/mae, where no "
+                          f"rule forgives a change")
     if archived or archived_rules:
         held.notes.append(f"{archived} cells withdrawn by specs/runs.yaml "
                           f"'archived' rules -- not held")
@@ -764,9 +823,11 @@ def _fields_match(spec: dict, key: dict) -> bool:
 def matches(rule: dict, change: Change) -> bool:
     """Whether ``rule`` declares ``change``: its fields and k_min match the
     changed value, and, if it pins ``now``, today's value is the one pinned.
-    No rule declares a cluster value that moved in the batch protocol the
-    snapshot printed it under (BATCH_VIA): those runs did not change."""
-    if rule["kind"] != change.kind or change.via == BATCH_VIA:
+    No rule declares a cluster value that moved in the batch protocol, the
+    one the snapshot printed it under (BATCH_VIA) or the one of its section's
+    batch-protocol group (BATCH_GROUP_VIA): a rule cannot tell a cell's two
+    protocols apart, so it declares the fixed one."""
+    if rule["kind"] != change.kind or change.via in (BATCH_VIA, BATCH_GROUP_VIA):
         return False
     if not _fields_match({n: rule[n] for n in KINDS[change.kind] if n in rule}, change.key):
         return False

@@ -9,7 +9,10 @@
 #               Univariate (Per Channel) and Cluster (k-Grouped Channels),
 #               recomputed from frames/cells.csv: each from the column its
 #               section prints it from today, a cluster cell from its
-#               fixed-protocol mean (mse_fixed, mae_fixed);
+#               fixed-protocol mean (mse_fixed, mae_fixed); in a snapshot
+#               whose Cluster section leads with the fixed protocol, the MSE
+#               and MAE of its batch-protocol group too, from the batch means
+#               (mse, mae), where no rule forgives a change;
 #               fields: setup, model, dataset, window, k, metric
 #   scoreboard  the Paradigm Comparison's scoreboard and sensitivity rows,
 #               against today's render;

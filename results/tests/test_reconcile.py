@@ -588,6 +588,69 @@ def test_a_cluster_cell_is_held_against_its_fixed_mean_and_the_batch_one(tmp_pat
     assert R.cluster_printed_batch(SNAPSHOT.read_text())
 
 
+def _fixed_first_gate(tmp_path, *, mse="0.5350", mse_fixed="0.5352", rules=()):
+    """A snapshot whose cluster section leads with the fixed protocol (k=2 MSE
+    0.5352) and prints the batch one (0.5350) in its batch-protocol group, as
+    extract_results renders it; one cell of each, and a '-' in the group."""
+    import extract_results as er
+
+    table = ["| Dataset | $L$ | $O$ | $k$ | DLinear (2023) | TSMixer (2023) |",
+             "|:---|---:|---:|---:|---:|---:|"]
+    published = tmp_path / "2026-01-01_tables.md"
+    published.write_text("\n".join([
+        "# Cluster (k-Grouped Channels)", "", "## 1 · Forecast accuracy", "",
+        "### 1.1 · MSE (`sl_test_fixed/loss`)", "", *table,
+        "| ED2022 | 336 | 96 | 2 | **0.5352** | - |", "",
+        "## 4 · Model size", "", "### 4.1 · Trainable weights", "",
+        "| Model | ED2022 |", "|:---|---:|", "| DLinear (2023) | 1,000 |", "",
+        f"## 5 · {er.BATCH_GROUP}", "", "### 5.1 · MSE (`sl_test/loss`)", "", *table,
+        "| ED2022 | 336 | 96 | 2 | **0.5350** | - |", "",
+        "### 5.3 · Marginal coverage % (`sl_test/ic`)", "", *table,
+        "| ED2022 | 336 | 96 | 2 | 85.00 | - |", ""]))
+    cells = tmp_path / "cells.csv"
+    base = {f: "" for f in frames.CELL_FIELDS}
+    frames.write_csv(cells, [dict(base, setup="cluster", model="DLinear", dataset="ed2022",
+                                  seq_len=336, pred_len=96, k="2", conf=1, mse=mse,
+                                  mae="0.3", mse_fixed=mse_fixed, mae_fixed="0.3")],
+                     frames.CELL_FIELDS)
+    import yaml
+    spec = tmp_path / "gate.yaml"
+    spec.write_text(yaml.safe_dump({"emf": {"snapshot": published.name,
+                                            "expected": list(rules)}}))
+    return R.gate(published, cells, [], family="emf", runs_spec=tmp_path / "none.yaml",
+                  gate_spec=spec, out=io.StringIO())
+
+
+def test_a_fixed_first_snapshots_batch_protocol_group_is_held_too(tmp_path):
+    # Its first table is held against the fixed mean, its batch-protocol
+    # group's against the batch mean: two published values, not one.
+    g = _fixed_first_gate(tmp_path)
+    assert g.ok and g.held["cells"].published == 2
+    assert "1 cluster cells of the snapshot's batch-protocol group" in " ".join(
+        g.held["cells"].notes)
+    assert [len(R.batch_group_records(p.read_text()))
+            for p in tmp_path.glob("*_tables.md")] == [2]      # MSE only, '-' kept
+    # A batch value that moved fails, and no rule forgives it, not even one
+    # pinning the value it moved to.
+    rule = {"kind": "cells", "setup": "cluster", "reason": "moved.", "now": "0.5360"}
+    g = _fixed_first_gate(tmp_path, mse="0.5360", rules=[rule])
+    assert not g.ok and [(c.current, c.via) for c in g.unexpected] == [
+        ("0.5360", R.BATCH_GROUP_VIA)]
+    assert "cluster/DLinear/ED2022 L336/O96 k2 [MSE] (held against cells.csv's " \
+           "batch-protocol mse/mae" in g.unexpected[0].label()
+    # Both protocols moved: two published values changed, each counted once;
+    # the rule forgives the fixed one alone.
+    g = _fixed_first_gate(tmp_path, mse="0.5360", mse_fixed="0.5360", rules=[rule])
+    assert g.n_expected == 1 and g.n_unexpected == 1
+    assert g.coverage("Cluster (k-Grouped Channels)").startswith(
+        "2 of its 2 gated values (MSE/MAE tables vs frames/cells.csv) changed: "
+        "1 expected, 1 unexpected")
+    g = _fixed_first_gate(tmp_path, mse="0.5360", mse_fixed="0.5360")
+    assert g.n_unexpected == 2
+    # A snapshot that printed the batch protocol first has no such group.
+    assert not R.batch_group_records(SNAPSHOT.read_text())
+
+
 # --------------------------------------------------------------------- the spec
 
 def test_the_declared_changes_are_for_the_frozen_snapshot_and_no_wider():
