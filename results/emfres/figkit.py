@@ -332,12 +332,20 @@ def place_clear(ax, text: str, candidates, pad: float = 1.5, ignore=(), **kw):
     return kept
 
 
+def footnotes(fig, notes, style: Style) -> None:
+    """The figure's notes on one line at the bottom left, if it has any."""
+    notes = [n for n in notes if n]
+    if notes:
+        footnote(fig, "  ·  ".join(notes), style)
+
+
 __all__ = [
     "AXIS_RULE", "BAND_FILL", "BURNT_PEACH", "CHARCOAL", "DATASET_COLORS", "FAMILY_DIR",
     "GRIDLINE", "INK_MUTED", "INK_PRIMARY", "INK_SECONDARY", "LABEL_BOX", "MUTED_COLOR",
     "OUTCOME", "PARADIGM", "PARTIAL_ALPHA", "SERIES_COLORS", "SURFACE", "VERDIGRIS",
     "dataset_colors", "dataset_name", "diverging_cmap", "fit_texts", "footnote",
-    "label_color", "legend", "mark_kwargs", "model_name", "layout", "outcome_handles",
-    "pad_range", "panel_title", "paradigm_handles", "place_clear", "ranks",
-    "seed_ticks", "setup", "style_axes", "title", "window_label", "write", "xlabel",
+    "footnotes", "label_color", "legend", "mark_kwargs", "model_name", "layout",
+    "outcome_handles", "pad_range", "panel_title", "paradigm_handles", "place_clear",
+    "ranks", "seed_ticks", "setup", "style_axes", "title", "window_label", "write",
+    "xlabel",
 ]

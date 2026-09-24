@@ -30,11 +30,11 @@ from . import figdata as FD
 from . import paradigms as PG
 from .figkit import (
     INK_PRIMARY, INK_SECONDARY, PARTIAL_ALPHA, SURFACE, dataset_colors, dataset_name,
-    footnote, layout, legend, mark_kwargs, model_name, pad_range, panel_title,
-    paradigm_handles, style_axes, title, window_label, write, xlabel,
+    fit_texts, footnote, footnotes, layout, legend, mark_kwargs, model_name, pad_range,
+    panel_title, paradigm_handles, style_axes, title, window_label, write, xlabel,
 )
 from .fig_paradigms import (
-    DAGGER, METRIC_NAME, WIDTH, _grid_height, _model_ticks, dot_panel,
+    FLAG_NOTE, METRIC_NAME, WIDTH, _grid_height, _model_ticks, dot_panel, na_note,
 )
 from .style import log_ticks
 
@@ -205,6 +205,7 @@ def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *
     partial = False
     flagged_any = False
     bottom_axes = []
+    labels = {}
     for r, corpus in enumerate(corpora):
         cal = FD.calibration(corpus, runs_csv)
         first = None
@@ -216,7 +217,7 @@ def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *
                 ax = fig.add_subplot(gs[r, 3 * d + j], sharey=first)
                 first = first or ax
                 style_axes(ax, style)
-                xs, part, _ = dot_panel(
+                xs, part, labels[ax] = dot_panel(
                     ax, corpus, dataset, models,
                     lambda cell, pipe, key=key: (cal.get((cell, pipe)) or {}).get(key),
                     style, k_labels=False)
@@ -250,8 +251,10 @@ def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *
           f"{fam} · {windows} · conformal, α = 0.1 (target dashed) · per-channel coverage")
     handles = paradigm_handles(style, (PG.MV, PG.PC, PG.K1, PG.BEST), partial=partial)
     legend(fig, handles, style, y=1 - 0.24 / height)
-    layout(fig, style, top=0.86, bottom=0.42, left=0.13)
-    if flagged_any:
-        footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
+    notes = [FLAG_NOTE if flagged_any else None, na_note(models)]
+    layout(fig, style, top=0.86, bottom=0.5 if any(notes) else 0.42, left=0.13)
+    for ax, texts in labels.items():
+        fit_texts(ax, texts)
+    footnotes(fig, notes, style)
     return write(fig, root, group=family, subject="calibration",
                  configs=[c.window for c in corpora], formats=formats)

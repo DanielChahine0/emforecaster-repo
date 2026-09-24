@@ -26,7 +26,7 @@ from . import paradigms as PG
 from .figkit import (
     BAND_FILL, BURNT_PEACH, CHARCOAL, INK_MUTED, INK_PRIMARY, INK_SECONDARY,
     LABEL_BOX, MUTED_COLOR, OUTCOME, PARTIAL_ALPHA, SURFACE, VERDIGRIS, dataset_name,
-    fit_texts, footnote, label_color, layout, legend, mark_kwargs, model_name,
+    fit_texts, footnote, footnotes, label_color, layout, legend, mark_kwargs, model_name,
     outcome_handles, pad_range, panel_title, paradigm_handles, place_clear, seed_ticks,
     style_axes, title, window_label, write, xlabel,
 )
@@ -41,6 +41,17 @@ REF_DASH = (0, (1.5, 1.5))
 LANE = {PG.MV: 0.27, PG.PC: 0.0, "cluster": -0.27}
 
 DAGGER = "†"
+
+FLAG_NOTE = f"{DAGGER} no seed trains in any paradigm"
+
+
+def na_note(models) -> str | None:
+    """The footnote for the cluster lanes marked n/a, if any model has one."""
+    names = [model_name(m) for m in models if m in PG.DETERMINISTIC]
+    if not names:
+        return None
+    verb = "is" if len(names) == 1 else "are"
+    return f"n/a: {' and '.join(names)} {verb} per-band by construction, no cluster pipeline"
 
 
 def _seed_span(corpus: FD.Corpus) -> str:
@@ -76,8 +87,10 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
     Three lanes per model row: multivariate (filled), per-channel (hollow),
     cluster (k = 1 as a small dot, the validation-chosen k as a diamond,
     joined to it by a hairline and labelled with its k on its own outer side,
-    away from the k = 1 dot). Seeds are ticks behind the means, or, with
-    ``per_seed``, each seed is its own mark and no mean is drawn.
+    away from the k = 1 dot; "n/a" for a model that is per-band by
+    construction, whose footnote is na_note's). Seeds are ticks behind the
+    means, or, with ``per_seed``, each seed is its own mark and no mean is
+    drawn.
     ``metric`` is a seed-metric name (figdata.marks) or a function
     (cell, pipe) -> figdata.Marks for values the seed metrics do not hold.
     """
@@ -89,6 +102,7 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
     for i, model in enumerate(models):
         y0 = n - 1 - i
         cell = (dataset, model)
+        row: list = []
         for pipe in (PG.MV, PG.PC):
             m = get(cell, pipe)
             if m is None:
@@ -104,7 +118,15 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
                 seed_ticks(ax, vals, y, CHARCOAL, style, alpha=0.5 * alpha)
                 ax.plot([m.mean], [y], zorder=5, **mark_kwargs(pipe, style, alpha=alpha))
             xs += vals
+            row += vals + [m.mean]
         if model in PG.DETERMINISTIC:
+            # Not "not run yet": there is no cluster pipeline to run. Written
+            # where a k label would be, clear of the row's marks.
+            if row:
+                labels.append(ax.annotate(
+                    "n/a", (max(row), y0 + LANE["cluster"]), xytext=(style.marker * 0.9, 0),
+                    textcoords="offset points", ha="left", va="center",
+                    fontsize=style.context * 0.95, color=INK_MUTED, zorder=7, bbox=LABEL_BOX))
             continue
         y = y0 + LANE["cluster"]
         k1 = get(cell, PG.K1)
@@ -208,8 +230,7 @@ def fig_dots(corpora: list, metric: str, style, root: Path, formats, *,
     for ax, texts in labels.items():
         fit_texts(ax, texts)
     xlabel(fig, axes[-1], METRIC_NAME[metric], style)
-    if flagged_any:
-        footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
+    footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models)], style)
     return write(fig, root, group=family, subject="dots",
                  configs=[c.window for c in corpora], metric=metric, formats=formats)
 
@@ -317,7 +338,7 @@ def fig_forest(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
     for ax, texts in counts.items():
         fit_texts(ax, texts)
     if corpus.flagged:
-        footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
+        footnote(fig, FLAG_NOTE, style)
     return write(fig, root, group=corpus.family, subject="gap-forest",
                  configs=[corpus.window], metric=metric, formats=formats)
 
@@ -439,12 +460,13 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
                              squeeze=False, sharey=True)
     partial = False
     flagged_any = False
-    rules = []
+    rules, labels = [], {}
     for r, corpus in enumerate(corpora):
         for c, dataset in enumerate(datasets):
             ax = axes[r][c]
             style_axes(ax, style)
-            xs, part, _ = dot_panel(ax, corpus, dataset, models, "skill", style, per_seed=True)
+            xs, part, labels[ax] = dot_panel(ax, corpus, dataset, models, "skill", style,
+                                             per_seed=True)
             partial |= part
             ax.axvline(0, color=INK_SECONDARY, lw=0.6, zorder=2)
             thr = FD.trains_threshold(corpus, dataset)
@@ -467,6 +489,8 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
     handles = paradigm_handles(style, (PG.MV, PG.PC, PG.BEST), partial=partial, seeds=False)
     legend(fig, handles, style, y=1 - 0.24 / fig.get_size_inches()[1])
     layout(fig, style, top=0.86, bottom=0.42, wspace=0.08, hspace=0.3 if nrow > 1 else 0.2)
+    for ax, texts in labels.items():
+        fit_texts(ax, texts)
     # The threshold's label goes where it covers no seed: beside the rule at
     # the top, else at the bottom, right of the rule before left of it.
     for ax, thr, rule in rules:
@@ -477,8 +501,7 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
             ignore=(rule,), fontsize=style.context * 0.95, color=label_color(BURNT_PEACH),
             zorder=7)
     xlabel(fig, axes[-1], "Skill (1 − MSE / lookback-mean MSE)", style)
-    if flagged_any:
-        footnote(fig, f"{DAGGER} no seed trains in any paradigm", style)
+    footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models)], style)
     return write(fig, root, group=family, subject="seed-skill",
                  configs=[c.window for c in corpora], formats=formats)
 
