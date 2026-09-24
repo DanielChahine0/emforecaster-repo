@@ -123,8 +123,23 @@ def _sig(token: str) -> int:
     return len(token.lower().split("e")[0].lstrip("+-").replace(".", "").lstrip("0")) or 1
 
 
+def _sig3(token: str) -> float:
+    return float(f"{float(token):.3g}")
+
+
 def _num_same(a: str, b: str) -> bool:
-    """Two printed numbers agree to the coarser of their printed precisions."""
+    """Two printed numbers agree to the coarser of their printed precisions,
+    and to three significant digits.
+
+    The second condition is for a value printed with ``:.3g`` (a Wilcoxon p),
+    which drops trailing zeros: "1" is 1.00 and "0.5" is 0.500, not a number
+    known only to the unit or the tenth. At the coarser precision alone, "1"
+    would match anything in [0.5, 1.5) and "0.5" anything in [0.45, 0.55).
+    Where both sides print the same number of places, the first condition
+    already implies the second.
+    """
+    if _sig3(a) != _sig3(b):             # -0.0 == 0.0: a signed zero is no change
+        return False
     if "e" in a.lower() or "e" in b.lower():
         sig = min(_sig(a), _sig(b))
         return f"{float(a):.{sig - 1}e}" == f"{float(b):.{sig - 1}e}"
@@ -139,7 +154,8 @@ def same(published: str, current: str) -> bool:
     The text around the numbers has to match exactly -- a tie mark, a sign
     of incompleteness, an sd that appeared or vanished is a change -- and the
     numbers have to agree at the precision the snapshot (or today, if it
-    prints fewer digits) printed them with.
+    prints fewer digits) printed them with, and to three significant digits
+    (_num_same).
     """
     if published == current:
         return True

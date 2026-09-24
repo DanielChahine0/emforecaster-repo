@@ -58,10 +58,22 @@ def _gate(tmp_path, published_md, current_md, rules=None, *, snapshot=None):
 
 def test_values_agree_at_the_precision_the_snapshot_printed():
     assert R.same("0.00391", "0.003906")           # p at 3 significant digits
-    assert R.same("7.63e-06", "7.6e-06")
+    assert R.same("0.3768 ±0.0002", "0.37684 ±0.0002")
     assert R.same("-0.0%", "+0.0%")
     assert not R.same("+1.03%", "+1.04%")
     assert not R.same("9", "8")
+
+
+def test_a_p_printed_without_its_trailing_zeros_is_not_a_coarse_number():
+    # A Wilcoxon p is printed with :.3g, which drops trailing zeros: "1" is
+    # 1.00, not a p known to the unit. The snapshot's k=1-vs-multivariate MSE
+    # p was "1" and a later render printed "0.5".
+    assert not R.same("1", "0.5")
+    assert not R.same("1", "0.625")
+    assert not R.same("0.5", "0.54")
+    assert not R.same("7.63e-06", "7.6e-06")       # 7.6e-06 is 7.60e-06
+    assert R.same("1", "1")
+    assert R.same("0.438", "0.4375")
 
 
 def test_the_text_around_a_value_is_part_of_it():
