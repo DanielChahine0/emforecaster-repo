@@ -101,6 +101,108 @@ def spec_timing() -> dict:
         return {}
 
 
+# The GPU logs the 2026-09-24 sweeps write, each beside the sweep log whose
+# start/STOP/DONE lines bound it: the CCM sweep (.personal/run_ccm_all.sh) and
+# the tail rerun of the August per-channel bands (.personal/run_tail.sh). Both
+# are git-ignored: `make.py contention` copies what the frames need into
+# specs/contention.yaml, skipping a pair whose GPU log does not exist yet.
+LOG_PAIRS = [
+    (REPO / ".personal" / "ccm_gpu_contention.log", REPO / ".personal" / "ccm_sweep.log"),
+    (REPO / ".personal" / "tail_gpu_contention.log", REPO / ".personal" / "tail_sweep.log"),
+]
+
+
+def spec_contention():
+    """The foreign GPU windows of specs/contention.yaml, or None (see emfres.contention)."""
+    from . import contention
+
+    path = SPECS / "contention.yaml"
+    try:
+        return contention.load(path)
+    except Exception as exc:
+        print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
+        return None
+
+
+def cmd_contention(args) -> int:
+    """GPU logs -> specs/contention.yaml: the foreign windows and a per-cell summary.
+
+    --check derives it again to the committed file's observed_until and says
+    whether the file is what the logs give, and whether a GPU log has entries
+    after it (a sweep went on: rerun without --check).
+    """
+    from datetime import datetime, timedelta
+
+    from . import contention as C
+
+    if args.gpu_log:
+        sweeps = list(args.sweep_log or [])
+        pairs = [(g, sweeps[i] if i < len(sweeps) else None)
+                 for i, g in enumerate(args.gpu_log)]
+    else:
+        pairs = [(g, w) for g, w in LOG_PAIRS if g.exists()]
+    missing = [g for g, _ in pairs if not g.exists()]
+    if not pairs or missing:
+        print(f"no GPU log to derive from ({', '.join(map(str, missing)) or 'none found'})",
+              file=sys.stderr)
+        return 1
+    spec = SPECS / "contention.yaml"
+    if args.check:
+        old = C.load(spec)
+        if old is None:
+            print(f"{spec} not found -- run `make.py contention`", file=sys.stderr)
+            return 1
+        until = old.observed_until
+    elif args.until:
+        until = datetime.strptime(args.until, C.TIME_FMT)
+    else:
+        until = datetime.now().replace(microsecond=0)
+
+    def rel(path: Path) -> str:
+        return path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else str(path)
+
+    derived = C.combine([
+        C.derive(g.read_text(), w.read_text() if w is not None and w.exists() else None,
+                 until=until, source=rel(g))
+        for g, w in pairs])
+    exclude = [] if args.no_spec else spec_excludes()
+    loaded = frames.load_all(args.logs or LOGS, exclude, contention=derived)
+    text = C.dump(derived, C.summarise(derived, loaded))
+    flagged = [r for _, r in loaded if r.foreign_overlap]
+    watched = [r for _, r in loaded if r.foreign_overlap is not None]
+    partial = [r for r in watched
+               if derived.monitored_seconds(r.started, r.started + timedelta(
+                   seconds=r.running_time)) < r.running_time - 1]
+    fg = sum((w.end - w.start).total_seconds() for w in derived.windows)
+    mon = sum((e - s).total_seconds() for s, e in derived.monitored)
+    print(f"monitored {mon / 3600:.2f} h, foreign processes on the GPU for {fg / 3600:.2f} h "
+          f"in {len(derived.windows)} windows; {len(flagged)} of {len(watched)} monitored "
+          f"runs overlap them" + (" (the last span is still open)" if derived.open else ""))
+    seen: dict = {}
+    for g, _ in pairs:
+        for snap in C.parse_gpu_log(g.read_text()):
+            for _, exe, _ in snap.foreign:
+                seen[exe] = seen.get(exe, 0) + 1
+    for exe, n in sorted(seen.items(), key=lambda kv: -kv[1]):
+        print(f"  foreign executable {exe}  ({n} entries)")
+    if partial:
+        print(f"WARNING: {len(partial)} runs are only partly inside the monitored time; "
+              f"their foreign_overlap is a lower bound, e.g. {partial[0].path}",
+              file=sys.stderr)
+    if args.check:
+        later = [s for g, _ in pairs for s in C.parse_gpu_log(g.read_text())
+                 if until is not None and s.time > until]
+        same = spec.read_text() == text
+        print(f"{spec.name}: " + ("reproduces from the logs" if same else
+                                  "does NOT reproduce from the logs (rerun `make.py contention`)")
+              + (f"; the GPU logs have {len(later)} entries after its observed_until "
+                 f"{C._fmt(until)}" if later else ""))
+        return 0 if same and not later else 1
+    spec.write_text(text)
+    print(f"wrote {rel(spec)}")
+    return 0
+
+
 def cmd_extract(args) -> int:
     logs = args.logs or LOGS
     if not logs.is_dir():
@@ -564,6 +666,27 @@ def main(argv: list[str] | None = None) -> int:
                     help="list every expected change and every new value, uncapped "
                          "(of every family gated: all of them unless --family names one)")
     rc.set_defaults(func=cmd_reconcile)
+
+    ct = sub.add_parser(
+        "contention", help="the sweep's GPU log -> specs/contention.yaml (foreign GPU windows)")
+    ct.add_argument("--gpu-log", type=Path, action="append", default=None,
+                    help="a GPU log to read, repeatable (default: every one of "
+                         + ", ".join(g.relative_to(REPO).as_posix() for g, _ in LOG_PAIRS)
+                         + " that exists)")
+    ct.add_argument("--sweep-log", type=Path, action="append", default=None,
+                    help="the sweep log beside each --gpu-log, in order, whose start/STOP/"
+                         "DONE lines bound its monitored spans (default: "
+                         + ", ".join(w.relative_to(REPO).as_posix() for _, w in LOG_PAIRS)
+                         + ")")
+    ct.add_argument("--until", default=None,
+                    help="end of a span still running, 'YYYY-MM-DD HH:MM:SS' (default: now)")
+    ct.add_argument("--logs", type=Path, default=None,
+                    help=f"logs tree the per-cell summary reads (default: {LOGS})")
+    ct.add_argument("--no-spec", action="store_true", help="ignore specs/runs.yaml")
+    ct.add_argument("--check", action="store_true",
+                    help="derive again to the committed observed_until, write nothing; "
+                         "fails when the file does not reproduce or the GPU log went on")
+    ct.set_defaults(func=cmd_contention)
 
     fg = sub.add_parser("figures", help="frames/ -> the paradigm-comparison figures")
     fg.add_argument("--family", default="all", choices=["emf", "voip", "all"],

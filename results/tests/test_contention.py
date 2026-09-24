@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 
-from emfres import contention as C
+from emfres import cli, contention as C
 from emfres.runlogs import MARKER, load_runs
 
 
@@ -150,6 +150,14 @@ def test_the_spec_round_trips_and_carries_its_derivation():
     assert yaml.safe_load(text)["cells"] == [{"setup": "cluster", "model": "LSTM",
                                               "runs": 3, "foreign": 1}]
     assert "monitored: []" in C.dump(C.Contention([], []))
+
+
+def test_the_committed_spec_loads_and_every_window_is_monitored():
+    c = cli.spec_contention()
+    assert c is not None and c.windows and c.source == ".personal/ccm_gpu_contention.log"
+    for w in c.windows:
+        assert w.start < w.end
+        assert c.monitored_seconds(w.start, w.end) == (w.end - w.start).total_seconds()
 
 
 def _log(started, seconds, concurrency, **extra):

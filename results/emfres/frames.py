@@ -329,11 +329,14 @@ def _num(v: Optional[float]) -> str:
 
 def load_all(logs_dir: Path, exclude: list[str],
              inferred: Optional[list[dict]] = None,
-             attested: Optional[list[dict]] = None) -> list[tuple[str, Run]]:
+             attested: Optional[list[dict]] = None,
+             contention=None) -> list[tuple[str, Run]]:
     """(setup, Run) for every finished log.json under ``logs_dir``.
 
     Read once and shared by build_runs and build_bands, so the two frames
-    describe exactly the same set of runs.
+    describe exactly the same set of runs. ``contention`` is specs/
+    contention.yaml's foreign GPU windows (emfres.contention.load), which set
+    each run's foreign_overlap.
     """
     out = []
     for sub in sorted(p for p in logs_dir.iterdir() if p.is_dir()):
@@ -341,7 +344,8 @@ def load_all(logs_dir: Path, exclude: list[str],
             continue
         setup = setup_of(sub)
         out += [(setup, run) for run in load_runs(sub, exclude, setup=setup,
-                                                  inferred=inferred, attested=attested)]
+                                                  inferred=inferred, attested=attested,
+                                                  contention=contention)]
     return out
 
 
