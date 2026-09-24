@@ -106,10 +106,23 @@ FREQ_CLIP_QUANTILE = 0.999
 FREQ_CLIP_FACTOR = 3.0
 
 
-def set_serif_font(size=None):
-    """Use a serif font (Times New Roman) for all figures."""
-    mpl.rcParams["font.family"] = "serif"
-    mpl.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
+# The campaigns the benchmark never published. Every figure results/ generates
+# leaves them out (results/emfres/figdata.py HIDDEN_DATASETS), so the EDA
+# figures do too unless they are named in --datasets.
+UNPUBLISHED = ("UH_2024", "ED_2024")
+
+
+def set_plot_font(size=None):
+    """IBM Plex Sans, the one typeface of every results/ figure.
+
+    The font stack lives in results/emfres/style.rc_fonts; install the family
+    with results/emfres/fonts.py if matplotlib falls back to another one.
+    """
+    results = str(REPO_ROOT / "results")
+    if results not in sys.path:
+        sys.path.insert(0, results)
+    from emfres.style import rc_fonts
+    mpl.rcParams.update(rc_fonts("sans"))
     if size is not None:
         mpl.rcParams["font.size"] = size
 
@@ -142,9 +155,13 @@ def rss(df: pd.DataFrame, cols: list) -> pd.Series:
 
 
 def select_datasets(labels):
-    """Pick the datasets matching `labels` (None = all), keeping order."""
+    """Pick the datasets matching `labels`, keeping order.
+
+    None picks the benchmark's datasets: the UNPUBLISHED 2024 campaigns are
+    drawn only when named.
+    """
     if not labels:
-        return list(DATASETS)
+        return [ds for ds in DATASETS if ds["label"] not in UNPUBLISHED]
     wanted = set(labels)
     selected = [ds for ds in DATASETS if ds["label"] in wanted]
     missing = wanted - {ds["label"] for ds in DATASETS}
@@ -661,8 +678,8 @@ def plot_dataset(ds: dict):
 
 
 def run_emf_levels(datasets=None):
-    set_serif_font(size=16)
-    datasets = datasets if datasets is not None else DATASETS
+    set_plot_font(size=16)
+    datasets = datasets if datasets is not None else select_datasets(None)
     print("EMF level time-trend plots")
     for ds in datasets:
         plot_dataset(ds)
@@ -940,10 +957,11 @@ def create_all_datasets_comparison_heatmap(datasets_info, output_root):
                     ax.set_xticks(np.arange(len(labels)))
                     ax.set_yticks(np.arange(len(labels)))
 
-                    # font size
+                    # font size: a frequency panel's 27-29 bands at 15 pt
+                    # overprint each other in a 6-inch cell
                     if len(labels) > 15:
-                        label_fontsize = 15
-                        tick_fontsize = 15
+                        label_fontsize = 9
+                        tick_fontsize = 9
                         text_fontsize = 15
                     elif len(labels) > 8:
                         label_fontsize = 15
@@ -1003,8 +1021,8 @@ def generate_all_heatmaps(datasets_info, output_root):
 
 
 def run_heatmaps(datasets=None):
-    set_serif_font()
-    datasets = datasets if datasets is not None else DATASETS
+    set_plot_font()
+    datasets = datasets if datasets is not None else select_datasets(None)
     print("Heatmap generation")
 
     datasets_info = []
@@ -1096,7 +1114,8 @@ def build_parser():
     p_all.add_argument("--outdir", type=Path, default=None,
                        help="figure root (default: results/figures)")
     p_all.add_argument("--datasets", nargs="+", metavar="LABEL", choices=labels,
-                       help=f"Subset of datasets to process (default: all). "
+                       help=f"Subset of datasets to process (default: all but "
+                            f"{', '.join(UNPUBLISHED)}, which are drawn only when named). "
                             f"Choices: {', '.join(labels)}.")
     _add_clip_options(p_all)
     p_all.add_argument("--zoom-days", type=int, default=None,
@@ -1119,7 +1138,8 @@ def build_parser():
     p_emf.add_argument("--outdir", type=Path, default=None,
                        help="figure root (default: results/figures)")
     p_emf.add_argument("--datasets", nargs="+", metavar="LABEL", choices=labels,
-                       help=f"Subset of datasets to process (default: all). "
+                       help=f"Subset of datasets to process (default: all but "
+                            f"{', '.join(UNPUBLISHED)}, which are drawn only when named). "
                             f"Choices: {', '.join(labels)}.")
     p_emf.add_argument("--zoom-days", type=int, default=None,
                        help=f"Length of the auto-derived zoom window in days "
@@ -1141,7 +1161,8 @@ def build_parser():
     p_hm.add_argument("--outdir", type=Path, default=None,
                        help="figure root (default: results/figures)")
     p_hm.add_argument("--datasets", nargs="+", metavar="LABEL", choices=labels,
-                      help=f"Subset of datasets to process (default: all). "
+                      help=f"Subset of datasets to process (default: all but "
+                           f"{', '.join(UNPUBLISHED)}, which are drawn only when named). "
                            f"Choices: {', '.join(labels)}.")
     _add_clip_options(p_hm)
 
