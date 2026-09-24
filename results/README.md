@@ -100,11 +100,16 @@ or a best k the table does not.
 | P10 | `series/dots_l336_o96_{mae,mse}` | the single-series grid, titled as the separate dataset it is |
 
 The paradigm owns the colour: multivariate Charcoal Blue filled, per-channel
-the same hue hollow, cluster Verdigris (a diamond for the chosen k, a small
-dot for k = 1). Models are rows or facets, named in text; outcomes are
-Verdigris (challenger better), Burnt Peach (baseline better) and a hollow
-muted ring (tie). Type is IBM Plex Sans (`style.rc_fonts`), sizes the
-IEEEtran `paper` preset unless `--style slide`.
+the same hue hollow, cluster Verdigris (a diamond for the chosen k, labelled
+on its own outer side and joined to a small dot for k = 1). Models are rows
+or facets, named in text; outcomes are Verdigris (challenger better), Burnt
+Peach (baseline better) and a hollow muted ring (tie). Where a figure colours
+by dataset (P5, P7) it takes `style.DATASET_COLORS`, three hues that are none
+of those. A cell where no seed trains in any paradigm (the VoIP Transformer)
+is marked † and muted wherever it is named, and P3 leaves it out of the share
+strip; ARIMA's cluster lane reads n/a, as it is per-band by construction.
+Type is IBM Plex Sans (`style.rc_fonts`), sizes the IEEEtran `paper` preset
+unless `--style slide`.
 
 The figures render from whatever the frames hold. A model whose sweep is still
 training is drawn faded (and hollow in P5), labelled partial, and left out of
@@ -112,9 +117,16 @@ every count, exactly as the tables count it pending; re-extracting after the
 sweep draws it in full with no code change. The model list, datasets and k
 values all come from the frames. ED2024 and UH2024 never appear
 (`figdata.HIDDEN_DATASETS`; the EDA tool leaves them out unless named). Each
-run spot-checks every plotted multivariate, complete per-channel and cluster
-seed mean against `cells.csv` and exits non-zero on a mismatch, so the
-figures cannot drift from the tables.
+run spot-checks the seed means the figures are drawn from against
+`cells.csv` and exits non-zero on a mismatch (`figdata.spot_check`,
+`spot_check_series`): the accuracy seed means behind P1, P2, P4, P5, P6 and
+P9, P8's coverage and width, P7's multivariate and cluster training time and
+P10's series means, each wherever `cells.csv`'s plain mean is that seed mean
+(every seed present and, per-channel, complete). It checks the numbers, not
+the drawn marks. Outside it, for want of a `cells.csv` counterpart: P7's
+per-channel cost (the solo estimate in `timing.csv`) and P3's band ratios
+(`bands.csv`). P2's gaps and P6's counts are computed from the checked seed
+values by the functions behind `tables/paradigms.md`.
 
 `figures/_archive/` holds the 56 figures of 2026-08-14 (`l192_o96_*`,
 `l48-480x48_o96_*`: the ED2022 lookback ladder and the L192 window of the
