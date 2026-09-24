@@ -239,7 +239,10 @@ docstring has the full rules.
   and flag a cell where no seed of any paradigm trains (the VoIP Transformer),
   with the scoreboard repeated without it.
 - **Sensitivity rows** re-count the comparisons on the ratio-of-sums skill,
-  without the two near-unforecastable bands (UH2022 ch21, EMF2023 ch24), and
+  without the two near-unforecastable bands (UH2022 ch21, EMF2023 ch24),
+  without each cell's top band (its largest multivariate band MSE; this is the
+  row that moves the EMF per-channel-vs-multivariate MSE Wilcoxon p, 0.018 to
+  0.090 on the 2026-09-24 logs, where the named two move it to 0.024), and
   without the failed per-channel bands (`best_epoch` <= 2), both sides
   recomputed from `bands.csv`.
 - The cluster sweep marks the validation k and prints the test-best k as an

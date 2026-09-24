@@ -313,6 +313,31 @@ def test_dropping_a_band_recomputes_both_sides_from_the_band_vectors(tmp_path):
     assert "without uh2022 ch21" in md and "Band sensitivity per cell" in md
 
 
+def test_each_cells_top_band_is_dropped_on_both_sides(tmp_path):
+    """ED2022 (no named near-unforecastable band): per-channel loses on ch2
+    alone, the band that carries most of the multivariate MSE."""
+    runs, bands = [], []
+    for i, s in enumerate(SEEDS):
+        mv = [1.0 + 0.001 * i] * 4
+        pc = [0.99 + 0.001 * i] * 4
+        mv[2], pc[2] = 4.0, 5.0
+        runs.append(_run("multivariate", s, 0.5, mse=sum(mv) / 4))
+        bands += [_band("multivariate", s, ch, v, dataset="ed2022") for ch, v in enumerate(mv)]
+        for ch, v in enumerate(pc):
+            runs.append(_run("perchannel", s, 0.5, channel=ch, mse=v, best_epoch=30))
+            bands.append(_band("perchannel", s, ch, v, dataset="ed2022"))
+    runs_csv = _csv(tmp_path, runs)
+    frames.write_csv(tmp_path / "bands.csv", bands, frames.BAND_FIELDS)
+    board = paradigms.build(paradigms.seed_values(runs_csv, "emf", 336, 96))
+    band_vals, _ = paradigms.band_values(tmp_path / "bands.csv", "emf", 336, 96)
+    assert paradigms.top_band(board, ("ed2022", "DLinear"), band_vals) == (2,)
+    md = paradigms.render(runs_csv, "emf", (336, 96))
+    row = next(line for line in md.splitlines()
+               if line.startswith("| Per-channel vs Multivariate | without each cell's top band"))
+    assert "| MSE | 1 | 0 | 0 |" in row                 # per-channel wins without ch2
+    assert "ch2 (2 MHz) (top band)" in md               # and the per-cell table says so
+
+
 def test_failed_per_channel_bands_are_found_and_dropped_on_both_sides(tmp_path):
     runs_csv = _banded(tmp_path, failed=(3, 5))
     board = paradigms.build(paradigms.seed_values(runs_csv, "emf", 336, 96))

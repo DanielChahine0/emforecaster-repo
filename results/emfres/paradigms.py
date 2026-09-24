@@ -46,8 +46,10 @@ allow:
   multivariate run trains at, and flags a cell where no seed of any paradigm
   trains -- the scoreboard is then also shown without it.
 * **Sensitivity rows** for what a pooled MSE hides (audit PE-1, PE-2): the
-  ratio-of-sums skill, the near-unforecastable bands dropped, and the failed
-  per-channel bands dropped from both sides.
+  ratio-of-sums skill, the two named near-unforecastable bands dropped, each
+  cell's top band dropped (the more telling of the two: it is where the MSE
+  test's p moves), and the failed per-channel bands dropped, every band
+  variant from both sides.
 
 Training cost is deliberately absent. Timings are only comparable between runs
 that trained under the same contention (``concurrency`` in runs.csv), and the
@@ -503,6 +505,26 @@ def dropped(board: Board, cell: tuple, pipe: str, bands: dict,
     return out
 
 
+def top_band(board: Board, cell: tuple, bands: dict) -> tuple:
+    """(channel,) of the cell's band with the largest seed-mean multivariate MSE.
+
+    Over the multivariate seeds the board keeps, from their band vectors; ()
+    when there are none. The drop-top-band variant takes it out of every
+    pipeline of the cell (audit PE-1: on the 2026-09-24 logs this moves the
+    EMF per-channel-vs-multivariate MSE Wilcoxon p from 0.018 to 0.090, where
+    dropping the two named near-unforecastable bands moves it to 0.024).
+    """
+    seeds = board.cells.get(cell, {}).get(MV, {})
+    per_seed = bands.get((MV, cell[0], cell[1]), {})
+    by_band: dict = defaultdict(list)
+    for seed in seeds:
+        for ch, (mse, _) in per_seed.get(seed, {}).items():
+            by_band[ch].append(mse)
+    means = {ch: statistics.fmean(v) for ch, v in by_band.items()
+             if v and all(x is not None for x in v)}
+    return (max(means, key=lambda ch: (means[ch], -ch)),) if means else ()
+
+
 def failed_bands(board: Board, cell: tuple) -> tuple:
     """The per-channel bands of a cell that failed at any seed (not TRAINS_MODELS)."""
     if cell[1] in TRAINS_MODELS:
@@ -725,6 +747,16 @@ def render(runs_csv: Path, family: str, setting: tuple,
             for ds, chans in near.items())
         for base, chal, _ in COMPARISONS:
             add(base, chal, label, drop_near, "mse")
+    top = {c: top_band(board, c, bands) for c in order if c[1] not in DETERMINISTIC}
+    top = {c: t for c, t in top.items() if t}
+    if bands and top:
+        # A cell with no multivariate band vector has no top band to drop; it
+        # is left out of this row rather than counted with every band.
+        drop_top = drop_variant(board, bands, lambda c: top.get(c, ()))
+        untopped = frozenset(c for c in order if c not in top)
+        for base, chal, _ in COMPARISONS:
+            add(base, chal, "without each cell's top band (its largest multivariate band "
+                "MSE), dropped on both sides", drop_top, "mse", skip=untopped)
     failed = {c: failed_bands(board, c) for c in order}
     failed = {c: f for c, f in failed.items() if f}
     if bands and failed:
@@ -803,8 +835,16 @@ def render(runs_csv: Path, family: str, setting: tuple,
             out.append("| " + " | ".join(row) + " |")
 
     # --------------------------------------------------- band sensitivity per cell
-    affected = [c for c in order if c[1] not in DETERMINISTIC
-                and (near.get(c[0]) or failed.get(c))]
+    def band_drops(c):
+        """(kind, bands) of every band variant that changes cell c. The top
+        band is listed where it is not already a named near-unforecastable one."""
+        named = near.get(c[0], ())
+        extra = tuple(ch for ch in top.get(c, ()) if ch not in named)
+        return [(kind, d) for kind, d in (("near-unforecastable", named),
+                                          ("top band", extra),
+                                          ("failed per-channel", failed.get(c, ()))) if d]
+
+    affected = [c for c in order if c[1] not in DETERMINISTIC and band_drops(c)]
     if bands and affected:
         out += ["", f"## {section} · Band sensitivity per cell (MSE)", "",
                 "The cells a band variant changes, with the dropped bands' share of the "
@@ -815,14 +855,13 @@ def render(runs_csv: Path, family: str, setting: tuple,
                 "|:---|:---|:---|---:|---:|---:|---:|---:|"]
         everything = drop_variant(board, bands, lambda c: (), recompute=True)
         for c in affected:
-            for kind, drop in (("near-unforecastable", near.get(c[0], ())),
-                               ("failed per-channel", failed.get(c, ()))):
-                if not drop:
-                    continue
+            for kind, drop in band_drops(c):
                 cut = drop_variant(board, bands, lambda cc, d=drop: d if cc == c else (),
                                    recompute=True)
                 share = _share(bands, c, drop)
-                cluster = kind == "near-unforecastable"
+                # The failed-band variant is a per-channel repair: the cluster
+                # pipelines keep every band in it.
+                cluster = kind != "failed per-channel"
                 out.append(
                     f"| {dataset_label(c[0])} | {model_label(c[1])} | "
                     f"{', '.join(_band_label(names, c[0], ch) for ch in drop)} ({kind}) | "
