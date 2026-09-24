@@ -143,18 +143,22 @@ not declared equivalent and still show as a second version.
 `make.py reconcile` holds every value the frozen snapshot publishes (`PUBLISHED`
 in `emfres/cli.py`, currently `archive/2026-09-22_tables.md`) against the value
 today's frames give, and `make.py tables` runs the same gate before writing.
-Three kinds of value are held (`emfres/reconcile.py`); the counts are from
-frames re-extracted mid-sweep on 2026-09-24:
+Three kinds of value are held (`emfres/reconcile.py`). The last column is how
+many values `2026-09-22_tables.md` publishes of each; how many of them
+reproduce today, and which changes are expected, move with every run the
+sweep finishes, so `make.py reconcile --all` is where to read them:
 
-| Kind | What | Held against | Published: reproduce / changed |
-| :--- | :--- | :--- | :--- |
-| `cells` | the MSE/MAE tables of Multivariate, Univariate Series, Per Channel and Cluster | `frames/cells.csv` | 342: 338 / 4 |
-| `scoreboard` | the Paradigm Comparison's scoreboard and sensitivity rows: the three counts, cells, median gap, Wilcoxon p | today's render | 48: 33 / 15 |
-| `sweep` | the CCM sweep: each model's plain cell, its cell at every k, its val k and oracle k | today's render | 21: 7 / 14 |
+| Kind | What | Held against | Published in the snapshot |
+| :--- | :--- | :--- | ---: |
+| `cells` | the MSE/MAE tables of Multivariate, Univariate Series, Per Channel and Cluster | `frames/cells.csv` | 342 |
+| `scoreboard` | the Paradigm Comparison's scoreboard and sensitivity rows: the three counts, cells, median gap, Wilcoxon p | today's render (the cluster rows: see below) | 48 |
+| `sweep` | the CCM sweep: each model's plain cell, its cell at every k, its val k and oracle k | today's render | 21 |
 
-A value is compared at the precision the snapshot printed it, and the text
-around it counts: a tie mark (≈) that appears, or an `(n=…)` marking a cell
-still training, is a change. A scoreboard row is keyed by its comparison
+A value is compared at the precision the snapshot printed it and to three
+significant digits: a Wilcoxon p is printed with `:.3g`, which drops trailing
+zeros, so a p of `1` is 1.00 and does not match `0.5`. The text around a value
+counts: a tie mark (≈) that appears, or an `(n=…)` marking a cell still
+training, is a change. A scoreboard row is keyed by its comparison
 ("Per-channel vs Multivariate"), not by its question's wording. The sweep is
 read in both layouts it has had: the snapshot's one section per dataset and
 metric, which underlined the k with the best *test* value, and today's single
@@ -165,23 +169,38 @@ its heading, or by its heading plus a ` · ` suffix (the old sweep's
 A changed value is **expected** when a rule in `specs/gate.yaml` matches it.
 Each rule names the kind and fields it covers and why they changed, and the
 file names the snapshot its rules were written for: against any other they
-do not apply. All 33 changes above are declared: the per-channel EMForecaster
-cells (16 bands retrained at 128x4), ARIMA's cells moving from Tie to the
-Identical column, and the cluster comparisons and the sweep's k ≥ 2 values
-under the fixed protocol. The sweep's plain and k = 1 values, the Cluster
-section's batch-protocol cells and the per-channel vs multivariate wins,
-losses and p are deliberately not declared. A change no rule declares fails
-the gate; a value the snapshot never had is counted as new and never fails
-it. `make.py reconcile --all` lists every change and every new value. A
-changed section's `NOTE` says what the gate held of it, or that it is text
-only: Multivariate vs Univariate, CCM vs Base and the Ultimate Comparison
-are, and so are the paradigm comparison's per-cell tables. The same
+do not apply. The declared changes are the per-channel EMForecaster cells (16
+bands retrained at 128x4); ARIMA's cells moving from Tie to the Identical
+column, and the per-channel vs multivariate median gap; the k = 1 vs
+multivariate median gap, now taken over every counted cell; and the sweep's
+k ≥ 2 values and oracle k under the fixed protocol. The sweep's plain and
+k = 1 values, the Cluster section's batch-protocol cells and the per-channel
+vs multivariate wins, losses and p are deliberately not declared. No rule
+forgives a value that vanished or turned into `-`: a rule declares a value
+that moved, not one that went missing. A change no rule declares fails the
+gate; a value the snapshot never had is counted as new and never fails it.
+
+The snapshot's three cluster comparisons (k = 1 vs multivariate, best k vs
+k = 1, best k vs multivariate) are **held elsewhere**. They were the logged
+batch protocol over the three models then clustered; today's scoreboard rows
+of the same name are the fixed protocol over up to six models, which the
+snapshot never published. So `held_elsewhere` in `specs/gate.yaml` holds each
+of their values against today's batch-protocol sensitivity row, re-counted
+over DLinear, PatchTST and TSMixer alone (`render_paradigms(models=…)` in
+`emfres/cli.py`), where every count and p has to reproduce; today's
+fixed-protocol values under the old names count as new.
+
+`make.py reconcile --all` lists every change and every new value. A changed
+section's `NOTE` says what the gate held of it and, for a partly gated
+section, which part is text only: the per-setup sections' tables other than
+MSE/MAE, and the paradigm comparison's per-cell tables. Multivariate vs
+Univariate, CCM vs Base and the Ultimate Comparison are text only. The same
 multivariate and per-channel cells are held in their own sections, and the
 cluster cells in the sweep, which in this snapshot covers ED2022 MAE only.
 
 On the tracked frames the gate fails until they are re-extracted: they
-predate the fixed-protocol columns, so the sweep cannot render and its plain
-and k = 1 values read as no longer published.
+predate the fixed-protocol columns, so the sweep cannot render and all 21 of
+its published values read as no longer published.
 
 Earlier snapshots are kept as provenance: `2026-09-19_tables.md` holds the
 single-seed EMF benchmark that the three-seed Phase 2 rerun replaced, and
@@ -276,6 +295,11 @@ docstring has the full rules.
   and Persistence are the same computation in the multivariate and
   per-channel grids: shown once (n = 1), *identical*, left out of every count
   and test, and n/a for clustering.
+- **Median gap and test.** The median gap is over every counted cell. A cell
+  whose two sides differ by less than 5e-5 in the metric itself (an absolute
+  floor, the tie band's, not a relative gap) is a zero difference: it stays
+  in the count and the median but leaves the Wilcoxon test, as the test's
+  default drops zeros, so `n (test)` can be smaller than `Cells`.
 - **Whether the Transformer trains.** A Transformer seed trains when its skill
   is at least half the best multivariate skill of the other models on the
   dataset; the tables give, per pipeline, how many of its seeds train (n/N), a
@@ -321,8 +345,8 @@ the 27-run lookback ladder are in `logs/_archive/`; the ladder survives as
   implementation. Re-freeze it once the CCM sweep has ended and the
   expected changes (`make.py reconcile --all`) are reviewed: copy
   `tables/all.md` into `archive/`, repoint `PUBLISHED`, and set
-  `specs/gate.yaml`'s `snapshot` to the new file with an empty `expected`
-  list. The VoIP tables have no snapshot yet (`SNAPSHOTS` in
+  `specs/gate.yaml`'s `snapshot` to the new file with empty `held_elsewhere`
+  and `expected` lists. The VoIP tables have no snapshot yet (`SNAPSHOTS` in
   `emfres/cli.py`) and are rendered ungated.
 - `specs/provenance.yaml` holds three kinds of evidenced rule. `inferred` dates
   runs logged before stamping (2026-09-19) by setup and `exp/time` window;
