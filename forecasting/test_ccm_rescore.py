@@ -354,6 +354,10 @@ def test_real_checkpoint_passes_the_self_check(rel, tmp_path):
     if not os.path.isfile(os.path.join(run, "supervised.pth")):
         pytest.skip(f"{rel} is not in this checkout")
     log = _read(os.path.join(run, "log.json"))
+    # The run's own sidecar, committed since (bb159ddeb): the re-score under
+    # --out must leave it as it is, or leave the run without one.
+    own = os.path.join(run, SIDECAR)
+    own_sha = _sha256(own) if os.path.exists(own) else None
 
     result = rescore_run(run, "fixed", out=str(tmp_path))
     assert result["status"] == "ok", result["batch_check"]
@@ -367,4 +371,4 @@ def test_real_checkpoint_passes_the_self_check(rel, tmp_path):
         log["parameters/data/num_channels"], log["parameters/cluster/k_clusters"])
     assert sidecar["rescore"]["val_check"]["logged_best_val_loss"] == min(
         log["sl_val/loss"])
-    assert not os.path.exists(os.path.join(run, SIDECAR))
+    assert (_sha256(own) if os.path.exists(own) else None) == own_sha
