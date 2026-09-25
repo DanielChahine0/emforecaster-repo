@@ -642,7 +642,12 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
     text = tables.read_text()
     batch_printed = cluster_printed_batch(text)
     training = training_cells(text)
-    n_batch = n_group = n_training = 0
+    n_batch = n_group = n_training = n_scoped = 0
+    # Cluster cells short of seeds by design (specs/scope.yaml), per family:
+    # final, not still training.
+    from .frames import family_of
+    from .paradigms import load_scope
+    scoped = {fam: set(load_scope(fam)) for fam in ("emf", "voip")}
     records = [(r, "") for r in pm.parse_tables(tables)]
     if not batch_printed:
         records += [(r, BATCH_GROUP_VIA) for r in batch_group_records(text)]
@@ -675,7 +680,10 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
             value, published = training.get(
                 (r.section, group, r.metric, r.dataset, r.lookback, r.horizon,
                  r.cluster, r.model), (value, "-"))
-            n_training += not math.isnan(value)
+            by_design = setup == "cluster" and bool(
+                set(DISPLAY_IDS.get(model, [model])) & scoped[family_of(dataset_slug(r.dataset))])
+            n_scoped += by_design and not math.isnan(value)
+            n_training += not by_design and not math.isnan(value)
         if math.isnan(value):
             # A '-' in the table: that grid cell was never run. A frames row
             # for it now is a value the snapshot never had -- new, not a change.
@@ -713,6 +721,9 @@ def hold_cells(tables: Path, cells_csv: Path, archived_rules: list[dict]) -> Hel
         held.notes.append(f"{n_training} cells the snapshot printed with (n=...), still "
                           f"training: held at the mean it printed, so each changes as its "
                           f"seeds finish -- freeze a snapshot once none is left")
+    if n_scoped:
+        held.notes.append(f"{n_scoped} cluster cells the snapshot printed with (n=...) by "
+                          f"design (specs/scope.yaml): final, held at the mean it printed")
     if n_batch:
         held.notes.append(f"{n_batch} cluster cells the snapshot printed under the batch "
                           f"protocol: held against today's fixed-protocol cells, the "
