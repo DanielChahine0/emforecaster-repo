@@ -1,0 +1,38 @@
+# Paradigm cells left out by design, per family: the owner decided (2026-09-24)
+# not to run them, so they are final, not pending.
+#
+# Read by emfres/paradigms.py (load_scope) for the paradigm comparison, the CCM
+# sweep, the cross tables and the figures, and by the value gate
+# (emfres/reconcile.py). A scoped model's cluster pipelines (k = 1 and the best
+# k) are left out of every count and test and are never shown as pending:
+#
+#   descriptive  the cluster sweep ran at `seeds` only. Its seed-aware cell
+#                has no best k; the paradigm comparison adds a row at those
+#                seeds, with the multivariate and per-channel values of the
+#                same seeds and the k chosen on their validation loss,
+#                unmarked. Extra seeds that exist are shown, never ranked.
+#   not_run      the cluster sweep was not run; `controls` names the runs
+#                that exist anyway (shown, never ranked).
+#
+# `label` is what a table cell or figure lane prints; `reason` says why.
+emf:
+  - model: EMForecaster
+    pipeline: cluster
+    status: descriptive
+    seeds: ["69421"]
+    label: seed 69421 only, by design
+    reason: >
+      The EMF EMForecaster sweep (k = 1, 2, 3, 5, 9 on ED2022, UH2022 and
+      EMF2023) is reported at seed 69421, descriptively, against the
+      multivariate and per-channel seed-69421 values. Seed 69422 exists for
+      ED2022 at every k and UH2022 at k = 1; the sweep was stopped there by
+      owner decision on 2026-09-24.
+  - model: RF_EMF_Transformer
+    pipeline: cluster
+    status: not_run
+    controls: "ED2022 k = 1, seed 69421"
+    label: not run, by design
+    reason: >
+      Not run: dead at 2 of 3 seeds, and head-only CCM cannot revive it. The
+      ED2022 k = 1 control at seed 69421 was run and is shown.
+voip: []

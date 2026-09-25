@@ -140,6 +140,46 @@ NEAR_UNFORECASTABLE = {"uh2022": (21,), "emf_2023_university_5_with_ptv": (24,)}
 # no multivariate or cluster PatchTST run does this).
 FAILED_BEST_EPOCH = 2
 
+# Cluster pipelines left out by design (owner decision, 2026-09-24):
+# specs/scope.yaml. They are final, never pending, and never counted or tested.
+SCOPE_SPEC = Path(__file__).resolve().parents[1] / "specs" / "scope.yaml"
+SCOPE_STATUSES = ("descriptive", "not_run")
+
+
+@dataclass(frozen=True)
+class Scope:
+    """One model's cluster pipelines, scoped out of the seed-aware comparison."""
+    model: str
+    status: str            # "descriptive" (ran at ``seeds`` only) or "not_run"
+    seeds: tuple = ()      # descriptive: the seeds its descriptive row uses
+    label: str = ""        # what a table cell or a figure lane prints
+    reason: str = ""
+
+
+def load_scope(family: str, path: Optional[Path] = None) -> dict:
+    """{model id: Scope} of ``family``'s scoped cluster pipelines (specs/scope.yaml).
+
+    An entry with an unknown status, no model, or a descriptive one with no
+    seeds is ignored: dropping an entry can only put a cell back in the counts.
+    """
+    import yaml
+
+    path = SCOPE_SPEC if path is None else Path(path)
+    if not path.exists():
+        return {}
+    spec = yaml.safe_load(path.read_text()) or {}
+    out = {}
+    for e in spec.get(family) or []:
+        if not isinstance(e, dict) or e.get("pipeline", "cluster") != "cluster":
+            continue
+        status, model = e.get("status"), e.get("model")
+        seeds = tuple(str(s) for s in e.get("seeds") or ())
+        if not model or status not in SCOPE_STATUSES or (status == "descriptive" and not seeds):
+            continue
+        out[model] = Scope(model, status, seeds, str(e.get("label") or "by design").strip(),
+                           " ".join(str(e.get("reason") or "").split()))
+    return out
+
 
 def _f(v) -> Optional[float]:
     return float(v) if v not in ("", None) else None
@@ -244,6 +284,7 @@ class Choice:
     n_family: int = 0      # the family's seed count at this window
     sources: tuple = ()    # fixed_source of the ranked runs (fixed protocol)
     reason: str = ""       # why no k was chosen
+    scope: str = ""        # specs/scope.yaml's label: no k, by design
 
     @property
     def partial(self) -> bool:
@@ -252,6 +293,8 @@ class Choice:
 
     def tag(self) -> str:
         """What the per-cell table prints after the best-k value."""
+        if self.scope:
+            return self.scope
         if self.k is None:
             return f"no k: {self.reason}"
         parts = [f"k={self.k}"]
@@ -305,6 +348,11 @@ class Board:
     # Models with cluster runs, or planned ones (CLUSTERED) still to come.
     clusterable: frozenset = field(default_factory=frozenset)
     sweeps: dict = field(default_factory=dict)  # {(dataset, model): {k: {seed: metrics}}}
+    scope: dict = field(default_factory=dict)   # {model: Scope}, specs/scope.yaml
+
+    def scoped(self, cell, pipe) -> Optional[Scope]:
+        """The Scope that takes this cluster pipeline out of the comparison, if any."""
+        return self.scope.get(cell[1]) if pipe in (K1, BEST) else None
 
     def complete(self, cell, pipe) -> bool:
         """Every seed of the family, and for the best k a finished sweep."""
@@ -317,11 +365,14 @@ class Board:
         """Whether the pipeline exists for this model (ran, or is planned to)."""
         if cell[1] in DETERMINISTIC:
             return pipe in (MV, PC)
+        if self.scoped(cell, pipe):
+            return False
         return pipe in (MV, PC) or cell[1] in self.clusterable
 
 
 def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
-          planned: tuple = (), choices: Optional[dict] = None) -> Board:
+          planned: tuple = (), choices: Optional[dict] = None,
+          scope: Optional[dict] = None) -> Board:
     """The Board of seed_values' output under ``protocol``.
 
     ``seeds`` keeps only those seeds (the descriptive trained-seed row); the
@@ -330,7 +381,11 @@ def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
     yet still counts as pending there. ``choices`` reuses another board's
     chosen k per cell instead of choosing again -- the descriptive row takes
     the pooled cell's k, so no table names two best k's for one cell.
+    ``scope`` (load_scope) names the models whose cluster pipelines are out
+    of the comparison by design: no k is chosen for them, and applies() is
+    False for their k = 1 and best k, so nothing counts them as pending.
     """
+    scope = dict(scope or {})
     if protocol not in PROTOCOLS:
         raise ValueError(f"unknown cluster protocol {protocol!r}")
     family_seeds = set().union(*(set(s) for s in values.values())) if values else set()
@@ -352,7 +407,10 @@ def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
     for cell, ks in by_cell_k.items():
         if 1 in ks:
             cells[cell][K1] = ks[1]
-        if choices is None:
+        if cell[1] in scope:
+            choice = Choice(None, grid=grid, n_family=len(family_seeds),
+                            reason=scope[cell[1]].label, scope=scope[cell[1]].label)
+        elif choices is None:
             choice = choose_k(ks, protocol, grid, len(family_seeds))
         else:
             choice = choices.get(cell) or Choice(None, reason="no k for the pooled cell")
@@ -362,7 +420,29 @@ def build(values: dict, protocol: str = "fixed", seeds: Optional[set] = None,
     clusterable = (frozenset(key[2] for key in values if isinstance(key[0], tuple))
                    | frozenset(planned))
     return Board(dict(cells), chosen, tuple(sorted(family_seeds)), grid, protocol,
-                 clusterable, dict(by_cell_k))
+                 clusterable, dict(by_cell_k), scope)
+
+
+def descriptive_board(values: dict, protocol: str, scope: Scope) -> Board:
+    """A descriptive-scope model's board at its scope seeds, k chosen on those seeds."""
+    return build(values, protocol, seeds=set(scope.seeds))
+
+
+def scope_note(scope: dict, model_label: Callable = str) -> Optional[str]:
+    """The notes line naming the family's scoped cluster pipelines, or None."""
+    if not scope:
+        return None
+    parts = []
+    for m, sc in scope.items():
+        if sc.status == "descriptive":
+            parts.append(f"{model_label(m)} is clustered at seed {', '.join(sc.seeds)} only: "
+                         "its cluster columns point to a descriptive row at that seed, "
+                         "against the multivariate and per-channel values of the same "
+                         "seed, unmarked; other seeds that exist are not ranked")
+        else:
+            parts.append(f"{model_label(m)} is not clustered ({sc.reason})")
+    return ("- By design, not pending (specs/scope.yaml), and never counted or tested: "
+            + "; ".join(parts))
 
 
 def pipelines(values: dict, protocol: str = "fixed") -> tuple:
@@ -554,7 +634,7 @@ def variant(board: Board, fn: Callable) -> Board:
                 new[pipe] = v
         cells[cell] = new
     return Board(cells, board.choices, board.seeds, board.grid, board.protocol,
-                 board.clusterable, board.sweeps)
+                 board.clusterable, board.sweeps, board.scope)
 
 
 def skill_variant(board: Board) -> Board:
@@ -638,24 +718,28 @@ def render(runs_csv: Path, family: str, setting: tuple,
            model_rank: Callable = lambda m: m,
            bands_csv: Optional[Path] = None,
            title: str = "Paradigm Comparison",
-           models: Optional[Collection[str]] = None) -> str:
+           models: Optional[Collection[str]] = None,
+           scope: Optional[dict] = None) -> str:
     """The section's markdown, or "" when no two paradigms share a cell.
 
     ``bands_csv`` (default: bands.csv beside runs_csv) feeds the band-level
     sensitivity rows; without it they are left out and the note says so.
     ``models`` keeps only those model ids, planned ones included: the value
     gate re-counts a frozen snapshot's rows over the models it counted
-    (specs/gate.yaml held_elsewhere). None keeps every model.
+    (specs/gate.yaml held_elsewhere). None keeps every model. ``scope``
+    defaults to the family's specs/scope.yaml entries (load_scope).
     """
     seq_len, pred_len = setting
     values = seed_values(runs_csv, family, seq_len, pred_len)
     planned = CLUSTERED.get(family, ())
+    scope = load_scope(family) if scope is None else scope
     if models is not None:
         keep = set(models)
         values = {key: v for key, v in values.items() if key[2] in keep}
         planned = tuple(m for m in planned if m in keep)
-    board = build(values, "fixed", planned=planned)
-    batch = build(values, "batch", planned=planned)
+        scope = {m: sc for m, sc in scope.items() if m in keep}
+    board = build(values, "fixed", planned=planned, scope=scope)
+    batch = build(values, "batch", planned=planned, scope=scope)
     cells = board.cells
     if not any(len(p) > 1 for p in cells.values()):
         return ""
@@ -712,6 +796,10 @@ def render(runs_csv: Path, family: str, setting: tuple,
             "pooled cell's best k"
             + ("; a cell where no seed of any paradigm trains is flagged, and the "
                "scoreboard is also given without it" if flagged else ""))
+    note = scope_note({m: sc for m, sc in scope.items() if any(c[1] == m for c in order)},
+                      model_label)
+    if note:
+        out.append(note)
     out.append("")
 
     # ------------------------------------------------------------ scoreboard
@@ -822,6 +910,12 @@ def render(runs_csv: Path, family: str, setting: tuple,
         for c, s in alive.items():
             if frozenset(s) == seeds:
                 described[c] = sub
+    # A descriptive-scope model's row at its scope seeds, k chosen on them.
+    desc = {m: {prot: descriptive_board(values, prot, sc) for prot in PROTOCOLS}
+            for m, sc in scope.items() if sc.status == "descriptive"}
+    for c in order:
+        if c[1] in desc:
+            described[c] = desc[c[1]]["fixed"]
 
     section = 3 if rows else 2
     for metric, name in METRICS:
@@ -852,11 +946,16 @@ def render(runs_csv: Path, family: str, setting: tuple,
         section += 1
         for c in clustered:
             row = [dataset_label(c[0]), model_label(c[1])]
-            for b in (board, batch):
+            boards, marks = (board, batch), True
+            if c[1] in desc:
+                # At its scope seeds, unmarked: one seed has no tie band.
+                boards, marks = (desc[c[1]]["fixed"], desc[c[1]]["batch"]), False
+                row[1] += f", seed {', '.join(scope[c[1]].seeds)} only (descriptive)"
+            for b in boards:
                 choice = b.choices.get(c)
                 row.append(choice.tag() if choice else "-")
                 for metric, _ in METRICS:
-                    row.append(marked_delta(b, c, K1, BEST, metric))
+                    row.append(marked_delta(b, c, K1, BEST, metric, marks=marks))
             out.append("| " + " | ".join(row) + " |")
 
     # --------------------------------------------------- band sensitivity per cell
@@ -886,7 +985,7 @@ def render(runs_csv: Path, family: str, setting: tuple,
                 share = _share(bands, c, drop)
                 # The failed-band variant is a per-channel repair: the cluster
                 # pipelines keep every band in it.
-                cluster = kind != "failed per-channel"
+                cluster = kind != "failed per-channel" and c[1] not in scope
                 out.append(
                     f"| {dataset_label(c[0])} | {model_label(c[1])} | "
                     f"{', '.join(_band_label(names, c[0], ch) for ch in drop)} ({kind}) | "
@@ -946,6 +1045,15 @@ def _cell_row(board: Board, c: tuple, metric: str, dataset_label, model_label,
     def value(pipe):
         if det and pipe in (K1, BEST):
             return "n/a (per-band)"
+        sc = None if descriptive else board.scoped(c, pipe)
+        if sc is not None:
+            if sc.status == "descriptive":
+                return f"{sc.label} (row below)"
+            if pipe == K1 and pipe in p:
+                v = [x[metric] for x in p[pipe].values()]
+                return (f"{sc.label}; k=1 control {statistics.fmean(v):.4f} "
+                        f"(seed {', '.join(p[pipe])})")
+            return sc.label
         if pipe == BEST and c in board.choices and board.choices[c].k is None:
             return f"- ({board.choices[c].tag()})"
         if pipe not in p:

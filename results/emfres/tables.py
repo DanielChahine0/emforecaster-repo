@@ -250,10 +250,11 @@ def validation_choices(runs_csv: Path, family: str, er) -> dict:
     from . import paradigms as PG
 
     values = PG.seed_values(runs_csv, family, *er.ULTIMATE_SETTING)
+    scope = PG.load_scope(family)
     out = {}
     for protocol in PG.PROTOCOLS:
         picked: dict = {}
-        board = PG.build(values, protocol)
+        board = PG.build(values, protocol, scope=scope)
         for (dataset, model), choice in sorted(board.choices.items(),
                                                key=lambda kv: er.model_rank(kv[0][1])):
             picked.setdefault((er.model_label(model), dataset), choice)
@@ -348,12 +349,18 @@ def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
     from . import paradigms as PG
 
     blocks = []
+    scope = PG.load_scope(family)
+    desc = {}
     for seq_len, pred_len in settings:
         values = PG.seed_values(runs_csv, family, seq_len, pred_len)
-        board = PG.build(values, "fixed")
-        batch = PG.build(values, "batch")
+        board = PG.build(values, "fixed", scope=scope)
+        batch = PG.build(values, "batch", scope=scope)
         if board.sweeps:
             blocks.append(((seq_len, pred_len), board, batch))
+            # A descriptive-scope model's rows at its scope seeds (specs/scope.yaml).
+            for m, sc in scope.items():
+                if sc.status == "descriptive":
+                    desc[((seq_len, pred_len), m)] = PG.descriptive_board(values, "fixed", sc)
     if not blocks:
         return ""
 
@@ -377,12 +384,14 @@ def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
              "one model per band, no gradient path to cluster)",
            "- Values: the fixed train-mean membership protocol (`sl_test_fixed/*`), mean "
            "over seeds ± their sample standard deviation; (n=…) marks a cell with fewer "
-           "seeds than the family's, still training",
+           "seeds than the family's",
            "- Val k: the k with the lowest seed-mean `sl_val_fixed/loss`, ranked over the "
            "k values that have every seed of the sweep (paradigms.choose_k, the same "
            "choice as the Paradigm Comparison); its cell is <u>underlined</u> once the "
            "choice is final, every k of the sweep with every seed of the family. Until "
            "then nothing is underlined and Val k says what the choice was ranked over",
+           *([note] if (note := PG.scope_note(
+               {m: sc for m, sc in scope.items() if m in models}, model_label)) else []),
            "- Oracle k: the k with the lowest test value. It is chosen on the test split, "
            "so it is an upper bound, reported only to show how far validation lands from "
            "it; nothing here is selected on it",
@@ -409,24 +418,30 @@ def render_ccm_sweep(runs_csv: Path, family: str, settings, *,
                         + " | Val k | Δ vs k=1 | Δ vs plain | Oracle k |",
                         "|:---|---:|" + "---:|" * len(ks) + ":---|---:|---:|:---|"]
                 for c in cells:
-                    sweep = board.sweeps[c]
-                    choice = board.choices[c]
-                    row = [model_label(c[1]),
-                           cell_txt(board.cells.get(c, {}).get(PG.MV), metric, n_family)]
+                    b, n_fam, marks = board, n_family, True
+                    label = model_label(c[1])
+                    if ((seq_len, pred_len), c[1]) in desc:
+                        # Its scope seeds only, unmarked: one seed has no tie band.
+                        b = desc[((seq_len, pred_len), c[1])]
+                        n_fam, marks = len(b.seeds), False
+                        label += f", seed {', '.join(b.seeds)} only (descriptive)"
+                    sweep = b.sweeps.get(c, {})
+                    choice = b.choices[c]
+                    row = [label, cell_txt(b.cells.get(c, {}).get(PG.MV), metric, n_fam)]
                     # Underlined only once the choice is final (the paradigm
                     # comparison's complete best-k cell): a k chosen while the
                     # sweep still trains can move, and its own cell can be short.
-                    final = board.complete(c, PG.BEST)
+                    final = marks and b.complete(c, PG.BEST)
                     for k in ks:
-                        txt = cell_txt(sweep.get(k), metric, n_family)
+                        txt = cell_txt(sweep.get(k), metric, n_fam)
                         row.append(f"<u>{txt}</u>" if final and k == choice.k else txt)
                     scored = {k: statistics.fmean(v[metric] for v in s.values())
                               for k, s in sweep.items()
                               if set(s) == set(choice.seeds) and s}
                     oracle = min(scored, key=lambda kk: (scored[kk], kk)) if scored else None
                     row.append(choice.tag())
-                    row.append(PG.marked_delta(board, c, PG.K1, PG.BEST, metric))
-                    row.append(PG.marked_delta(board, c, PG.MV, PG.BEST, metric))
+                    row.append(PG.marked_delta(b, c, PG.K1, PG.BEST, metric, marks=marks))
+                    row.append(PG.marked_delta(b, c, PG.MV, PG.BEST, metric, marks=marks))
                     row.append(MISSING if oracle is None
                                else ("= val k" if oracle == choice.k else f"{oracle} (oracle)"))
                     out.append("| " + " | ".join(row) + " |")

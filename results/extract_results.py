@@ -194,8 +194,9 @@ def shortfall(cell: Optional[Cell], key: tuple, targets: Optional[dict]) -> str:
 
 # The legend for shortfall's marker, added wherever one is printed.
 SHORT_NOTE = ("`(n=…)` = a cell with fewer complete seeds than the other cells of its "
-              "dataset and window, still training: its mean is over the runs that "
-              "finished, and it is never ranked, marked or averaged with complete cells.")
+              "dataset and window -- still training, or seed-limited by design "
+              "(specs/scope.yaml): its mean is over the runs that finished, and it is "
+              "never ranked, marked or averaged with complete cells.")
 
 # The timed columns. A cell whose runs overlapped another user's process on
 # the GPU (Cell.n_foreign, from specs/contention.yaml) carries FOREIGN_MARK
@@ -395,8 +396,9 @@ def model_variants(keys, models) -> list[tuple[str, Optional[int]]]:
 # The pooled epoch-cost table's marker for a row that pools a cell still
 # training, added to the table's note wherever one is printed.
 POOLED_SHORT_NOTE = ("`(n=c/C cells)`: c of the C cells the row pools have every seed; "
-                     "the others are still training, and the runs of theirs that "
-                     "finished are pooled in, so the mean is not final.")
+                     "the others are short of seeds (still training, or by design: "
+                     "specs/scope.yaml), and the runs of theirs that finished are "
+                     "pooled in.")
 
 
 def pooled_shortfall(runs, cells: Optional[dict], targets: Optional[dict]) -> str:

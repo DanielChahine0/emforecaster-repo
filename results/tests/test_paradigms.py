@@ -279,9 +279,70 @@ def test_the_descriptive_row_keeps_the_pooled_cells_k(tmp_path):
                          mse=0.5, lookback=1.0))
         rows.append(_run("cluster", s, 0.4, model="RF_EMF_Transformer", k=2, val_loss=0.30,
                          mse=0.5, lookback=1.0))
-    md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96))
+    # No scope: specs/scope.yaml leaves the EMF Transformer unclustered.
+    md = paradigms.render(_csv(tmp_path, rows), "emf", (336, 96), scope={})
     described = [line for line in md.splitlines() if "only (descriptive)" in line]
     assert described and all("(k=2, sidecar" in line for line in described)
+
+
+# ------------------------------------------------------------ scope by design
+
+def test_the_scope_spec_declares_the_emf_exceptions():
+    emf = paradigms.load_scope("emf")
+    assert emf["EMForecaster"].status == "descriptive"
+    assert emf["EMForecaster"].seeds == ("69421",)
+    assert emf["RF_EMF_Transformer"].status == "not_run"
+    assert paradigms.load_scope("voip") == {}
+
+
+def test_a_malformed_scope_entry_is_ignored(tmp_path):
+    spec = tmp_path / "scope.yaml"
+    spec.write_text("emf:\n"
+                    "  - {model: A, status: descriptive}\n"          # no seeds
+                    "  - {model: B, status: later}\n"                # unknown status
+                    "  - {status: not_run}\n"                        # no model
+                    "  - {model: C, status: not_run, label: gone}\n")
+    assert list(paradigms.load_scope("emf", spec)) == ["C"]
+    assert paradigms.load_scope("emf", tmp_path / "missing.yaml") == {}
+
+
+def _single_seed_sweep():
+    """EMForecaster at every seed jointly and per channel, clustered at 69421 only."""
+    rows = []
+    for s in SEEDS:
+        rows.append(_run("multivariate", s, 0.40, model="EMForecaster"))
+        rows.append(_run("perchannel", s, 0.41, model="EMForecaster", channel=0))
+    rows.append(_run("cluster", 69421, 0.40, model="EMForecaster", k=1, val_loss=0.5))
+    rows.append(_run("cluster", 69421, 0.38, model="EMForecaster", k=2, val_loss=0.3))
+    return rows
+
+
+def test_a_scoped_cluster_pipeline_is_final_not_pending(tmp_path):
+    values = _values(tmp_path, _single_seed_sweep())
+    order = [("ed2022", "EMForecaster")]
+    open_board = paradigms.build(values, planned=("EMForecaster",))
+    assert paradigms.tally(open_board, K1, BEST, "mae", order)["pending"] == 1
+    scope = {"EMForecaster": paradigms.Scope("EMForecaster", "descriptive", ("69421",),
+                                             "seed 69421 only, by design")}
+    board = paradigms.build(values, planned=("EMForecaster",), scope=scope)
+    for base, chal in ((MV, K1), (K1, BEST), (MV, BEST)):
+        t = paradigms.tally(board, base, chal, "mae", order)
+        assert (t["pending"], t["cells"]) == (0, 0)
+    assert paradigms.tally(board, MV, PC, "mae", order)["cells"] == 1
+    assert BEST not in board.cells[order[0]]
+    assert board.choices[order[0]].tag() == "seed 69421 only, by design"
+
+
+def test_a_descriptive_scope_gets_its_own_row_at_its_seeds(tmp_path):
+    scope = {"EMForecaster": paradigms.Scope("EMForecaster", "descriptive", ("69421",),
+                                             "seed 69421 only, by design")}
+    md = paradigms.render(_csv(tmp_path, _single_seed_sweep()), "emf", (336, 96),
+                          scope=scope)
+    assert "By design, not pending (specs/scope.yaml)" in md
+    assert "seed 69421 only, by design (row below)" in md
+    row = [line for line in md.splitlines()
+           if "EMForecaster, seed 69421 only (descriptive)" in line and "| 1/1/1/1 |" in line]
+    assert row and all("(k=2, sidecar)" in line and "**" not in line for line in row)
 
 
 def test_a_cell_where_no_seed_trains_is_flagged_and_left_out_once(tmp_path):

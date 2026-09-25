@@ -37,7 +37,7 @@ so extracting mid-sweep never publishes half a run.
 | Path | What lives here | Tracked |
 | :--- | :--- | :--- |
 | `emfres/` | All the code. One flat package. | yes |
-| `specs/` | Declared run exclusions, provenance rules and the gate's expected changes, with the reason for each; the solo timing pass; the foreign GPU windows of the 2026-09-24 sweeps | yes |
+| `specs/` | Declared run exclusions, provenance rules, the cells left out by design (`scope.yaml`) and the gate's expected changes, with the reason for each; the solo timing pass; the foreign GPU windows of the 2026-09-24 sweeps | yes |
 | `frames/` | `runs.csv`, `cells.csv`, `bands.csv`, `timing.csv`, `MANIFEST.json` — the numeric API | yes |
 | `tables/` | Generated markdown, one file per section, plus CSV twins | yes |
 | `notes/` | Hand-written prose. Never generated. | yes |
