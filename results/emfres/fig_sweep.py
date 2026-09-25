@@ -70,7 +70,9 @@ def _unswept_note(corpus: FD.Corpus) -> str | None:
 
 
 def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> list:
-    models = [m for m in corpus.models() if any(c[1] == m for c in corpus.board.sweeps)]
+    # A model not clustered by design (specs/scope.yaml) has no sweep to draw.
+    models = [m for m in corpus.models() if any(c[1] == m for c in corpus.board.sweeps)
+              and not (m in corpus.board.scope and corpus.described(m) is None)]
     if not models:
         return []
     datasets = corpus.datasets
@@ -132,8 +134,10 @@ def fig_k_gain(corpus: FD.Corpus, metric: str, style, root: Path, formats) -> li
                         zorder=3)
         partial_any |= partial
         flagged = model in flagged_models
+        sc = corpus.board.scope.get(model)
         panel_title(ax, model_name(model) + (f" {DAGGER}" if flagged else "")
-                    + (" · partial" if partial else ""), style)
+                    + (f" · seed {', '.join(sc.seeds)}" if sc is not None
+                       else " · partial" if partial else ""), style)
         if partial or flagged:
             ax.title.set_color(INK_MUTED)
     for idx in range(len(models), nrow * ncol):

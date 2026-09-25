@@ -45,13 +45,32 @@ DAGGER = "†"
 FLAG_NOTE = f"{DAGGER} no seed trains in any paradigm"
 
 
-def na_note(models) -> str | None:
-    """The footnote for the cluster lanes marked n/a, if any model has one."""
+def scope_lane(sc: PG.Scope) -> str:
+    """The short lane label of a cluster pipeline scoped out by design."""
+    if sc.status == "descriptive":
+        return f"{len(sc.seeds)} seed" + ("s" if len(sc.seeds) > 1 else "")
+    return "not run"
+
+
+def na_note(models, corpora=()) -> str | None:
+    """The footnote for the cluster lanes marked n/a, or out by design
+    (specs/scope.yaml), if any model has one."""
+    parts = []
     names = [model_name(m) for m in models if m in PG.DETERMINISTIC]
-    if not names:
-        return None
-    verb = "is" if len(names) == 1 else "are"
-    return f"n/a: {' and '.join(names)} {verb} per-band by construction, no cluster pipeline"
+    if names:
+        verb = "is" if len(names) == 1 else "are"
+        parts.append(f"n/a: {' and '.join(names)} {verb} per-band by construction, "
+                     "no cluster pipeline")
+    scope = {}
+    for c in corpora:
+        scope.update({m: sc for m, sc in c.board.scope.items() if m in models})
+    for m, sc in scope.items():
+        if sc.status == "descriptive":
+            parts.append(f"{scope_lane(sc)}: {model_name(m)} clustered at seed "
+                         f"{', '.join(sc.seeds)} only, by design (tables/paradigms.md)")
+        else:
+            parts.append(f"not run: {model_name(m)} not clustered, by design")
+    return "; ".join(parts) or None
 
 
 def _seed_span(corpus: FD.Corpus) -> str:
@@ -125,7 +144,7 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
             means.append(max(vals) if per_seed else m.mean)
         y = y0 + LANE["cluster"]
         k1 = best = None
-        if model not in PG.DETERMINISTIC:
+        if model not in PG.DETERMINISTIC and not corpus.board.scoped(cell, PG.K1):
             k1, best = get(cell, PG.K1), get(cell, PG.BEST)
         # The marks a lane label names (the k = 1 dot, the diamond and the
         # hairline between them); their seed ticks are obstacles like any mark.
@@ -157,11 +176,13 @@ def dot_panel(ax, corpus: FD.Corpus, dataset: str, models: list, metric, style,
             # Nothing to draw in the lane: say why, right of the row's means
             # (of its seeds, where each seed is a mark). ARIMA's is not "not
             # run yet": it has no cluster pipeline to run.
-            if means and (model in PG.DETERMINISTIC or corpus.board.applies(cell, PG.BEST)):
+            sc = corpus.board.scoped(cell, PG.BEST)
+            if means and (model in PG.DETERMINISTIC or sc is not None
+                          or corpus.board.applies(cell, PG.BEST)):
                 x = max(means)
-                labels.append(lane_label(
-                    ax, "n/a" if model in PG.DETERMINISTIC else "pending", y, x, x, x,
-                    color=INK_MUTED, **lane_kw))
+                text = ("n/a" if model in PG.DETERMINISTIC
+                        else scope_lane(sc) if sc is not None else "pending")
+                labels.append(lane_label(ax, text, y, x, x, x, color=INK_MUTED, **lane_kw))
             continue
         if per_seed or not k_labels:
             continue
@@ -252,7 +273,7 @@ def fig_dots(corpora: list, metric: str, style, root: Path, formats, *,
     for ax, texts in labels.items():
         settle(ax, texts, style)
     xlabel(fig, axes[-1], METRIC_NAME[metric], style)
-    footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models)], style)
+    footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models, corpora)], style)
     return write(fig, root, group=family, subject="dots",
                  configs=[c.window for c in corpora], metric=metric, formats=formats)
 
@@ -465,8 +486,10 @@ def fig_scoreboard(corpora: list, style, root: Path, formats) -> list:
                         fontsize=style.context * 0.9, color=INK_MUTED)
     handles = [Patch(facecolor=VERDIGRIS, label="Challenger better"),
                Patch(facecolor=MUTED_COLOR, label="Tie"),
-               Patch(facecolor=BURNT_PEACH, label="Baseline better"),
-               Patch(facecolor=SURFACE, edgecolor=INK_MUTED, hatch="////", label="Pending")]
+               Patch(facecolor=BURNT_PEACH, label="Baseline better")]
+    if any(t["pending"] for _, rows in blocks for m, _ in PG.METRICS for _, t, _ in rows[m]):
+        handles.append(Patch(facecolor=SURFACE, edgecolor=INK_MUTED, hatch="////",
+                             label="Pending"))
     title(fig, "Scoreboard", style, "cells won by the challenger, tied within seed noise, "
                                     "or won by the baseline · Wilcoxon p")
     legend(fig, handles, style, y=1 - 0.24 / height)
@@ -532,7 +555,7 @@ def fig_seed_skill(corpora: list, style, root: Path, formats, *, family: str) ->
             ignore=(rule,), fontsize=style.context * 0.95, color=label_color(BURNT_PEACH),
             zorder=7)
     xlabel(fig, axes[-1], "Skill (1 − MSE / lookback-mean MSE)", style)
-    footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models)], style)
+    footnotes(fig, [FLAG_NOTE if flagged_any else None, na_note(models, corpora)], style)
     return write(fig, root, group=family, subject="seed-skill",
                  configs=[c.window for c in corpora], formats=formats)
 

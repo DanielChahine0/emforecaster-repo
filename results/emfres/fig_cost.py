@@ -289,7 +289,7 @@ def fig_calibration(corpora: list, runs_csv: Path, style, root: Path, formats, *
           f"{fam} · {windows} · conformal, α = 0.1 (target dashed) · per-channel coverage")
     handles = paradigm_handles(style, (PG.MV, PG.PC, PG.K1, PG.BEST), partial=partial)
     legend(fig, handles, style, y=1 - 0.24 / height)
-    notes = [FLAG_NOTE if flagged_any else None, na_note(models)]
+    notes = [FLAG_NOTE if flagged_any else None, na_note(models, corpora)]
     layout(fig, style, top=0.86, bottom=0.5 if any(notes) else 0.42, left=0.13)
     for ax, texts in labels.items():
         settle(ax, texts, style)

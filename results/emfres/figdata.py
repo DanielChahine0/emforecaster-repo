@@ -75,6 +75,13 @@ class Corpus:
     def n_family(self) -> int:
         return len(self.board.seeds)
 
+    def described(self, model: str, protocol: str = "fixed") -> Optional[PG.Board]:
+        """A descriptive-scope model's board at its scope seeds (specs/scope.yaml)."""
+        sc = self.board.scope.get(model)
+        if sc is None or sc.status != "descriptive":
+            return None
+        return PG.descriptive_board(self.values, protocol, sc)
+
 
 def load(runs_csv: Path, family: str, window: tuple,
          dataset_rank: Callable = lambda d: d,
@@ -85,8 +92,9 @@ def load(runs_csv: Path, family: str, window: tuple,
     if not values:
         return None
     planned = PG.CLUSTERED.get(family, ())
-    board = PG.build(values, "fixed", planned=planned)
-    batch = PG.build(values, "batch", planned=planned)
+    scope = PG.load_scope(family)
+    board = PG.build(values, "fixed", planned=planned, scope=scope)
+    batch = PG.build(values, "batch", planned=planned, scope=scope)
     order = sorted(board.cells, key=lambda c: (dataset_rank(c[0]), model_rank(c[1])))
     flagged = frozenset(c for c in order if PG.does_not_train(board, c))
     return Corpus(family, tuple(window), values, board, batch, order, flagged)
@@ -135,7 +143,7 @@ def marks(corpus: Corpus, cell: tuple, pipe: str, metric: str,
     """
     board = corpus.board if board is None else board
     seeds = board.cells.get(cell, {}).get(pipe)
-    if not seeds:
+    if not seeds or board.scoped(cell, pipe):
         return None
     if metric == "skill":
         vals = {s: PG.skill_of(v) for s, v in seeds.items()}
@@ -197,7 +205,7 @@ def gaps(corpus: Corpus, base: str, chal: str, metric: str) -> list:
         if c[1] in PG.DETERMINISTIC:
             continue
         p = board.cells.get(c, {})
-        if base not in p or chal not in p:
+        if base not in p or chal not in p or board.scoped(c, base) or board.scoped(c, chal):
             continue
         r = PG.compare(p[base], p[chal], metric)
         if r is None or not r["a"]:
@@ -269,6 +277,13 @@ def k_profile(corpus: Corpus, cell: tuple, metric: str, protocol: str = "fixed")
     tables.render_ccm_sweep reports it.
     """
     board = corpus.board if protocol == "fixed" else corpus.batch
+    sc = board.scope.get(cell[1])
+    if sc is not None:
+        # Out of the comparison by design: a descriptive model's sweep at its
+        # scope seeds, a model not run none.
+        board = corpus.described(cell[1], protocol)
+        if board is None:
+            return None
     sweep = board.sweeps.get(cell)
     if not sweep or 1 not in sweep:
         return None
