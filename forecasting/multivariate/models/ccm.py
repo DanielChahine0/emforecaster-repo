@@ -362,8 +362,11 @@ class CCMForecaster(nn.Module):
         Ported verbatim from upstream's Exp_CCM.similarity_loss_batch (using
         the assigner's own concrete_bern): a concrete-Bernoulli relaxation of
         the cluster membership, a spectral-style term rewarding within-cluster
-        similarity and penalizing across-cluster similarity, plus an entropy
-        term that discourages an all-channels-in-one-cluster collapse.
+        similarity and penalizing across-cluster similarity, plus the mean row
+        entropy of the membership probabilities. The entropy term rewards
+        confident (near one-hot) rows, not balanced clusters, so it does not
+        guard against collapse: with non-negative similarities the whole loss
+        is lowest with every channel in one cluster (CCM audit S5, 2026-09-24).
         Weighted by cluster.beta in compute_aux_loss, and deliberately kept out
         of the reported loss and the early-stopping metric (see
         utils/models.py::compute_aux_loss).
