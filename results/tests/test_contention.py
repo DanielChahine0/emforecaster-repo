@@ -154,10 +154,110 @@ def test_the_spec_round_trips_and_carries_its_derivation():
 
 def test_the_committed_spec_loads_and_every_window_is_monitored():
     c = cli.spec_contention()
-    assert c is not None and c.windows and c.source == ".personal/ccm_gpu_contention.log"
-    for w in c.windows:
+    assert c is not None and c.windows
+    assert c.source.split("; ")[0] == ".personal/ccm_gpu_contention.log"
+    for w in list(c.windows) + list(c.shared):
         assert w.start < w.end
         assert c.monitored_seconds(w.start, w.end) == (w.end - w.start).total_seconds()
+
+
+# The ARIMA tail (.personal/run_tail_arima.sh): what an own process runs after
+# it, a line of card totals under each entry, a 15 s poll; it ran beside the
+# CCM sweep, whose log (GPU_LOG) marks its bands `own` as well.
+ARIMA_GPU_LOG = """\
+=== 2026-09-24 10:05:00 [arima-1] before the ARIMA bands
+  own     21, /repo/venv/bin/python, 1034 MiB (--setup cluster)
+  gpu: used, free, util = 1034 MiB, 31000 MiB, 98 %
+--- 2026-09-24 10:05:15 [arima-1] compute apps changed
+  own     21, /repo/venv/bin/python, 1034 MiB (--setup cluster)
+  own     51, /repo/venv/bin/python, 598 MiB (rf_emf_mv/arima)
+  FOREIGN 12, /other/venv/bin/python, 20932 MiB (user someone)
+  gpu: used, free, util = 22564 MiB, 9500 MiB, 99 %
+=== 2026-09-24 10:11:00 [arima-1] ARIMA bands done (driver exit 0)
+  own     21, /repo/venv/bin/python, 1034 MiB (--setup cluster)
+  FOREIGN 51, [No data], 598 MiB (user ?)
+  gpu: used, free, util = 1034 MiB, 31000 MiB, 98 %
+"""
+
+ARIMA_SWEEP_LOG = """\
+=== launch 2026-09-24 10:04:50 [arima-1] pid 1 (process group 1), JOBS=12 NICE=10
+=== start 2026-09-24 10:04:50 at commit abc, fingerprint bb6be0a379d9, JOBS=12
+=== ARIMA per-channel bands, 83 to train, 12 concurrent, without MPS, nice 10  2026-09-24 10:05:00
+=== DONE 2026-09-24 10:11:05  83 band(s)
+"""
+
+
+def test_the_arima_tails_log_reads_whole_with_its_notes_and_totals():
+    snaps = C.parse_gpu_log(ARIMA_GPU_LOG)
+    assert [s.unknown for s in snaps] == [False, False, False]
+    assert [len(s.own) for s in snaps] == [1, 2, 1]
+    assert snaps[1].foreign == [(12, "/other/venv/bin/python", 20932)]
+    # Band 51 exited while nvidia-smi listed it: not another user's process.
+    assert snaps[2].foreign == [] and snaps[2].own == [(21, "/repo/venv/bin/python", 1034)]
+    tail = C.derive(ARIMA_GPU_LOG, ARIMA_SWEEP_LOG, source="arima")
+    assert tail.monitored == [(T("10:05:00"), T("10:11:05"))]      # to its DONE line
+    assert tail.launches == [(T("10:05:00"), T("10:11:05"))]
+
+
+def test_two_launches_at_once_share_the_card_and_count_as_contended():
+    # The CCM sweep's log with no foreign entry: its own view of 10:05-10:11
+    # shows only `own` processes, the ARIMA bands among them.
+    quiet = "\n".join(l for l in GPU_LOG.splitlines() if "FOREIGN" not in l) + "\n"
+    ccm = C.derive(quiet, SWEEP_LOG, source="ccm")
+    assert ccm.windows == [] and ccm.overlap(T("10:06:00"), 120) == 0.0
+    both = C.combine([ccm, C.derive(ARIMA_GPU_LOG, ARIMA_SWEEP_LOG, source="arima")])
+    (s,) = both.shared
+    assert (s.start, s.end, s.launches) == (T("10:05:00"), T("10:11:05"), "arima + ccm")
+    assert both.overlap(T("10:06:00"), 120) == 1.0                 # inside it
+    assert both.overlap(T("10:10:00"), 240) == pytest.approx(65 / 240)
+    assert both.overlap(T("10:12:00"), 60) == 0.0                  # after it
+    assert C.flag(1, both.overlap(T("10:06:00"), 120)) == "foreign"
+    # Foreign and shared windows over the same seconds count them once: of
+    # 10:04-10:14, 10:05-10:14 is contended (shared 10:05-10:11:05, the other
+    # user's pid 12 from 10:05:15 in the ARIMA log, 12 and 13 from 10:10 in
+    # the sweep's), 540 of 600 s, where a sum would pass 1.
+    full = C.combine([C.derive(GPU_LOG, SWEEP_LOG, source="ccm"),
+                      C.derive(ARIMA_GPU_LOG, ARIMA_SWEEP_LOG, source="arima")])
+    assert full.foreign_seconds(T("10:04:00"), T("10:14:00")) == 540
+    assert full.overlap(T("10:04:00"), 600) == pytest.approx(0.9)
+    # The other user's pid 12 is in both logs: one process, not two.
+    w = [w for w in full.windows if w.start <= T("10:10:00") < w.end]
+    assert len(w) == 1 and w[0].processes == 2                     # pids 12 and 13
+    # One launcher's launches never overlap: no shared window from one log.
+    assert C.combine([ccm]).shared == []
+
+
+def test_a_derive_to_an_earlier_until_leaves_a_later_launch_out():
+    running = SWEEP_LOG.splitlines()[0] + "\n"
+    parts = [C.derive(GPU_LOG, running, until=T("10:04:00"), source="ccm"),
+             C.derive(ARIMA_GPU_LOG, ARIMA_SWEEP_LOG, until=T("10:04:00"), source="arima")]
+    early = C.combine(parts)
+    assert early.source == "ccm" and early.shared == [] and early.open
+    assert early.monitored == [(T("10:00:00"), T("10:04:00"))]
+    assert C.dump(early) == C.dump(C.derive(GPU_LOG, running, until=T("10:04:00"),
+                                            source="ccm"))
+    # A launch that ended after until was still running at it: the open last span.
+    mid = C.derive(ARIMA_GPU_LOG, ARIMA_SWEEP_LOG, until=T("10:08:00"))
+    assert mid.open and mid.monitored == [(T("10:05:00"), T("10:08:00"))]
+    # A killed launch whose relaunch came after until was running at it too.
+    gpu = GPU_LOG + "=== 2026-09-24 11:00:00 before q2 cluster\n"
+    sweep = (running + "=== start 2026-09-24 10:59:59 at commit abc, fingerprint x\n")
+    assert C.derive(gpu, sweep, until=T("10:30:00")).monitored == \
+        [(T("10:00:00"), T("10:30:00"))]
+
+
+def test_a_shared_window_round_trips_through_the_spec():
+    both = C.combine([C.derive(GPU_LOG, SWEEP_LOG, source="ccm"),
+                      C.derive(ARIMA_GPU_LOG, ARIMA_SWEEP_LOG, source="arima")])
+    text = C.dump(both)
+    assert "shared:\n  - {from: '2026-09-24 10:05:00', to: '2026-09-24 10:11:05', " \
+           "launches: 'arima + ccm'}" in text
+    back = C.loads(text)
+    assert back.shared == both.shared and back.windows == both.windows
+    assert back.overlap(T("10:04:00"), 600) == both.overlap(T("10:04:00"), 600)
+    assert "shared: []" in C.dump(C.Contention([], []))
+    # A spec written before `shared` existed loads with none.
+    assert C.loads(text.replace("shared:", "unused:")).shared == []
 
 
 def _log(started, seconds, concurrency, **extra):

@@ -13,10 +13,20 @@ this repo) or ``FOREIGN``.
 This module turns that log into the foreign windows (``derive``), which
 ``make.py contention`` writes to specs/contention.yaml so the frames never read
 the git-ignored .personal/, and gives every run a flag from its stamps and
-those windows (``flag``):
+those windows (``flag``).
+
+A third thing no log marks FOREIGN: another launch of this repo on the same
+card. The ARIMA part of the tail rerun (.personal/run_tail_arima.sh) ran
+beside the CCM sweep on 2026-09-24 from 20:45:27 to 20:52:18; each poller
+marks the other's processes ``own`` (their cwd is this repo too), and neither
+log records process groups. Each launcher's own log bounds its launches, so
+where the launches of two GPU logs overlap in time (``combine``), that stretch
+is a ``shared`` window, and a run's overlap counts it as it counts a foreign
+one:
 
 * ``concurrent``: its own grid trained several runs at once (concurrency > 1);
-* ``foreign``: its training window overlapped a foreign window;
+* ``foreign``: its training window overlapped a foreign window (another user's
+  process) or a shared one (another launch of this repo);
 * ``none``: neither is recorded -- concurrency 1 and no foreign process seen,
   or no GPU record at all (every run before 2026-09-24 10:38 but the solo
   timing pass of specs/timing.yaml, which found none);
@@ -40,7 +50,7 @@ card, not how hard it worked it.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
@@ -60,9 +70,19 @@ UNKNOWN = "?"
 _SNAPSHOT = re.compile(r"^(===|---) (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (.*)$")
 # One compute app under a header: "  FOREIGN 2243602, /path/python, 672 MiB".
 # The tail rerun's log (.personal/run_tail.sh) also marks its MPS server
-# `own-mps` and adds "(user <name>)" after a FOREIGN entry.
+# `own-mps` and adds "(user <name>)" after a FOREIGN entry; the ARIMA tail's
+# (.personal/run_tail_arima.sh) adds what an own process runs, "(--setup
+# cluster)" or "(rf_emf_mv/arima)".
 _APP = re.compile(r"^\s+(FOREIGN|own-mps|own)\s+(\d+),\s*(.*?),\s*(\d+)\s*MiB"
-                  r"(?:\s*\(user [^)]*\))?\s*$")
+                  r"(?:\s*\([^()]*\))*\s*$")
+# The ARIMA tail's line of card totals under each entry, "  gpu: used, free,
+# util = ...": not an app, so neither read nor a sign of a failed sample.
+_TOTALS = re.compile(r"^\s+gpu: ")
+# nvidia-smi's name for a process that exited while it was listing: its /proc
+# entry is gone, so the poller cannot see its cwd and marks it FOREIGN (the
+# ARIMA tail's log at 20:51:20 on 2026-09-24: one of its own bands, "(user
+# ?)"). It holds no memory for the interval the entry opens: not read.
+_EXITED = "[No data]"
 # The sweep log's own start and end lines (.personal/ccm_sweep.log). An ABORT
 # line is not an end: every ABORT comes before the poller starts, so an
 # aborted launch has no GPU entry to bound.
@@ -90,7 +110,8 @@ class Snapshot:
 
 
 def parse_gpu_log(text: str) -> list[Snapshot]:
-    """Every snapshot in a run_ccm_all.sh or run_tail.sh GPU log, in time order."""
+    """Every snapshot in a run_ccm_all.sh, run_tail.sh or run_tail_arima.sh GPU
+    log, in time order."""
     snaps: list[Snapshot] = []
     for line in text.splitlines():
         m = _SNAPSHOT.match(line)
@@ -100,13 +121,15 @@ def parse_gpu_log(text: str) -> list[Snapshot]:
             block = b.group(1) if b else re.sub(r"^before ", "", block)
             snaps.append(Snapshot(_time(m.group(2)), block, [], []))
             continue
-        if not line.strip() or not snaps:
+        if not line.strip() or not snaps or _TOTALS.match(line):
             continue
         a = _APP.match(line)
         if a is None:
             snaps[-1].unknown = True
             continue
         app = (int(a.group(2)), a.group(3), int(a.group(4)))
+        if app[1] == _EXITED:
+            continue
         (snaps[-1].foreign if a.group(1) == "FOREIGN" else snaps[-1].own).append(app)
     snaps.sort(key=lambda s: s.time)
     return snaps
@@ -139,6 +162,19 @@ class Window:
     end: datetime
     peak_mib: int = 0      # the largest foreign process seen in it
     processes: int = 0     # distinct foreign pids seen in it
+    # Those pids, so that two logs of one stretch (two launches side by side)
+    # count a process once; not written to the spec, empty when loaded from it.
+    pids: frozenset = field(default=frozenset(), compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class Shared:
+    """A stretch of wall time when launches of two GPU logs (two of this
+    repo's launchers) were running at once: each one's processes were on the
+    card beside the other's, which its log marks ``own``."""
+    start: datetime
+    end: datetime
+    launches: str = ""     # the two GPU logs, "a + b"
 
 
 def _merge(spans: list) -> list:
@@ -159,18 +195,31 @@ class Contention:
     source: str = ""
     observed_until: Optional[datetime] = None
     open: bool = False       # the last span had not ended when this was derived
+    shared: list = field(default_factory=list)   # Shared, merged (combine)
+    # Each launch's (start, end) from its first GPU entry: combine's input for
+    # `shared`; not written to the spec.
+    launches: list = field(default_factory=list)
+
+    def contended(self) -> list:
+        """The merged (start, end) stretches with another user's process
+        (``windows``) or another launch of this repo (``shared``) on the GPU."""
+        return _merge([(w.start, w.end) for w in self.windows]
+                      + [(s.start, s.end) for s in self.shared])
 
     def foreign_seconds(self, start: datetime, end: datetime) -> float:
-        return sum(max(0.0, (min(end, w.end) - max(start, w.start)).total_seconds())
-                   for w in self.windows)
+        """Seconds of [start, end) inside ``contended``: a foreign or a shared
+        window, each second counted once."""
+        return sum(max(0.0, (min(end, e) - max(start, s)).total_seconds())
+                   for s, e in self.contended())
 
     def monitored_seconds(self, start: datetime, end: datetime) -> float:
         return sum(max(0.0, (min(end, e) - max(start, s)).total_seconds())
                    for s, e in self.monitored)
 
     def overlap(self, started: Optional[datetime], seconds: Optional[float]) -> Optional[float]:
-        """The fraction of a run's training window with a foreign process seen,
-        or None when no part of it was monitored (or it has no window).
+        """The fraction of a run's training window with a foreign process or
+        another launch seen (``foreign_seconds``), or None when no part of it
+        was monitored (or it has no window).
 
         A lower bound where part of the window fell outside the monitored time.
         """
@@ -203,11 +252,21 @@ def derive(gpu_log: str, sweep_log: Optional[str] = None,
     running (default: its last snapshot); otherwise -- a sweep killed without
     a line -- its last snapshot. A snapshot whose apps did not parse leaves
     its interval out.
+
+    ``until`` also ends everything: nothing after it is read, and a span still
+    running at it (ended later, or not at all) is the open last span. So a
+    derive to a spec's observed_until gives that spec again once the logs go
+    on, a later launch in another log included.
     """
     snaps = parse_gpu_log(gpu_log)
+    if until is not None:
+        snaps = [s for s in snaps if s.time <= until]
     if not snaps:
         return Contention([], [], source)
     spans = sweep_spans(sweep_log) if sweep_log else [(snaps[0].time, None)]
+    if until is not None:
+        spans = [(s, e if e is not None and e <= until else None)
+                 for s, e in spans if s <= until]
     is_open = False
     bounded = []
     for i, (start, end) in enumerate(spans):
@@ -234,17 +293,49 @@ def derive(gpu_log: str, sweep_log: Optional[str] = None,
     windows = []
     for s, e in _merge([(s, e) for s, e, _ in foreign]):
         inside = [snap for fs, fe, snap in foreign if fs >= s and fe <= e]
+        pids = frozenset(a[0] for x in inside for a in x.foreign)
         windows.append(Window(s, e, max((a[2] for x in inside for a in x.foreign), default=0),
-                              len({a[0] for x in inside for a in x.foreign})))
+                              len(pids), pids))
     last = bounded[-1][1] if bounded else None
-    return Contention(_merge(monitored), windows, source, last, is_open)
+    launches = [(mine[0].time, end) for mine, end in bounded if end > mine[0].time]
+    return Contention(_merge(monitored), windows, source, last, is_open, launches=launches)
+
+
+def _shared(parts: list) -> list:
+    """Where launches of two different logs overlap in time, merged (Shared).
+
+    One launcher's own launches never overlap (each takes its lock), but two
+    launchers can: the CCM sweep and run_tail.sh cannot (the tail waits for
+    the sweep's lock), the CCM sweep and run_tail_arima.sh did. A launch spans
+    its first GPU entry to its end (derive), so the stretch is both launches
+    running, not both training every second of it: a flag it gives says the
+    time may be inflated, as a foreign window's does.
+    """
+    found = []
+    for i, a in enumerate(parts):
+        for b in parts[i + 1:]:
+            for a0, a1 in a.launches:
+                for b0, b1 in b.launches:
+                    s, e = max(a0, b0), min(a1, b1)
+                    if s < e:
+                        found.append((s, e, {a.source or "?", b.source or "?"}))
+    found += [(x.start, x.end, set(x.launches.split(" + "))) for p in parts for x in p.shared]
+    out: list = []
+    for s, e, names in sorted(found, key=lambda t: (t[0], t[1])):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e), out[-1][2] | names)
+        else:
+            out.append((s, e, set(names)))
+    return [Shared(s, e, " + ".join(sorted(names))) for s, e, names in out]
 
 
 def combine(parts: list) -> Contention:
-    """Several GPU logs' Contentions as one (the CCM sweep's and the tail rerun's).
+    """Several GPU logs' Contentions as one (the CCM sweep's and the tails').
 
-    The sweeps take one lock and never train side by side, but windows that
-    touch are merged all the same.
+    Windows that touch are merged, a pid seen in two logs counted once; where
+    two logs' launches ran at once, a ``shared`` window (_shared). ``source``
+    names the logs that monitored any time (a log whose entries all come after
+    ``until`` adds nothing).
     """
     parts = [p for p in parts if p is not None]
     if not parts:
@@ -253,14 +344,19 @@ def combine(parts: list) -> Contention:
     for w in sorted((w for p in parts for w in p.windows), key=lambda w: w.start):
         if windows and w.start <= windows[-1].end:
             last = windows[-1]
+            pids = last.pids | w.pids
+            n = (len(pids) if (last.pids or not last.processes) and (w.pids or not w.processes)
+                 else last.processes + w.processes)
             windows[-1] = Window(last.start, max(last.end, w.end),
-                                 max(last.peak_mib, w.peak_mib), last.processes + w.processes)
+                                 max(last.peak_mib, w.peak_mib), n, pids)
         else:
             windows.append(w)
     ends = [p.observed_until for p in parts if p.observed_until is not None]
     return Contention(_merge([m for p in parts for m in p.monitored]), windows,
-                      "; ".join(p.source for p in parts if p.source),
-                      max(ends) if ends else None, any(p.open for p in parts))
+                      "; ".join(p.source for p in parts if p.source and p.monitored),
+                      max(ends) if ends else None, any(p.open for p in parts),
+                      shared=_shared(parts),
+                      launches=[x for p in parts for x in p.launches])
 
 
 def flag(concurrency: Optional[int], overlap: Optional[float],
@@ -300,31 +396,36 @@ HEADER = """\
 # edit by hand. Rerun it once a sweep has ended (a DONE line in its sweep log
 # closes its last span) and commit the result with the frames it feeds.
 #
-# Where it came from. Two launchers append the GPU's compute apps (nvidia-smi
-# pid, process, memory) to a git-ignored log before each block and whenever
-# the set of processes changes on a 60 s poll: .personal/run_ccm_all.sh, the
-# CCM sweep, to .personal/ccm_gpu_contention.log, and .personal/run_tail.sh,
-# the rerun of the August per-channel bands, to .personal/tail_gpu_contention.log
-# (`source` names those that exist). Each entry is marked `own` (a python whose
-# cwd is this repo; `own-mps` for the tail's MPS server) or FOREIGN (anything
-# else on the card; `make.py contention` prints which executables those
-# were). When this file was first derived every FOREIGN entry was another
-# user's python job, a string of short jobs. This file copies what the frames
-# need from those logs.
+# Where it came from. Three launchers append the GPU's compute apps (nvidia-smi
+# pid, process, memory) to a git-ignored log before each block (the tails:
+# before training) and whenever the set of processes changes on a poll (60 s;
+# 15 s for the ARIMA tail): .personal/run_ccm_all.sh, the CCM sweep, to
+# .personal/ccm_gpu_contention.log; .personal/run_tail.sh, the rerun of the
+# August per-channel bands, to .personal/tail_gpu_contention.log; and
+# .personal/run_tail_arima.sh, that rerun's ARIMA bands, to
+# .personal/tail_arima_gpu.log (`source` names those with an entry by
+# `observed_until`). Each entry is marked `own` (a python whose cwd is this
+# repo; `own-mps` for the tail's MPS server) or FOREIGN (anything else on the
+# card; `make.py contention` prints which executables those were). When this
+# file was first derived every FOREIGN entry was another user's python job, a
+# string of short jobs. This file copies what the frames need from those logs.
 #
 # How it was derived. A sampled state holds until the next entry. `monitored`
-# is each sweep span of the launcher's own log (.personal/ccm_sweep.log,
-# .personal/tail_sweep.log: a `=== start` line to its STOP/DONE line) from its
-# first GPU entry on; a span still running ends at `observed_until`, when this
-# file was derived (`open: true`). `foreign` is the merged stretches whose
-# state listed a FOREIGN process, with the largest such process (MiB) and how
-# many distinct pids were seen in each. Edges are known to about a minute, a
+# is each launch of a launcher's own log (.personal/ccm_sweep.log,
+# .personal/tail_sweep.log, .personal/tail_arima.log: a `=== start` line to
+# its STOP/DONE line) from its first GPU entry on; a launch still running ends
+# at `observed_until`, when this file was derived (`open: true`). `foreign` is
+# the merged stretches whose state listed a FOREIGN process, with the largest
+# such process (MiB) and how many distinct pids were seen in each. `shared` is
+# where launches of two of those logs ran at once: another launch of this
+# repo was on the card, which each log marks `own` (the ARIMA tail beside the
+# CCM sweep, 2026-09-24 20:45 to 20:52). Edges are known to about a minute, a
 # foreign job that came and went between two polls is not seen, and memory
 # says nothing about how hard it used the card.
 #
 # How it is used. `make.py extract` gives every run its training window
 # [parameters/exp/time, + running_time] and writes to runs.csv:
-#   foreign_overlap  the fraction of that window inside `foreign`
+#   foreign_overlap  the fraction of that window inside `foreign` or `shared`
 #                    (blank: no part of it was monitored)
 #   contended        concurrent (its own grid trained several runs at once,
 #                    concurrency > 1), foreign (foreign_overlap > 0), both
@@ -348,8 +449,8 @@ HEADER = """\
 # MPS, .personal/PLAN.md E10).
 #
 # `cells` below is a summary for reading, not an input: per cell the runs
-# whose window was monitored, how many overlapped `foreign`, and the mean and
-# largest overlap fraction.
+# whose window was monitored, how many overlapped `foreign` or `shared`, and
+# the mean and largest overlap fraction.
 """
 
 
@@ -368,6 +469,8 @@ def dump(c: Contention, cells: Optional[list] = None) -> str:
     lines += block("foreign", [f"{{from: '{_fmt(w.start)}', to: '{_fmt(w.end)}', "
                                f"peak_mib: {w.peak_mib}, processes: {w.processes}}}"
                                for w in c.windows])
+    lines += block("shared", [f"{{from: '{_fmt(s.start)}', to: '{_fmt(s.end)}', "
+                              f"launches: '{s.launches}'}}" for s in c.shared])
     if cells is not None:
         lines += block("cells", ["{" + ", ".join(f"{k}: {v}" for k, v in row.items()) + "}"
                                  for row in cells])
@@ -392,7 +495,9 @@ def loads(text: str) -> Contention:
                         int(w.get("processes", 0))) for w in d.get("foreign") or []],
         source=str(d.get("source") or ""),
         observed_until=_time(until) if until else None,
-        open=bool(d.get("open")))
+        open=bool(d.get("open")),
+        shared=[Shared(_time(s["from"]), _time(s["to"]), str(s.get("launches") or ""))
+                for s in d.get("shared") or []])
 
 
 def summarise(c: Contention, runs: Iterable) -> list[dict]:

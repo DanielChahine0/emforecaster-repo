@@ -400,13 +400,18 @@ declare is fatal.
   which no run log records. The 2026-09-24 CCM sweep logged the GPU's
   compute apps, marked own or FOREIGN, on a 60 s poll
   (`.personal/ccm_gpu_contention.log`; the tail rerun of the August
-  per-channel bands writes `.personal/tail_gpu_contention.log`). Both are
-  git-ignored, so `make.py contention` (`emfres/contention.py`) derives from
-  them the monitored time and the windows with a FOREIGN process into
+  per-channel bands writes `.personal/tail_gpu_contention.log`, and its
+  ARIMA bands `.personal/tail_arima_gpu.log`). All are git-ignored, so
+  `make.py contention` (`emfres/contention.py`) derives from them the
+  monitored time and the windows with a FOREIGN process into
   `specs/contention.yaml`, whose header says how and what the log cannot
-  tell (edges to about a minute, memory not utilisation). `extract` holds
-  each run's training window `[parameters/exp/time, + running_time]`
-  against them: `foreign_overlap` is the fraction inside a window (blank
+  tell (edges to about a minute, memory not utilisation). A launch of this
+  repo is `own` in every log, so the ARIMA bands, trained beside the CCM
+  sweep from 20:45:27 to 20:52:18 on 2026-09-24, are no FOREIGN entry in
+  either; where two logs' launches overlap, the spec lists a `shared`
+  window instead. `extract` holds each run's training window
+  `[parameters/exp/time, + running_time]` against them: `foreign_overlap`
+  is the fraction inside a foreign or shared window (blank
   where no GPU record covers the run), and `contended` is `concurrent`,
   `foreign`, both, `none` (neither recorded), or `?` (not known:
   concurrency not stamped, the August per-channel bands and the series

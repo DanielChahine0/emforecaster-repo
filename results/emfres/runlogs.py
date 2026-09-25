@@ -151,8 +151,9 @@ class Run:
     # When the run started (parameters/exp/time, the machine's local clock);
     # its training window is [started, started + running_time].
     started: Optional[datetime] = None
-    # The fraction of that window with another user's process on the GPU
-    # (emfres.contention, specs/contention.yaml), None where no GPU record
+    # The fraction of that window with another user's process, or another
+    # launch of this repo, on the GPU (emfres.contention, specs/contention.yaml
+    # foreign and shared windows), None where no GPU record
     # covers it, and the run's contended flag (contention.flag): concurrent,
     # foreign, both, none, or ? for an unstamped concurrency. Filled in by
     # load_runs when it is given the windows, or read back from runs.csv.

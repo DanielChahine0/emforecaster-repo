@@ -396,8 +396,9 @@ class Cost:
     """Seed-mean training seconds of one pipeline; lo/hi bracket a per-channel estimate.
 
     ``foreign`` counts the seeds whose run trained while another user's
-    process was on the GPU (runs.csv foreign_overlap > 0, specs/
-    contention.yaml): their logged time may be inflated. Always 0 for the
+    process, or another launch of this repo, was on the GPU (runs.csv
+    foreign_overlap > 0, specs/contention.yaml foreign and shared windows):
+    their logged time may be inflated. Always 0 for the
     per-channel estimate, which is the solo pass's.
     """
     seconds: float

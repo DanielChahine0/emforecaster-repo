@@ -102,13 +102,16 @@ def spec_timing() -> dict:
 
 
 # The GPU logs the 2026-09-24 sweeps write, each beside the sweep log whose
-# start/STOP/DONE lines bound it: the CCM sweep (.personal/run_ccm_all.sh) and
-# the tail rerun of the August per-channel bands (.personal/run_tail.sh). Both
-# are git-ignored: `make.py contention` copies what the frames need into
+# start/STOP/DONE lines bound it: the CCM sweep (.personal/run_ccm_all.sh), the
+# tail rerun of the August per-channel bands (.personal/run_tail.sh), and its
+# ARIMA bands, trained beside the CCM sweep (.personal/run_tail_arima.sh; where
+# two of these ran at once, emfres.contention.combine gives a shared window).
+# All are git-ignored: `make.py contention` copies what the frames need into
 # specs/contention.yaml, skipping a pair whose GPU log does not exist yet.
 LOG_PAIRS = [
     (REPO / ".personal" / "ccm_gpu_contention.log", REPO / ".personal" / "ccm_sweep.log"),
     (REPO / ".personal" / "tail_gpu_contention.log", REPO / ".personal" / "tail_sweep.log"),
+    (REPO / ".personal" / "tail_arima_gpu.log", REPO / ".personal" / "tail_arima.log"),
 ]
 
 
@@ -219,10 +222,15 @@ def cmd_contention(args) -> int:
                if derived.monitored_seconds(r.started, r.started + timedelta(
                    seconds=r.running_time)) < r.running_time - 1]
     fg = sum((w.end - w.start).total_seconds() for w in derived.windows)
+    sh = sum((s.end - s.start).total_seconds() for s in derived.shared)
     mon = sum((e - s).total_seconds() for s, e in derived.monitored)
     print(f"monitored {mon / 3600:.2f} h, foreign processes on the GPU for {fg / 3600:.2f} h "
-          f"in {len(derived.windows)} windows; {len(flagged)} of {len(watched)} monitored "
-          f"runs overlap them" + (" (the last span is still open)" if derived.open else ""))
+          f"in {len(derived.windows)} windows, two launches of this repo at once for "
+          f"{sh / 3600:.2f} h in {len(derived.shared)} shared windows; {len(flagged)} of "
+          f"{len(watched)} monitored runs overlap them"
+          + (" (the last span is still open)" if derived.open else ""))
+    for s in derived.shared:
+        print(f"  shared {C._fmt(s.start)} to {C._fmt(s.end)}: {s.launches}")
     seen: dict = {}
     for g, _ in pairs:
         for snap in C.parse_gpu_log(g.read_text()):

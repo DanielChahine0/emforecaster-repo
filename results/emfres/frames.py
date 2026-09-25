@@ -169,7 +169,8 @@ RUN_FIELDS = [
     "concurrency",
     # Whether the running_time is contended (emfres.contention): the fraction
     # of the training window [exp/time, + running_time] with another user's
-    # process on the GPU (specs/contention.yaml; blank where no GPU record
+    # process, or another launch of this repo, on the GPU (specs/contention.yaml
+    # foreign and shared windows; blank where no GPU record
     # covers the run), and the flag -- concurrent (concurrency > 1), foreign
     # (an overlap), both ';'-joined, none, or ? (concurrency not stamped).
     "foreign_overlap", "contended",
@@ -206,7 +207,8 @@ CELL_FIELDS = [
     "code_versions", "code_equivalents",
     # The distinct contended tokens of the cell's runs (runs.csv contended),
     # and n_foreign, how many of its runs overlapped another user's GPU
-    # process: running_time and per_epoch may be inflated where it is > 0.
+    # process or another launch of this repo: running_time and per_epoch may
+    # be inflated where it is > 0.
     "contended", "n_foreign",
 ]
 
