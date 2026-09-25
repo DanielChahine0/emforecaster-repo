@@ -140,3 +140,22 @@ equivalent_code:
         not reproduce its own log under either code, but the old code
         (f84e58dae) and the new agree with each other (MSE 0.495027, 79
         epochs), so what separates it from its log is not the code change.
+  - from: 21edc003e04e
+    to: 21e1374ddc2c
+    evidence:
+      - >
+        Which runs. The August per-channel seed-69421 bands kept by owner
+        decision (2026-09-24) instead of rerun: DLinear, TSMixer and LSTM on 83
+        bands each and EMForecaster on 67 (the other 16 were retrained at
+        128x4 in c1cf2fa18; the 83 ARIMA bands were refitted in 2ed7a50fe).
+        They carry the inferred commit 401ba0a2 (rule above).
+      - >
+        Reproduction probe, 2026-09-19 (.personal/probe_2026-09-19.txt, frozen
+        code 241d228a, eager, ED2022 L336/O96 seed 69421): per-channel band 0
+        of DLinear, TSMixer, LSTM, ARIMA and EMForecaster reproduces the August
+        log bit for bit in MSE, MAE, coverage, joint coverage and parameter
+        count (interval widths to 2e-7, print precision). The later Phase 0.4
+        window-count parity fix changed only the joint data path; DLinear band
+        0 was re-checked bit-exact under the post-fix code (.personal/PLAN.md,
+        "Scope changed from 6.1, on evidence"). The one sensitivity found since
+        is ARIMA's BLAS thread count, and ARIMA is no longer at this version.

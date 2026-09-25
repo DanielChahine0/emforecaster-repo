@@ -250,6 +250,7 @@ def test_the_declared_equivalences_carry_evidence():
     assert rules, "specs/provenance.yaml declares no equivalent_code rule"
     assert all(valid_equivalence(r) for r in rules)
     assert equivalent_code(rules, "bb6be0a379d9") == "21e1374ddc2c"
+    assert equivalent_code(rules, "21edc003e04e") == "21e1374ddc2c"
 
 
 # A tiny repo whose two commits differ in training code, so they fingerprint
