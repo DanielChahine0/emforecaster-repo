@@ -9,7 +9,7 @@
   "parameters/exp/neptune": false,
   "parameters/exp/api_token": "",
   "parameters/exp/project_name": "rf-emf-forecasting/RF-EMF-MV",
-  "parameters/exp/time": "2026-08-02_17-03-08",
+  "parameters/exp/time": "2026-09-24_20-50-58",
   "parameters/exp/early_stopping": true,
   "parameters/exp/acc": false,
   "parameters/exp/ch_acc": false,
@@ -37,6 +37,7 @@
   "parameters/exp/calibration_type": "none",
   "parameters/exp/va_inductive": true,
   "parameters/exp/va_splits": 5,
+  "parameters/exp/concurrency": 12,
   "parameters/data/dataset": "EMF_2023_university_5_with_PTV",
   "parameters/data/dtype": "float32",
   "parameters/data/seq_len": 336,
@@ -49,7 +50,7 @@
   "parameters/data/balance": true,
   "parameters/data/train_split": 0.7,
   "parameters/data/val_split": 0.1,
-  "parameters/data/num_workers": 4,
+  "parameters/data/num_workers": 1,
   "parameters/data/pin_memory": true,
   "parameters/data/prefetch_factor": 2,
   "parameters/data/shuffle_test": false,
@@ -200,12 +201,20 @@
   "parameters/conf/corrected": false,
   "parameters/conf/intervals": true,
   "parameters/conf/validation_eval": false,
-  "parameters/hybrid/enabled": false,
-  "parameters/hybrid/k_clusters": 1,
-  "parameters/hybrid/cluster_method": "kmeans",
-  "parameters/hybrid/cluster_seed": 69421,
-  "parameters/hybrid/cluster_assignment": "",
+  "parameters/cluster/enabled": false,
+  "parameters/cluster/k_clusters": 1,
+  "parameters/cluster/beta": 0.3,
+  "parameters/exp/git_commit": "fc81671b929863ef2fbccd2de3d224e841489756",
+  "parameters/exp/git_dirty": false,
+  "parameters/exp/hostname": "ngwn06",
+  "parameters/exp/gpu_name": "NVIDIA GeForce RTX 5090",
+  "parameters/exp/torch_version": "2.11.0+cu129",
+  "parameters/exp/cuda_mps": false,
+  "parameters/exp/cuda_mps_pipe_dir": "/tmp/nvidia-mps",
+  "parameters/data/n_train_windows": 54666,
+  "parameters/data/n_val_windows": 7777,
   "parameters/sl/num_params": 0,
+  "parameters/data/n_test_windows": 5203,
   "sl_test/loss": [
     1.3223573126381414
   ],
@@ -225,7 +234,7 @@
     17.874303817749023
   ],
   "sl_test/interval_width_mean": [
-    0.6302686929702759
+    0.6302686333656311
   ],
   "sl_test/interval_width_std": [
     0.030179256573319435

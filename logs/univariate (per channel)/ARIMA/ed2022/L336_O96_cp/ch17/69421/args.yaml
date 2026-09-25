@@ -3,6 +3,10 @@ arima:
   p: 1
   q: 1
   trend: c
+cluster:
+  beta: 0.3
+  enabled: false
+  k_clusters: 1
 conf:
   alpha: 0.1
   conf: true
@@ -32,7 +36,7 @@ data:
   median_seq_len: false
   num_channels: 1
   num_classes: 2
-  num_workers: 4
+  num_workers: 1
   numpy_data: false
   pad_to_max: false
   patch_dim: 16
@@ -86,6 +90,7 @@ exp:
   calibration_type: none
   ch_acc: false
   compile: false
+  concurrency: 12
   early_stopping: true
   eval_test_per_epoch: false
   gpu_id: 0
@@ -109,17 +114,11 @@ exp:
   sklearn_verbose: 1
   task: forecasting
   thresh: 0.5
-  time: 2026-08-02_16-52-44
+  time: 2026-09-24_20-46-23
   tuning_metric: loss
   u_weight: false
   va_inductive: true
   va_splits: 5
-hybrid:
-  cluster_assignment: []
-  cluster_method: kmeans
-  cluster_seed: 69421
-  enabled: false
-  k_clusters: 1
 mlp_mixer:
   cha_mixer_dim: 128
   dropout: 0.0
