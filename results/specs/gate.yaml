@@ -65,227 +65,26 @@
 # in emfres/cli.py at the copy; and set F's `snapshot` below to the copy's name
 # with empty `held_elsewhere` and `expected` lists. `make.py reconcile` gates
 # every family that has a snapshot and names each one that has none.
-# Freeze only once no cell of the render prints `(n=…)`: a cell still training
-# is held at the mean it printed, so it fails the gate as its seeds finish.
+# Freeze only once no cell of the render prints `(n=…)` except the by-design
+# ones of specs/scope.yaml: a cell still training is held at the mean it
+# printed, so it fails the gate as its seeds finish.
 
 emf:
-  # The EMF lists were written for 2026-09-22_tables.md. Re-freeze once they
-  # are reviewed and accepted, after the 2026-09-24 CCM sweep ends.
-  #
-  # The Cluster (k-Grouped Channels) section leads with the fixed protocol since
-  # the owner's 2026-09-24 decision; the snapshot's cluster cells are the logged
-  # batch protocol (b6e394191). Each is held twice:
-  # against today's fixed-protocol mean, where its k >= 2 values moved (the last
-  # rule below), and against the batch mean it was published from, whose runs
-  # have not changed. A change there is a real one: no rule forgives it, whatever
-  # the rule names (reconcile.BATCH_VIA). At k = 1 the two protocols are one
-  # forecast, and no k = 1 value is expected to move.
-
-  snapshot: 2026-09-22_tables.md
-
-  held_elsewhere:
-    - comparison: [Cluster (k=1) vs Multivariate, Cluster (best k) vs Cluster (k=1),
-                   Cluster (best k) vs Multivariate]
-      variant: batch protocol (k chosen on the logged `sl_val/loss`)
-      models: [DLinear, PatchTST, TSMixer]
-      reason: >
-        The snapshot's three cluster comparisons are the logged batch protocol
-        (k chosen on sl_val/loss) over the three models it clustered. Today's
-        scoreboard rows of the same name are the fixed train-mean membership
-        protocol (primary since the owner's 2026-09-24 decision), over six models
-        as EMForecaster, the Transformer and LSTM complete: a quantity the
-        snapshot never published, so their values are new, though each still
-        has to be printed. The snapshot's quantity is today's batch-protocol
-        sensitivity row, re-counted over DLinear, PatchTST and TSMixer, whose
-        cluster runs the sweep does not touch -- so every value of those rows
-        has to reproduce there.
-
-  expected:
-    - kind: cells
-      setup: perchannel
-      model: EMForecaster
-      window: L336/O96
-      now:
-        - {dataset: ED2022, metric: MSE, value: "0.4882"}
-        - {dataset: ED2022, metric: MAE, value: "0.3441"}
-        - {dataset: EMF2023, metric: MSE, value: "1.5060"}
-        - {dataset: EMF2023, metric: MAE, value: "0.4499"}
-      reason: >
-        16 per-channel EMForecaster bands (seed 69421: 8 ED2022, 3 UH2022,
-        5 EMF2023) had trained at 512x1 instead of the grid's 128x4. The
-        2026-09-24 sweep retrained them at 128x4 and moved the old copies to
-        logs/_archive/2026-09-24_pc-emf-512x1/. All 16 have landed: ED2022 moves
-        MSE 0.4879 -> 0.4882 and MAE 0.3440 -> 0.3441, EMF2023 MSE 1.5059 ->
-        1.5060 and MAE 0.4498 -> 0.4499; UH2022 does not move.
-
-    - kind: scoreboard
-      comparison: Per-channel vs Multivariate
-      column: [Tie, Cells]
-      now:
-        - {column: Tie, metric: MAE, value: "7"}
-        - {column: Tie, metric: MSE, value: "5"}
-        - {column: Cells, value: "18"}
-      reason: >
-        ARIMA's three cells are identical by construction (one model per band,
-        no gradient path) and now sit in the scoreboard's Identical column
-        instead of counting as ties (audit 2026-09-24, step 7.2): Tie and Cells
-        each drop by 3 (Tie MAE 10 -> 7, MSE 8 -> 5; Cells 21 -> 18), the wins
-        and losses do not change.
-
-    - kind: scoreboard
-      comparison: Per-channel vs Multivariate
-      metric: MSE
-      column: Median gap
-      now: "+1.04%"
-      reason: >
-        The median relative gap moves with the retrained per-channel
-        EMForecaster bands (the first cells rule): MSE +1.03% -> +1.04%; the
-        MAE median does not move. ARIMA was already left out of the median and
-        of the test.
-
-    - kind: scoreboard
-      comparison: Cluster (k=1) vs Multivariate
-      column: Median gap
-      now:
-        - {metric: MAE, value: "+0.00%"}
-        - {metric: MSE, value: "-0.00%"}
-      reason: >
-        The median gap is now taken over every counted cell (e54f8910b); it
-        used to leave out the cells whose two sides differ by less than 5e-05,
-        which the Wilcoxon test still does. At k = 1 the cluster module is off,
-        so 6 of the 9 MAE cells and 7 of the 9 MSE cells are such cells, and
-        the median moves to zero: MAE +0.09% -> +0.00%, MSE +0.01% -> -0.00%.
-        Held against the batch-protocol row (held_elsewhere 1); its counts and
-        p still reproduce.
-
-    - kind: sweep
-      dataset: ED2022
-      window: L336/O96
-      metric: MAE
-      column: k
-      k_min: 2
-      now:
-        - {model: DLinear, k: 2, value: "0.3764 ±0.0001"}
-        - {model: DLinear, k: 3, value: "0.3764 ±0.0002"}
-        - {model: DLinear, k: 5, value: "0.3766 ±0.0002"}
-        - {model: DLinear, k: 9, value: "0.3771 ±0.0006"}
-        - {model: PatchTST, k: 2, value: "0.3865 ±0.0151"}
-        - {model: PatchTST, k: 3, value: "0.3757 ±0.0141"}
-        - {model: PatchTST, k: 5, value: "0.3906 ±0.0124"}
-        - {model: PatchTST, k: 9, value: "0.3692 ±0.0025"}
-        - {model: TSMixer, k: 2, value: "0.3619 ±0.0021"}
-        - {model: TSMixer, k: 3, value: "0.3684 ±0.0176"}
-        - {model: TSMixer, k: 5, value: "0.3600 ±0.0039"}
-        - {model: TSMixer, k: 9, value: "0.3671 ±0.0099"}
-      reason: >
-        The sweep now prints the fixed train-mean membership protocol
-        (sl_test_fixed/*); the snapshot printed the logged batch protocol, under
-        which a k > 1 forecast depends on its neighbouring test windows. At
-        k = 1 the two are one forecast, so k = 1 and plain are not expected to
-        move. The snapshot's three models take their fixed-protocol values from
-        the eval_fixed.json sidecars of runs the sweep does not touch, so each
-        k >= 2 value is pinned to the one they give.
-
-    - kind: sweep
-      dataset: ED2022
-      window: L336/O96
-      metric: MAE
-      column: oracle k
-      now:
-        - {model: DLinear, value: "3"}
-        - {model: TSMixer, value: "5"}
-      reason: >
-        The snapshot underlined the k with the best test value, which the sweep
-        now prints as the oracle k; it is chosen over the k >= 2 values that
-        moved with the protocol, and moves with them: DLinear 2 -> 3, TSMixer
-        2 -> 5. PatchTST's stays at 9.
-
-    - kind: cells
-      setup: cluster
-      window: L336/O96
-      k_min: 2
-      now:
-        - {dataset: ED2022, metric: MSE, model: DLinear, k: 2, value: "0.5352"}
-        - {dataset: ED2022, metric: MSE, model: DLinear, k: 5, value: "0.5355"}
-        - {dataset: ED2022, metric: MSE, model: DLinear, k: 9, value: "0.5357"}
-        - {dataset: ED2022, metric: MSE, model: PatchTST, k: 2, value: "0.5400"}
-        - {dataset: ED2022, metric: MSE, model: PatchTST, k: 3, value: "0.5322"}
-        - {dataset: ED2022, metric: MSE, model: PatchTST, k: 5, value: "0.5401"}
-        - {dataset: ED2022, metric: MSE, model: PatchTST, k: 9, value: "0.5190"}
-        - {dataset: ED2022, metric: MSE, model: TSMixer, k: 2, value: "0.5153"}
-        - {dataset: ED2022, metric: MSE, model: TSMixer, k: 3, value: "0.5248"}
-        - {dataset: ED2022, metric: MSE, model: TSMixer, k: 5, value: "0.5116"}
-        - {dataset: ED2022, metric: MSE, model: TSMixer, k: 9, value: "0.5224"}
-        - {dataset: UH2022, metric: MSE, model: DLinear, k: 2, value: "1.1782"}
-        - {dataset: UH2022, metric: MSE, model: DLinear, k: 3, value: "1.1782"}
-        - {dataset: UH2022, metric: MSE, model: DLinear, k: 5, value: "1.1782"}
-        - {dataset: UH2022, metric: MSE, model: DLinear, k: 9, value: "1.1782"}
-        - {dataset: UH2022, metric: MSE, model: PatchTST, k: 2, value: "1.1673"}
-        - {dataset: UH2022, metric: MSE, model: PatchTST, k: 3, value: "1.1563"}
-        - {dataset: UH2022, metric: MSE, model: PatchTST, k: 5, value: "1.1573"}
-        - {dataset: UH2022, metric: MSE, model: PatchTST, k: 9, value: "1.1511"}
-        - {dataset: UH2022, metric: MSE, model: TSMixer, k: 2, value: "1.1608"}
-        - {dataset: UH2022, metric: MSE, model: TSMixer, k: 3, value: "1.1615"}
-        - {dataset: UH2022, metric: MSE, model: TSMixer, k: 5, value: "1.1615"}
-        - {dataset: UH2022, metric: MSE, model: TSMixer, k: 9, value: "1.1587"}
-        - {dataset: EMF2023, metric: MSE, model: DLinear, k: 5, value: "1.5526"}
-        - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 2, value: "1.5232"}
-        - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 3, value: "1.5101"}
-        - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 5, value: "1.5090"}
-        - {dataset: EMF2023, metric: MSE, model: PatchTST, k: 9, value: "1.5062"}
-        - {dataset: EMF2023, metric: MSE, model: TSMixer, k: 3, value: "1.5084"}
-        - {dataset: EMF2023, metric: MSE, model: TSMixer, k: 5, value: "1.4962"}
-        - {dataset: EMF2023, metric: MSE, model: TSMixer, k: 9, value: "1.4953"}
-        - {dataset: ED2022, metric: MAE, model: DLinear, k: 2, value: "0.3764"}
-        - {dataset: ED2022, metric: MAE, model: DLinear, k: 3, value: "0.3764"}
-        - {dataset: ED2022, metric: MAE, model: DLinear, k: 5, value: "0.3766"}
-        - {dataset: ED2022, metric: MAE, model: DLinear, k: 9, value: "0.3771"}
-        - {dataset: ED2022, metric: MAE, model: PatchTST, k: 2, value: "0.3865"}
-        - {dataset: ED2022, metric: MAE, model: PatchTST, k: 3, value: "0.3757"}
-        - {dataset: ED2022, metric: MAE, model: PatchTST, k: 5, value: "0.3906"}
-        - {dataset: ED2022, metric: MAE, model: PatchTST, k: 9, value: "0.3692"}
-        - {dataset: ED2022, metric: MAE, model: TSMixer, k: 2, value: "0.3619"}
-        - {dataset: ED2022, metric: MAE, model: TSMixer, k: 3, value: "0.3684"}
-        - {dataset: ED2022, metric: MAE, model: TSMixer, k: 5, value: "0.3600"}
-        - {dataset: ED2022, metric: MAE, model: TSMixer, k: 9, value: "0.3671"}
-        - {dataset: UH2022, metric: MAE, model: DLinear, k: 2, value: "0.4827"}
-        - {dataset: UH2022, metric: MAE, model: DLinear, k: 5, value: "0.4827"}
-        - {dataset: UH2022, metric: MAE, model: DLinear, k: 9, value: "0.4828"}
-        - {dataset: UH2022, metric: MAE, model: PatchTST, k: 2, value: "0.4815"}
-        - {dataset: UH2022, metric: MAE, model: PatchTST, k: 3, value: "0.4705"}
-        - {dataset: UH2022, metric: MAE, model: PatchTST, k: 5, value: "0.4731"}
-        - {dataset: UH2022, metric: MAE, model: PatchTST, k: 9, value: "0.4679"}
-        - {dataset: UH2022, metric: MAE, model: TSMixer, k: 2, value: "0.4636"}
-        - {dataset: UH2022, metric: MAE, model: TSMixer, k: 3, value: "0.4655"}
-        - {dataset: UH2022, metric: MAE, model: TSMixer, k: 5, value: "0.4607"}
-        - {dataset: UH2022, metric: MAE, model: TSMixer, k: 9, value: "0.4608"}
-        - {dataset: EMF2023, metric: MAE, model: DLinear, k: 3, value: "0.5027"}
-        - {dataset: EMF2023, metric: MAE, model: DLinear, k: 5, value: "0.5017"}
-        - {dataset: EMF2023, metric: MAE, model: DLinear, k: 9, value: "0.5008"}
-        - {dataset: EMF2023, metric: MAE, model: PatchTST, k: 3, value: "0.4584"}
-        - {dataset: EMF2023, metric: MAE, model: PatchTST, k: 5, value: "0.4600"}
-        - {dataset: EMF2023, metric: MAE, model: PatchTST, k: 9, value: "0.4557"}
-        - {dataset: EMF2023, metric: MAE, model: TSMixer, k: 3, value: "0.4545"}
-        - {dataset: EMF2023, metric: MAE, model: TSMixer, k: 5, value: "0.4492"}
-        - {dataset: EMF2023, metric: MAE, model: TSMixer, k: 9, value: "0.4474"}
-      reason: >
-        The Cluster (k-Grouped Channels) section now prints the fixed train-mean
-        membership protocol (sl_test_fixed/*) in its MSE and MAE tables, the
-        primary cluster protocol since the owner's 2026-09-24 decision, and the
-        logged batch protocol it used to print as its last group, a sensitivity.
-        The snapshot's three models take their fixed-protocol values from the
-        eval_fixed.json sidecars of runs the sweep does not touch, so each k >= 2
-        value that moved is pinned to the one they give: 63 of the 72 (ED2022's
-        MAE ones are the sweep's pins above). The other 9 round to the batch
-        value; at k = 1 the two are one forecast and nothing moves. Every one of
-        the 90 is also held against the batch mean it was published from, where
-        it still has to reproduce.
+  # Re-frozen 2026-09-25 after the 2026-09-24 CCM sweep, which the owner stopped
+  # on purpose. The 88 changes expected against 2026-09-22_tables.md were
+  # reviewed and all explained: the 16 per-channel EMForecaster bands retrained
+  # at 128x4 (4 cells), ARIMA moved to the identical-by-construction row (4),
+  # the median gap over every counted cell (3), and the Cluster and CCM sweep
+  # sections leading with the fixed train-mean membership protocol (77). None
+  # moved a batch-protocol value. The previous rules are in git history
+  # (results/specs/gate.yaml at 9971a5aa6).
+  snapshot: 2026-09-25_tables.md
+  held_elsewhere: []
+  expected: []
 
 voip:
-  # No VoIP snapshot is frozen yet (SNAPSHOTS['voip'] is None): the VoIP tables
-  # are rendered ungated, and `make.py reconcile` and `make.py tables --check`
-  # say so. The first one is frozen as above once the sweep's VoIP cluster runs
-  # are reviewed; its lists start empty, as a re-frozen family's do.
-  snapshot:
+  # First VoIP snapshot, frozen 2026-09-25 once every VoIP cluster run of the
+  # six gradient models had landed (L48/O12 and L24/O6, seeds 69421-69425).
+  snapshot: 2026-09-25_voip_tables.md
   held_elsewhere: []
   expected: []

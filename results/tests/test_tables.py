@@ -503,6 +503,9 @@ def test_the_mv_vs_univariate_scoreboard_counts_a_short_pair_as_pending():
 def test_make_tables_warns_when_bands_csv_is_missing(tmp_path, monkeypatch, capsys):
     from emfres import cli
 
+    # Synthetic frames: rendered ungated, not against the frozen VoIP snapshot.
+    monkeypatch.setitem(cli.SNAPSHOTS, "voip", None)
+
     rows = []
     for s in SEEDS:
         for setup, v in (("multivariate", 0.40), ("perchannel", 0.30)):
@@ -528,6 +531,9 @@ def test_make_tables_will_not_write_from_frames_whose_contention_flags_are_not_f
     import json
 
     from emfres import cli
+
+    # Synthetic frames: rendered ungated, not against the frozen VoIP snapshot.
+    monkeypatch.setitem(cli.SNAPSHOTS, "voip", None)
 
     rows = []
     for s in SEEDS:
@@ -558,6 +564,9 @@ def test_make_tables_will_not_write_from_frames_whose_contention_flags_are_not_f
 def test_make_tables_writes_outside_the_repo(tmp_path, monkeypatch, capsys):
     """RESULTS redirected outside the repo (a scratch render) writes there, no crash."""
     from emfres import cli
+
+    # Synthetic frames: rendered ungated, not against the frozen VoIP snapshot.
+    monkeypatch.setitem(cli.SNAPSHOTS, "voip", None)
 
     rows = []
     for s in SEEDS:

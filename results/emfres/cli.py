@@ -30,10 +30,12 @@ WINDOWS = {"emf": [(336, 96)], "voip": [(48, 12), (24, 6)]}
 # (tables/all.md, tables/voip/all.md) into archive/ as <date>_tables.md for
 # emf or <date>_voip_tables.md for voip, point SNAPSHOTS[F] at the copy, and
 # set F's `snapshot` in specs/gate.yaml to its name, with empty lists. Only
-# once no cell prints `(n=…)`: one still training is held at the mean it
-# printed, and fails the gate as its seeds finish.
-PUBLISHED = RESULTS / "archive" / "2026-09-22_tables.md"
-SNAPSHOTS: dict[str, Path | None] = {"emf": PUBLISHED, "voip": None}
+# once no cell prints `(n=…)` but the by-design ones (specs/scope.yaml): one
+# still training is held at the mean it printed, and fails the gate as its
+# seeds finish.
+PUBLISHED = RESULTS / "archive" / "2026-09-25_tables.md"
+SNAPSHOTS: dict[str, Path | None] = {
+    "emf": PUBLISHED, "voip": RESULTS / "archive" / "2026-09-25_voip_tables.md"}
 
 
 def spec_excludes() -> list[str]:
