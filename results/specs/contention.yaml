@@ -4,31 +4,36 @@
 # edit by hand. Rerun it once a sweep has ended (a DONE line in its sweep log
 # closes its last span) and commit the result with the frames it feeds.
 #
-# Where it came from. Two launchers append the GPU's compute apps (nvidia-smi
-# pid, process, memory) to a git-ignored log before each block and whenever
-# the set of processes changes on a 60 s poll: .personal/run_ccm_all.sh, the
-# CCM sweep, to .personal/ccm_gpu_contention.log, and .personal/run_tail.sh,
-# the rerun of the August per-channel bands, to .personal/tail_gpu_contention.log
-# (`source` names those that exist). Each entry is marked `own` (a python whose
-# cwd is this repo; `own-mps` for the tail's MPS server) or FOREIGN (anything
-# else on the card; `make.py contention` prints which executables those
-# were). When this file was first derived every FOREIGN entry was another
-# user's python job, a string of short jobs. This file copies what the frames
-# need from those logs.
+# Where it came from. Three launchers append the GPU's compute apps (nvidia-smi
+# pid, process, memory) to a git-ignored log before each block (the tails:
+# before training) and whenever the set of processes changes on a poll (60 s;
+# 15 s for the ARIMA tail): .personal/run_ccm_all.sh, the CCM sweep, to
+# .personal/ccm_gpu_contention.log; .personal/run_tail.sh, the rerun of the
+# August per-channel bands, to .personal/tail_gpu_contention.log; and
+# .personal/run_tail_arima.sh, that rerun's ARIMA bands, to
+# .personal/tail_arima_gpu.log (`source` names those with an entry by
+# `observed_until`). Each entry is marked `own` (a python whose cwd is this
+# repo; `own-mps` for the tail's MPS server) or FOREIGN (anything else on the
+# card; `make.py contention` prints which executables those were). When this
+# file was first derived every FOREIGN entry was another user's python job, a
+# string of short jobs. This file copies what the frames need from those logs.
 #
 # How it was derived. A sampled state holds until the next entry. `monitored`
-# is each sweep span of the launcher's own log (.personal/ccm_sweep.log,
-# .personal/tail_sweep.log: a `=== start` line to its STOP/DONE line) from its
-# first GPU entry on; a span still running ends at `observed_until`, when this
-# file was derived (`open: true`). `foreign` is the merged stretches whose
-# state listed a FOREIGN process, with the largest such process (MiB) and how
-# many distinct pids were seen in each. Edges are known to about a minute, a
+# is each launch of a launcher's own log (.personal/ccm_sweep.log,
+# .personal/tail_sweep.log, .personal/tail_arima.log: a `=== start` line to
+# its STOP/DONE line) from its first GPU entry on; a launch still running ends
+# at `observed_until`, when this file was derived (`open: true`). `foreign` is
+# the merged stretches whose state listed a FOREIGN process, with the largest
+# such process (MiB) and how many distinct pids were seen in each. `shared` is
+# where launches of two of those logs ran at once: another launch of this
+# repo was on the card, which each log marks `own` (the ARIMA tail beside the
+# CCM sweep, 2026-09-24 20:45 to 20:52). Edges are known to about a minute, a
 # foreign job that came and went between two polls is not seen, and memory
 # says nothing about how hard it used the card.
 #
 # How it is used. `make.py extract` gives every run its training window
 # [parameters/exp/time, + running_time] and writes to runs.csv:
-#   foreign_overlap  the fraction of that window inside `foreign`
+#   foreign_overlap  the fraction of that window inside `foreign` or `shared`
 #                    (blank: no part of it was monitored)
 #   contended        concurrent (its own grid trained several runs at once,
 #                    concurrency > 1), foreign (foreign_overlap > 0), both
@@ -52,14 +57,14 @@
 # MPS, .personal/PLAN.md E10).
 #
 # `cells` below is a summary for reading, not an input: per cell the runs
-# whose window was monitored, how many overlapped `foreign`, and the mean and
-# largest overlap fraction.
-source: .personal/ccm_gpu_contention.log
-observed_until: '2026-09-24 18:48:25'
-open: true
+# whose window was monitored, how many overlapped `foreign` or `shared`, and
+# the mean and largest overlap fraction.
+source: .personal/ccm_gpu_contention.log; .personal/tail_arima_gpu.log
+observed_until: '2026-09-24 22:57:42'
+open: false
 poll_seconds: 60
 monitored:
-  - {from: '2026-09-24 10:38:48', to: '2026-09-24 18:48:25'}
+  - {from: '2026-09-24 10:38:48', to: '2026-09-24 22:57:42'}
 foreign:
   - {from: '2026-09-24 10:38:48', to: '2026-09-24 10:41:48', peak_mib: 672, processes: 1}
   - {from: '2026-09-24 10:45:48', to: '2026-09-24 10:47:48', peak_mib: 672, processes: 1}
@@ -70,14 +75,23 @@ foreign:
   - {from: '2026-09-24 13:52:54', to: '2026-09-24 13:56:54', peak_mib: 4344, processes: 1}
   - {from: '2026-09-24 13:57:54', to: '2026-09-24 14:13:55', peak_mib: 4356, processes: 4}
   - {from: '2026-09-24 14:14:55', to: '2026-09-24 16:04:58', peak_mib: 4200, processes: 17}
-  - {from: '2026-09-24 16:05:58', to: '2026-09-24 18:48:25', peak_mib: 1994, processes: 14}
+  - {from: '2026-09-24 16:05:58', to: '2026-09-24 19:32:03', peak_mib: 1994, processes: 17}
+  - {from: '2026-09-24 19:33:04', to: '2026-09-24 22:14:08', peak_mib: 1354, processes: 13}
+  - {from: '2026-09-24 22:15:08', to: '2026-09-24 22:57:42', peak_mib: 4114, processes: 8}
+shared:
+  - {from: '2026-09-24 20:45:27', to: '2026-09-24 20:52:18', launches: '.personal/ccm_gpu_contention.log + .personal/tail_arima_gpu.log'}
 cells:
-  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 1, runs: 1, foreign: 0, mean_overlap: 0.0, max_overlap: 0.0}
-  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 2, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
-  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 3, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
-  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 5, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
-  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 9, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
-  - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 1, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 1, runs: 2, foreign: 1, mean_overlap: 0.5, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 2, runs: 2, foreign: 2, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 3, runs: 2, foreign: 2, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 5, runs: 2, foreign: 2, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: ed2022, window: L336/O96, k: 9, runs: 2, foreign: 2, mean_overlap: 0.975, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: emf_2023_university_5_with_ptv, window: L336/O96, k: 1, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: emf_2023_university_5_with_ptv, window: L336/O96, k: 2, runs: 1, foreign: 1, mean_overlap: 0.964, max_overlap: 0.964}
+  - {setup: cluster, model: EMForecaster, dataset: emf_2023_university_5_with_ptv, window: L336/O96, k: 3, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: emf_2023_university_5_with_ptv, window: L336/O96, k: 5, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: emf_2023_university_5_with_ptv, window: L336/O96, k: 9, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
+  - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 1, runs: 2, foreign: 2, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 2, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 3, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
   - {setup: cluster, model: EMForecaster, dataset: uh2022, window: L336/O96, k: 5, runs: 1, foreign: 1, mean_overlap: 1.0, max_overlap: 1.0}
