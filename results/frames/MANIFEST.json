@@ -1,4 +1,14 @@
 {
+  "code_equivalents": {
+    "21e1374ddc2c": {
+      "runs": 3608,
+      "versions": [
+        "21e1374ddc2c",
+        "21edc003e04e",
+        "bb6be0a379d9"
+      ]
+    }
+  },
   "code_versions": {
     "21e1374ddc2c": {
       "commits": [
@@ -19,33 +29,114 @@
       "commits": [
         "401ba0a2210a5025439f878484dad153321c8974"
       ],
-      "runs": 415
+      "equivalent_to": "21e1374ddc2c",
+      "runs": 316
+    },
+    "bb6be0a379d9": {
+      "commits": [
+        "01ffe11d5591b398bab11e58ea19af85aa1dfba8",
+        "025cff10c106cf6198642289ccb7d5751ca21978",
+        "09c28d4e9f542c5e984e108906e3ab075cc26b2d",
+        "0b3dd69e4b9a86f65cb9ca7544c78f48a29f0d0d",
+        "1053b78f9c60203d59f3591487d71d039f945359",
+        "110bc6e7431e1cd274644489d63449b12cda1694",
+        "144395604bd577d0b9212f0d76d9c61d44c6188a",
+        "15d35e1a5371d241d71ac834743e3662d6b555af",
+        "2cb6b83a8454d075bf214fa8a432fb67fa99797c",
+        "390e4b31604a38174c8cf1185cfd6abe9b9bce47",
+        "3da240ce156f838b5d465bc2c4caf332ce07c64d",
+        "41d8c93dc603f5dd6aa977aa5805475cbed384dd",
+        "4407cdad8303aaad0da90f711b024e385f63510f",
+        "45614e32bddaf33fd26bea0354d151de19cbe139",
+        "4ca7385e5262894deded7226bbf2b5ee2f00fded",
+        "4dd57dd326f662e9fae27b0eff9cdaf35edd68c1",
+        "4df283a8e45a828bccc88476b34efdcc52b28fd2",
+        "4ed545324bfd6c2ca924153061ba09cc4552d264",
+        "5368718d21efe336253f86e714f23163e8d9e80d",
+        "55ef412b5d63b0fa92e079268a2b1029036854eb",
+        "5bc56d2360dedf59b05185a19f65b1c17fbf0ff4",
+        "63c417f54b5b26f3d931e17df942c6a120ddbb80",
+        "79a847e017ba398f8a4fea77a20d2ba6ba384053",
+        "79cfa401066661c2d12150b9c63ad42454fa52af",
+        "7b3724ee0d3a4d56dd75b027c306c08b3e3ea133",
+        "7cdf4d96cafdc63e12766dcc2044834647691ed4",
+        "80863d7202d70d563d77816da87e9c78a39e9bcd",
+        "875bf85d8bdf959253a9d83b54e6762442e593a1",
+        "8ae247a60ccf06e32af08bc0741cc3240dd56c2d",
+        "8c6d0a5d51493b8c97df6a480b0585b37c19ce8a",
+        "9054660fe3c66062c5fbf9558d7522c407d61c6d",
+        "94a8268318267be40b1f025ce81a0f0f1acc8f30",
+        "9971a5aa6045c2505a508aefbb54a2248c2036d3",
+        "a6522705a67c8e63c4bae64712b1eb2b21597d1e",
+        "baaa574734c087d21d299682f056e66dcfd8b47b",
+        "c1c57b63aa70d34d5f09dd1adf1445b2f2843f21",
+        "c7775326f217b29dc94cec08208812c7e3ca992c",
+        "ca97f56efd5d840319bdc94a54426936a746afab",
+        "cc1a937cacd50adc1553ba012a33fdab133922d4",
+        "d1b4b2698e80582ad9b60738339843b60625b25e",
+        "d36c5120a338e369ea5555d447e9c8e1d001c8e0",
+        "d4fd8e2707118a31af0eeb595e6c9e02df213d2c",
+        "dcc4588a8058f062b2bac86108c775d8c2939ca4",
+        "dfdd323710b42e488bf61acea168a420c75e0af0",
+        "e54f8910b92ef73daf2287cd3b853264d322f17d",
+        "e6fcc68af81f698bbec5ea00bfb39e6c18573936",
+        "ebcbf33b2170bed4429d37fb9636d8140473c518",
+        "ec98213ec7e8de9481518223791277494ec91bdb",
+        "ef1ebab11b8d78bd5a11200d8866c86b8ecadff8",
+        "f139f7ecf6d84fc900e5d3cdb4ce7c3cf19a262f",
+        "f233088467f597c59301f40cc59156b2dcd452bd",
+        "f80f71d8e47d8796465c88cbfb2701db39216c8f",
+        "fc81671b929863ef2fbccd2de3d224e841489756"
+      ],
+      "equivalent_to": "21e1374ddc2c",
+      "runs": 406
     }
   },
+  "contention": {
+    "gpu_log_entries_after": 0,
+    "observed_until": "2026-09-24 22:57:42",
+    "open": false,
+    "past_end": 0
+  },
   "counts": {
-    "cells": 283,
-    "runs": 3469,
+    "bands": 13870,
+    "cells": 362,
+    "runs": 3776,
     "runs_by_setup": {
-      "cluster": 375,
+      "cluster": 682,
       "multivariate": 223,
       "perchannel": 2703,
       "series": 168
-    }
+    },
+    "timing": 54
   },
   "exclude": [
     "42",
     "43"
   ],
-  "logs_commit": "5743b2bf58acd82f5dbc70876dc3415d2405a544",
-  "n_runs": 3469,
+  "fixed_code_versions": {
+    "bb6be0a379d9": {
+      "runs": 682,
+      "sources": [
+        "log",
+        "sidecar"
+      ]
+    }
+  },
+  "fixed_sources": {
+    "log": 307,
+    "sidecar": 375
+  },
+  "logs_commit": "54c4a8bc4be133092699ad5da45ee2a7d458cec9",
+  "n_runs": 3776,
   "provenance": {
     "attested": 1114,
     "dirty": 0,
-    "inferred": 415,
-    "stamped": 1772,
+    "inferred": 316,
+    "stamped": 2178,
     "unstamped": 168
   },
-  "runs_digest": "7d93735b5d26a51a4b302fe81336dd0a80f8359c0446c0d26d377e08f6bfd55b",
+  "runs_digest": "1c28d9c57bfc19daa63ef441bba28acca15bf495c8128cbb5aa73b796348bc0e",
   "setups": [
     "cluster",
     "multivariate",
