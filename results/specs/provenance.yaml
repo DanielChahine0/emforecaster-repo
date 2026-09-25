@@ -101,6 +101,8 @@ attested:
 # 2414d9334cd4 (HEAD from 26d30764 to 51af0718e: the only fingerprinted change
 # from 21e1374ddc2c is GIT_OPTIONAL_LOCKS=0 in forecasting/provenance.py, which
 # stamps metadata only) needs no rule: no run in logs/ was trained there.
+# Nor does 854718aed9ae (HEAD from e9e73f6f9: a docstring in
+# forecasting/multivariate/models/ccm.py, after the 2026-09-24 sweep ended).
 equivalent_code:
   - from: bb6be0a379d9
     to: 21e1374ddc2c
