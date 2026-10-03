@@ -12,6 +12,7 @@ regenerated on demand and git-ignored. `results/` tracks about 2.3 MB.
 python results/make.py contention   # .personal GPU logs -> specs/contention.yaml
 python results/make.py extract      # logs/        -> frames/*.csv
 python results/make.py tables       # frames/      -> tables/*.md + csv twins
+python results/make.py tables --family voip   # frames/ -> tables/voip/; either run restacks tables/ALL.md
 python results/make.py reconcile    # hold each family's frozen report against frames/
 python results/make.py figures      # frames/      -> the paradigm-comparison figures
 python -m pytest results/tests      # provenance, paradigm comparison, baselines, figures
@@ -24,6 +25,10 @@ python results/plot_paradigms.py
 python results/emfres/fig_curves.py --logs-dir logs/univariate --combined
 python multivariate/src/emf_multivariate.py all   # emf-levels + heatmaps
 ```
+
+`tables/ALL.md` is the whole report in one file: each family's `all.md`
+stacked under its own part (EMF, then VoIP), headings demoted one level, never
+pooled into one table. It is rebuilt whenever either family renders.
 
 `extract` reads every `log.json` under `logs/` outside `logs/_archive/` (3,469
 today: 2,109 EMF, 1,360 VoIP — see *Which runs count*) and writes one row per run. Nothing

@@ -584,3 +584,27 @@ def test_make_tables_writes_outside_the_repo(tmp_path, monkeypatch, capsys):
     assert cli.main(["tables", "--family", "voip"]) == 0
     assert (results / "tables" / "voip" / "paradigms.md").exists()
     assert f"to {results / 'tables' / 'voip'}/" in capsys.readouterr().out
+
+
+def test_combine_all_stacks_families_and_flags_mixed_frames(tmp_path):
+    """ALL.md keeps each family's all.md whole, demoted under its part, anchored apart."""
+    from emfres import tables as T
+
+    emf, voip = tmp_path / "all.md", tmp_path / "voip" / "all.md"
+    voip.parent.mkdir()
+    emf.write_text(T.BANNER.format(digest="aaa") + "\n\n# Multivariate\n\n## 1 · MSE\n\n| a |\n")
+    voip.write_text(T.BANNER.format(digest="aaa") + "\n\n# Multivariate\n\n| b |\n")
+    md, notes = T.combine_all([("emf", "EMF", emf), ("voip", "VoIP", voip)])
+    assert not notes
+    assert "# Part I · EMF" in md and "# Part II · VoIP" in md
+    assert "## Multivariate" in md and "### 1 · MSE" in md and "\n# Multivariate" not in md
+    assert '<a id="emf-multivariate"></a>' in md and '<a id="voip-multivariate"></a>' in md
+    assert "| a |" in md and "| b |" in md and md.index("| a |") < md.index("| b |")
+
+    voip.write_text(T.BANNER.format(digest="bbb") + "\n\n# Multivariate\n")
+    md, notes = T.combine_all([("emf", "EMF", emf), ("voip", "VoIP", voip)])
+    assert notes and "different frames" in notes[0] and "**Warning:**" in md
+
+    voip.unlink()
+    md, _ = T.combine_all([("emf", "EMF", emf), ("voip", "VoIP", voip)])
+    assert "Part II" not in md

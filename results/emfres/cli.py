@@ -648,6 +648,16 @@ def cmd_tables(args) -> int:
     for slug, title, _ in sections:
         print(f"  {slug + '.md':<22} {title}")
     print(f"wrote {len(twins)} csv twins to {rel}/csv/")
+
+    # ALL.md restacks every family's all.md, so rendering either keeps it current.
+    tables = RESULTS / "tables"
+    md, notes = T.combine_all([
+        (fam, title, tables / "all.md" if fam == "emf" else tables / fam / "all.md")
+        for fam, title in T.COMBINED_PARTS])
+    (tables / "ALL.md").write_text(md)
+    for note in notes:
+        print(f"NOTE: ALL.md: {note}", file=sys.stderr)
+    print(f"wrote {rel.parent if family != 'emf' else rel}/ALL.md")
     return 0
 
 
