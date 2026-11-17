@@ -1,299 +1,290 @@
 # EMForecaster (Reproduction Repository)
 
-This repository is a personal reproduction and extension of the [EMForecaster paper](https://ieeexplore.ieee.org/document/11095417) by Xavier Mootoo, Hina Tabassum, and Luca Chiaraviglio (IEEE Transactions on Network Science and Engineering, 2025).
-It is maintained by Daniel Chahine and hosted at https://github.com/DanielChahine0/emforecaster-repo.
-It is **not** the official paper repository.
-The code here is a working setup used to reproduce the paper's electromagnetic-field (EMF) exposure forecasting results and to experiment with a multivariate extension.
-The original paper PDF is included at the repository root as [`EMForecaster Paper.pdf`](./EMForecaster%20Paper.pdf).
+A personal reproduction and extension of the [EMForecaster paper](https://ieeexplore.ieee.org/document/11095417) by Xavier Mootoo, Hina Tabassum and Luca Chiaraviglio (IEEE Transactions on Network Science and Engineering, 2025).
+It forecasts electromagnetic-field (EMF) exposure from wireless networks with deep-learning models, and attaches calibrated uncertainty intervals to every forecast using conformal prediction.
 
-## Description
+This is **not** the official paper repository.
+It is maintained by Daniel Chahine.
+The paper is included as [`pdfs/EMForecaster.pdf`](./pdfs/EMForecaster.pdf).
 
-The repository contains a single deep-learning forecasting package with two parallel setups plus a standalone measurement-analysis tool:
+## What this repository does
 
-- **`forecasting.univariate`** - the univariate forecasting setup, which reproduces the paper's single-series EMF exposure forecasting.
-- **`forecasting.multivariate`** - a multivariate extension of the same setup (channel-independent forecasting across many frequency bands), a near-identical twin of `forecasting.univariate` with the genuine differences confined to dataloading, the experiment loop, model heads, and the config schema.
-- **`multivariate/`** - a self-contained matplotlib/pandas CLI for exploratory analysis of the processed EMF measurement CSVs in `data/multivariate/processed/` (EMF-level time trends and correlation heatmaps), unrelated to model training.
+1. **Reproduces the paper.**
+   It trains EMForecaster and its baselines on single EMF exposure series and reports point-forecast error (MSE, MAE) and conformal coverage.
+2. **Extends it to many frequency bands.**
+   The measurement data has 27-29 frequency bands per site.
+   The repo compares three ways to forecast them:
+   - **Multivariate:** one model sees all bands at once.
+   - **Per-channel:** one independent model per band.
+   - **Cluster:** one model whose per-band layers are shared within learned groups of bands, using the [Channel Clustering Module (CCM)](https://arxiv.org/abs/2404.01340).
+3. **Repeats the comparison on a second domain.**
+   The same three approaches run on VoIP call-quality traces, to check whether the findings hold outside EMF data.
 
-Both training setups are driven by the root `main.py`, which selects the setup automatically from the job name.
-Both share the same conformal-prediction uncertainty quantification (independent/joint coverage and the paper's Trade-off Score), the same hyperparameter-tuning entrypoint, and the same optional Neptune logging and HPC submission paths.
+## Quickstart
 
-Model families available through `get_model`: PatchTST, recurrent models (LSTM/RNN/GRU/Mamba via `backbone_id`, reachable as `RecurrentModel` or under the grid's `LSTM` alias), Linear, DLinear, EMForecaster, ModernTCN, TimesNet, KNN, TSMixer, ARIMA and Persistence (both classical and non-gradient; see `exp.no_train`), and four RF baselines (RF_EMF_MLP, RF_EMF_CNN, RF_EMF_LSTM, RF_EMF_Transformer).
-
-## Repository layout
-
-```
-.
-├── main.py                 # Root entrypoint; picks the setup by job name
-├── forecasting/            # Forecasting package
-│   ├── univariate/         # Univariate forecasting setup
-│   └── multivariate/       # Multivariate forecasting setup
-├── multivariate/           # Standalone EMF measurement-analysis CLI (+ its own README)
-├── data/                   # Measurement data (see Data)
-│   ├── ML_DATASETS/        # Raw VoIP traces + build_voip.py
-├── logs/                   # Offline training-run logs (per run, per seed)
-├── results/                # Tables, figures and the tidy CSVs behind them (see results/README.md)
-├── pyproject.toml          # Poetry metadata, MIT license, Python >=3.11,<3.14
-├── requirements.txt        # Fully pinned dependencies (Python 3.12 / macOS arm64)
-└── EMForecaster Paper.pdf  # Original paper (reference)
-```
-
-Each training setup mirrors the same subtree: `config`, `exp`, `models`, `layers`, `conformal`, `tuning`, `jobs`, `utils`, `analysis`.
-Note that "analysis" exists in two unrelated places: `forecasting/<univariate|multivariate>/analysis/` analyzes training runs (loss curves, bar graphs, ADF/ARIMA, Neptune fetching), while `multivariate/` analyzes measurement CSVs.
-
-## Installation
-
-Requires Python `>=3.11,<3.14`.
-`requirements.txt` is fully pinned (all versions, including transitives) and targets Python 3.12 on macOS arm64.
-
-Using a virtual environment:
+Requires Python 3.11-3.13.
+The pinned `requirements.txt` targets Python 3.12 on macOS (Apple silicon).
 
 ```bash
+git clone https://github.com/DanielChahine0/emforecaster-repo.git
+cd emforecaster-repo
+
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 ```
 
-Using conda:
+Install IBM Plex Sans, the typeface every figure uses (once per machine, no root needed).
+Without it, figures fall back to another font and one figure-layout test fails.
 
 ```bash
-conda create -n emforecaster python=3.12
-conda activate emforecaster
-pip install -r requirements.txt
-pip install -e .
+(cd results && python -m emfres.fonts)
 ```
 
-The final `pip install -e .` installs the project (distribution name `emforecaster`) in editable mode, exposing the importable package `forecasting`.
-Note that `import emforecaster` will not work; the importable package is `forecasting` (with `forecasting.univariate` and `forecasting.multivariate`).
+Run the smoke test, a 5-epoch EMForecaster run on ED2022 that checks the whole pipeline works.
+It takes about 10 minutes on an Apple-silicon laptop and writes to `logs/multivariate/EMForecaster/ed2022/L20_O30_pf/`.
+
+```bash
+python main.py rf_emf_mv/test --quick
+```
+
+Preview a full sweep without training anything:
+
+```bash
+python main.py --grid --setup multivariate --dry_run
+```
+
+Rebuild the results tables from the logs:
+
+```bash
+python results/make.py extract
+python results/make.py tables
+```
+
+Run the tests (`pytest` is a dev dependency, not in `requirements.txt`):
+
+```bash
+pip install pytest
+python -m pytest forecasting results/tests
+```
+
+## Repository layout
+
+```
+.
+├── main.py                # Entry point: run one job, or a whole grid of jobs
+├── forecasting/           # The forecasting package
+│   ├── univariate/        #   Single-series setup (the paper's original experiments)
+│   ├── multivariate/      #   Many-band setup (multivariate, per-channel and cluster runs)
+│   ├── grids.py           #   Definitions of every experiment grid
+│   └── perchannel.py      #   Driver that trains one model per band
+├── data/                  # Measurement datasets (see Data)
+├── logs/                  # One folder per finished run: config, metrics, plots
+├── results/               # Tables, figures and the CSVs behind them
+├── multivariate/          # Standalone tool for plotting the raw EMF measurements
+├── docs/                  # Detailed reference docs (start with docs/grids.md)
+├── TimeSeriesCCM-main/    # Vendored code from the CCM paper (clustering layers)
+├── pdfs/                  # Reference papers
+├── pyproject.toml         # Package metadata
+└── requirements.txt       # Pinned dependencies
+```
+
+`pip install -e .` installs the distribution `emforecaster`, but the importable package is `forecasting`.
+`import emforecaster` will not work.
 
 ## Data
 
-The EMF measurement data is proprietary and is not distributed with the repository.
-To obtain the data, contact the original paper's authors (Luca Chiaraviglio for the Italian measurement datasets).
+All datasets live in `data/` as CSV files.
 
-Univariate series live in `data/univariate/` (single-column exposure series in V/m):
+| Dataset id | File | Kind | Used by |
+|---|---|---|---|
+| `rf_emf_det` | `data/univariate/DET_Monitoring.csv` | Single exposure series (V/m) | `univariate_series` grid |
+| `rf_emf_ptv` | `data/univariate/PTV_Monitoring.csv` | Single exposure series (V/m) | `univariate_series` grid |
+| `rf_emf_ptv2` | `data/univariate/PTV_Monitoring2.csv` | Single exposure series (V/m) | `univariate_series` grid |
+| `ED2022` | `data/multivariate/processed/ED2022.csv` | 27-29 frequency bands (V/m) | EMF multivariate grids |
+| `UH2022` | `data/multivariate/processed/UH2022.csv` | 27-29 frequency bands (V/m) | EMF multivariate grids |
+| `EMF_2023_university_5_with_PTV` | `data/multivariate/processed/EMF_2023_university_5_with_PTV.csv` | 27-29 frequency bands (V/m) | EMF multivariate grids |
+| `VOIP_MOBILE` | `data/multivariate/processed/VOIP_MOBILE.csv` | 6 call-quality channels | VoIP grids |
+| `VOIP_FIXED` | `data/multivariate/processed/VOIP_FIXED.csv` | 6 call-quality channels | VoIP grids |
 
-| File | Dataset id |
-|---|---|
-| `DET_Monitoring.csv` | `rf_emf_det` |
-| `PTV_Monitoring.csv` | `rf_emf_ptv` |
-| `PTV_Monitoring2.csv` | `rf_emf_ptv2` |
+Notes:
 
-These three ids are the effectively usable univariate datasets.
-The dataloader references additional dataset ids (for example `rf_emf`, `rf_emf_tur`) whose files are not present on disk, so those will fail; do not trust the config docstring as the runnable set.
+- `ED2024.csv` and `UH2024.csv` are also in `data/multivariate/processed/`; the loader accepts them, but no grid uses them yet.
+- `data/multivariate/unprocessed/` holds the raw sources before normalization; no code reads it.
+- The dataloader also knows dataset ids such as `rf_emf` and `rf_emf_tur`, but their files are not in the repo, so those ids fail.
+- For the multivariate files, the loader drops the `Timestamp` column, the `EMF_*` aggregate columns and `PTV` (to avoid leaking the target), fills missing readings (gaps up to 240 steps by linear interpolation, longer outages by repeating the nearest reading), and sets the channel count from the data.
+- The EMF measurements belong to the original paper's authors.
+  Contact Luca Chiaraviglio before reusing them.
 
-Multivariate data lives in `data/multivariate/`:
+### VoIP data
 
-- `data/multivariate/processed/` (read by both the training setup and the analysis CLI): `ED2022.csv`, `ED2024.csv`, `UH2022.csv`, `UH2024.csv`, `EMF_2023_university_5_with_PTV.csv`.
-- `data/multivariate/unprocessed/` - the pre-normalization raw sources, kept as an archive and not read by any tool.
-
-Each processed multivariate CSV has a `Timestamp` column, per-frequency-band columns in V/m, and `EMF_*` aggregate columns.
-The multivariate dataloader drops `Timestamp`, the `EMF_*` aggregates, and `PTV` (to avoid target leakage), interpolates missing bands, and then sets `data.num_channels` automatically from the data (27 or 29), so the value in `args.yaml` is advisory only.
-
-### VoIP call-quality data
-
-A second, unrelated corpus lives in `data/ML_DATASETS/`: 16 VoIP call traces, one per (access type, codec) over `{Mobile, Fixed}` x `{g711, g722, g729, gsm, mpeg16, opus, spx8000, spx16000}`, each a `Time,MOS,BW,RTT,JIT,DJB,SNR` table of 161-820 rows.
-
-`python data/ML_DATASETS/build_voip.py` pools them into `data/multivariate/processed/VOIP_MOBILE.csv` and `VOIP_FIXED.csv` (eight traces each, six channels, a `Trace` column naming the codec). Its only cleaning is to null and interpolate the three physically impossible `JIT` values in `mob_g729` (up to 9.9e11); RTT outliers and the leading `RTT = 0` rows are kept deliberately.
-
-The loader splits **each trace on its own** and then concatenates the parts, so every split carries the same codec mix, and flags one row per join so no window can span two calls (`pooled_trace_splits` in `utils/dataloading.py`). The traces are far shorter than the EMF files, so these datasets run at their own windows (`L48_O12`, `L24_O6`) and their own split (0.6/0.2/0.2) - see the `voip*` grids below.
-
-## Usage: running experiments
-
-Run from the repository root. `main.py` has two modes:
+`data/ML_DATASETS/` holds 16 VoIP call traces: `{Mobile, Fixed}` access x 8 codecs (`g711`, `g722`, `g729`, `gsm`, `mpeg16`, `opus`, `spx8000`, `spx16000`).
+Each trace is a `Time,MOS,BW,RTT,JIT,DJB,SNR` table of 161-820 rows.
 
 ```bash
-# Single-job mode: run one job by name
-python main.py <job_name> [--quick] [--ablation '<json>'] [--ablation_id <int>]
-
-# Grid mode: run a full model x dataset x window sweep
-python main.py --grid [--setup <setup>] [--window <spec>] [--seeds <spec>] [--k <spec>] [--dry_run] [--jobs <int>]
+python data/ML_DATASETS/build_voip.py
 ```
 
-The setup is chosen automatically from the job name: any `job_name` starting with `rf_emf_mv` dispatches to `forecasting.multivariate`, everything else to `forecasting.univariate`.
-`main.py` then dynamically imports `{package}.config.config.load_config` and `{package}.exp.exp.Experiment`, and reads the config from `forecasting/<univariate|multivariate>/jobs/exp/<job_name>/args.yaml`.
+This pools the traces into `VOIP_MOBILE.csv` and `VOIP_FIXED.csv` (8 traces each, with a `Trace` column naming the codec).
+Its only cleaning is to fix three physically impossible `JIT` values in `mob_g729`; RTT outliers are kept on purpose.
+The loader splits each trace on its own before joining them, so every split has the same codec mix and no window spans two calls.
 
-Runnable job names (each is a folder under `forecasting/<setup>/jobs/exp/` holding an `args.yaml`):
+## Running experiments
 
-Univariate (`forecasting.univariate`):
+`main.py` has two modes.
 
-- `rf_emf/emforecaster`
-- `rf_emf/dlinear`
-- `rf_emf/patchtst`
-- `rf_emf/tsmixer`
-- `rf_emf/baselines/cnn`
-- `rf_emf/baselines/lstm`
-- `rf_emf/baselines/mlp`
-- `rf_emf/baselines/transformer`
-- `test`
+### Single job
 
-Multivariate (`forecasting.multivariate`, `rf_emf_mv` prefix):
+```bash
+python main.py <job_name> [--quick] [--ablation '<json>'] [--ablation_id <int>]
+```
 
-- `rf_emf_mv/arima`
-- `rf_emf_mv/dlinear`
-- `rf_emf_mv/emforecaster`
-- `rf_emf_mv/lstm`
-- `rf_emf_mv/patchtst`
-- `rf_emf_mv/timesnet`
-- `rf_emf_mv/transformer`
-- `rf_emf_mv/tsmixer`
+A job is a folder holding an `args.yaml` config under `forecasting/<setup>/jobs/exp/`.
+Job names starting with `rf_emf_mv` run in the multivariate setup; every other job runs in the univariate setup.
 
-The `forecasting.multivariate` setup also mirrors the univariate `rf_emf/*` and `test` jobs, but because dispatch keys off the `rf_emf_mv` prefix, those still run through the `forecasting.univariate` setup.
+| Setup | Jobs |
+|---|---|
+| Univariate (single series) | `rf_emf/emforecaster`, `rf_emf/dlinear`, `rf_emf/patchtst`, `rf_emf/tsmixer`, `rf_emf/lstm`, `rf_emf/arima`, `rf_emf/baselines/{cnn,lstm,mlp,transformer}`, `test` |
+| Multivariate (many bands) | `rf_emf_mv/emforecaster`, `rf_emf_mv/dlinear`, `rf_emf_mv/patchtst`, `rf_emf_mv/tsmixer`, `rf_emf_mv/transformer`, `rf_emf_mv/lstm`, `rf_emf_mv/arima`, `rf_emf_mv/persistence`, `rf_emf_mv/timesnet`, `rf_emf_mv/test` |
 
-Single-job flags:
+| Flag | What it does |
+|---|---|
+| `--quick` | Run only the first seed in the config's `seed_list`. |
+| `--ablation '<json>'` | Override config values, for example `'{"sl.lr": 0.001}'`. |
+| `--ablation_id <int>` | Tag the run (default 1); non-default ids get their own log folder. |
 
-- `--quick` runs a single seed (`seed_list[:1]`).
-- `--ablation '<json>'` takes a JSON string of dotted overrides (for example `{"sl.lr": 0.001}`) mapped onto the config; invalid JSON exits with an error.
-- `--ablation_id <int>` tags the run (default 1) and is used in output paths.
+### Grid
 
-### Grid mode
+```bash
+python main.py --grid --setup <grid> [--model ...] [--dataset ...] [--window ...] [--k ...] [--seeds ...] [--jobs N] [--dry_run]
+```
 
-Passing `--grid` (or omitting the job name entirely) runs a full sweep over every model x dataset x window cell of a grid defined in `forecasting/grids.py` instead of a single job.
-The exit code is non-zero if any cell failed.
+A grid runs every model x dataset x window combination ("cell") and skips cells that already finished, so an interrupted sweep resumes where it stopped.
 
-- `--setup {univariate,multivariate,univariate_series,cluster,voip,voip_perchannel,voip_cluster}` selects which grid to run:
-  The first three sweep the same seven models — EMForecaster, DLinear, PatchTST, TSMixer, Transformer, LSTM, ARIMA — over 3 datasets x 4 windows, so every grid is 84 cells and a model's column exists in every table.
+| `--setup` | What it compares | Data | Cells |
+|---|---|---|---|
+| `univariate_series` | The paper's original single-series experiments | DET/PTV series | 84 |
+| `multivariate` | One model over all bands | ED2022, UH2022, EMF2023 | 84 |
+| `univariate` | One model per band, averaged | ED2022, UH2022, EMF2023 | 84 |
+| `cluster` | One model with CCM band clustering, at several cluster counts `k` | ED2022, UH2022, EMF2023 | 360 |
+| `voip`, `voip_perchannel`, `voip_cluster` | The same three approaches on VoIP traces | VOIP_MOBILE, VOIP_FIXED | 32, 32, 96 |
 
-  - `multivariate` - one model per cell, forecasting all 27/29 frequency bands jointly, over the `ED2022`, `UH2022`, and `EMF_2023_university_5_with_PTV` datasets. (PatchTST left this sweep on 2026-07-24 and rejoined it on 2026-08-03. Its pre-drop cells are not on disk: commit `e84faec4` deleted `logs/multivariate/PatchTST/` along with the other three windows of every model, leaving only the `L336_O96` slice. `git checkout e84faec4^ -- logs/multivariate` restores the old tree.)
-  - `univariate` - the per-band counterpart of the multivariate grid: same models, datasets, and windows, but each cell trains one independent model per frequency band and averages the bands back into one number per cell, so its cells are directly comparable to the multivariate ones. Driven by `forecasting/perchannel.py`, which fans the band trainings out to a process pool. It shares the multivariate grid's model list outright (`UNIVARIATE_MODELS is MV_MODELS`) and reuses the same `rf_emf_mv/*` job configs one band at a time.
-  - `univariate_series` - the original single-series sweep over the DET/PTV monitoring datasets (`rf_emf_det`, `rf_emf_ptv`, `rf_emf_ptv2`). Same seven models, but its own job configs under `forecasting/univariate/jobs/exp/rf_emf/`, because it is the only grid that runs the `forecasting.univariate` package (see `grid.SETUP_PACKAGE`). Its LSTM is `rf_emf/lstm` (model_id `LSTM` -> `RecurrentModel(backbone_id="LSTM")`, the same model the other two grids run), *not* the frozen `rf_emf/baselines/lstm` (`RF_EMF_LSTM`) that produced the published "LSTM (1997)" column — do not merge those two columns.
+The EMF grids sweep seven models (EMForecaster, DLinear, PatchTST, TSMixer, Transformer, LSTM, ARIMA) over four windows (lookback x horizon: `192x96`, `192x336`, `336x96`, `336x336`).
+The cluster grids drop ARIMA, the VoIP grids add a Persistence baseline, and the VoIP grids use shorter windows (`48x12`, `24x6`).
 
-  - `cluster` - the CCM channel-clustering sweep: same datasets and windows as `multivariate`, with CCM's *learned, soft* channel clustering ([Channel Clustering Module, NeurIPS 2024](https://arxiv.org/abs/2404.01340)) threaded through **this repo's own model implementations**. The clustering modules — `Cluster_assigner` and `Cluster_wise_linear` — are the paper's own code, imported verbatim from the vendored `TimeSeriesCCM-main/` tree (`forecasting/multivariate/utils/ccm_upstream.py`) and orchestrated by `forecasting/multivariate/models/ccm.py`. Each channel's window is projected to `d_model`, scored by cosine similarity against `k` trainable cluster embeddings, and sinkhorn-normalized into a `[num_channels, k]` distribution; a linear map the model applies to each channel on its own is swapped for `k` parallel cluster-wise copies mixed by that assignment. The cluster embeddings are refreshed from each training batch by cross-attention, and the objective is `forecast_loss + beta * similarity_loss` (`cluster.beta`, default `0.3` from upstream), where the similarity term pulls the assignment toward the data's own channel-similarity structure. It adds a `k` dimension to the grid (`k_values = [1, 2, 3, 5, 9]`, so 6 models x 3 datasets x 4 windows x 5 k = 360 cells) and writes to `logs/cluster/<model>/<dataset>/L<L>_O<O>_cp/k<k>/<seed>/`.
-
-    The six models are every gradient-trained model of the multivariate grid. `DLinear`, `PatchTST` and `TSMixer` each have a per-channel temporal linear for CCM to route (DLinear's seasonal/trend linears, PatchTST's flatten head, TSMixer's temporal MLPs and head — the same places upstream's own wrappers put `Cluster_wise_linear`); for `EMForecaster`, `Transformer` and `LSTM`, which upstream has no version of, CCM clusters the Linear read-out their channels share, following its PatchTST precedent. All six are in `MV_MODELS`, so every cluster cell has same-window multivariate and per-channel baselines beside it: the cluster cell is the multivariate cell's exact network — same config, same init, same RevIN — differing only in the clustering module, which is what makes a cluster-vs-multivariate (or vs per-channel) comparison attributable to the *paradigm* rather than to implementation drift. `ARIMA` and `Persistence` (per-band by construction, with no gradient path) are rejected at model build instead of being silently adapted, as is `TimesNet` (below).
-
-    **Divergences from the paper's released code** — only the clustering *layers* run from `TimeSeriesCCM-main/`; its model wrappers and Exp pipeline do not. (1) The networks are ours, as above; until 2026-08-25 the grid ran upstream's own `DLinearC`/`PatchTSTC`/`TSMixerC`/`TimesNetC`, whose implementations differ from the multivariate cells' (e.g. `DLinearC` hardcodes a decomposition kernel of 25 where the job config sets `moving_avg: 3`, and skips the repo's `1/seq_len` constant init) — runs from that era are not comparable to current ones and must not share a logs tree with them: the upstream-era runs that were kept, the L-ladder rungs among them, sit under `logs/_archive/`, and `logs/cluster/` holds only runs of the native implementation. `TimesNet` left the grid with the wrappers (our TimesNet embeds all channels jointly from the first layer, so there is nothing per-channel to route, and it never had an MV baseline). (2) PatchTST: upstream's `PatchTSTC` passes the cluster embeddings into every encoder layer, but the cluster-token attention that would use them is commented out in the release (`TimeSeriesCCM-main/models/patch_layer.py:355-367`), so its encoder ignores them and in effect only the head is clustered, as in ours. Our encoder stays byte-identical to the multivariate cell's; upstream's layers still build the unused cluster-attention modules, which ours do not. (3) The similarity term is trained on, but kept out of the reported `sl_{train,val,test}/loss` and out of the best-model / early-stopping metric, which stay the pure forecast loss; it is logged separately as `sl_train/similarity_loss`. Upstream (`Exp_CCM.train`) early-stops on the combined value, but at 27 channels the similarity term runs 15–250 against an MSE around 0.5, so combining them hands model selection to the regularizer — on an ED2022 `L336_O96` sweep it early-stopped `k=2` at epoch 27 having selected epoch 7, while the plain DLinear baseline kept improving for all 100. Keeping them separate also means a cluster cell's loss is comparable to every other cell in every grid. See `compute_aux_loss` in `forecasting/multivariate/utils/models.py`. (4) Upstream's cluster-embedding refresh returns a per-example `[batch, k, d_model]` tensor that the released wrappers write back into the `[k, d_model]` slot — fatal on training batch two as released; `CCMForecaster` pools it over the batch (the assigner's own batch-mean convention) and holds it in a registered buffer so it checkpoints and moves with the module. (5) Upstream's batch-wise similarity matrix only has the right shape in its M4/stock setups; the same kernel is applied along the channel axis instead (`CCMForecaster.channel_similarity`).
-
-    **The `k=1` cell, part of the sweep, is the controlled no-clustering baseline**: at `k=1` sinkhorn returns an all-ones assignment, so every cluster-wise linear collapses to exactly one shared channel-independent map, and the similarity loss becomes an additive constant with no gradient. Every difference between `k=1` and `k>1` is then attributable to the clustering itself — and because the backbone is now the multivariate implementation, the plain multivariate column is a fair comparison too. The residual difference at `k=1` is the assigner, since all six models already share their per-channel maps across channels (PatchTST runs `channel_independent: True`): its parameters are drawn after the backbone's, which starts from the multivariate cell's exact init, but they, and the random draws the assigner and the similarity loss make each step, shift every later draw from the global RNG. For PatchTST, TSMixer, EMForecaster and LSTM that moves their dropout masks; DLinear and the Transformer have no dropout, and the data loaders shuffle from a generator of their own, so their gap is floating-point rounding alone (the one-copy blend is an extra matmul, TF32 on the GPU, and no run requests deterministic kernels). So `k=1` matches the multivariate cell within seed noise, not bit for bit.
-
-    **Two evaluation protocols; the fixed one is primary.** Upstream's assigner pools the membership over the windows in a batch, in evaluation as well as in training, so a cluster cell's test forecast depends on which windows share its batch: up to `batch_size - 1` others, and on the sequential test loader the later ones among them (up to `seq_len + pred_len - 1`) have lookbacks that overlap its target. So after the best checkpoint is restored, a cluster run also fits one fixed membership per run (the mean of every training window's assigner scores, then upstream's sinkhorn: its batch mean with the whole training split as the batch) and scores validation and test under it, with split-conformal recalibrated on validation under that same membership. These `sl_val_fixed/*` and `sl_test_fixed/*` keys are the primary cluster result (`sl_val_fixed/loss` is the validation loss to pick `k` by); upstream's batch protocol stays logged, unchanged, as `sl_val/*` and `sl_test/*`, a sensitivity row. That row pools the membership over the evaluation micro-batch, which is not the same for every model: on the EMF grid it is 128 windows for EMForecaster (the 128-window micro-batches with 4-step gradient accumulation that `grid._memory_profile` gives it at `L336` and on every EMF2023 window) and for the Transformer (its job config's batch), against 512 for DLinear, PatchTST, TSMixer and LSTM, and on VoIP every model pools 64 (`VOIP_OVERRIDES`). The fixed protocol does not depend on the batch size, which is one more reason it is the primary one. The checkpoint's epoch is still the one training chose on the batch protocol's validation loss. At `k=1` the membership is all ones either way, so the two protocols give the same forecasts: the test metrics agree exactly, and the validation loss up to summation order, because the validation loader shuffles. For cluster runs trained before the fixed protocol existed, `python -m forecasting.ccm_rescore logs/cluster --mode fixed` scores the saved `supervised.pth` under it on the CPU, without retraining: it first checks that its rebuild of the run reproduces the logged `sl_test/{loss,mse,mae}`, then writes an `eval_fixed.json` sidecar beside the run, and never edits `log.json`.
-
-    Finally, this grid replaced a KMeans-partition head on 2026-08-06; the k1/k9 cells in commits `2ebc7f08` / `3d2de887` (deleted in `f24cf7a2`) came from that head and are not resumable against the current config.
-
-  - `voip`, `voip_perchannel`, `voip_cluster` - the multivariate, per-channel and CCM-clustering paradigms over the pooled VoIP datasets (`VOIP_MOBILE`, `VOIP_FIXED`; 6 channels; windows `L48_O12` and `L24_O6`; `k_values = [1, 2, 3, 6]`, from the `k = 1` baseline to one cluster per channel; the `voip_cluster` grid carries the same six models as `cluster`). They run the same drivers, job configs and log trees as their EMF counterparts - a VoIP cell lands in `logs/multivariate/<model>/voip_mobile/...` beside the EMF ones, one dataset slug apart - and add a **Persistence** column (`rf_emf_mv/persistence`, `exp.no_train`), which the EMF grids deliberately do not carry: four of the six VoIP channels repeat their previous value in 80-99% of steps, so without a last-value baseline a low error cannot be told apart from having learned nothing.
-
-    Every cell of these three grids also takes `grids.VOIP_OVERRIDES` on top of its job config (`sl.batch_size` 64, `data.train_split` 0.6, `data.val_split` 0.2). The split is the wider one because a 10% validation split of a 400-row trace leaves too few windows to calibrate a conformal interval on, and the batch is smaller because a pooled VoIP train split is ~1,900 windows, where a 512 batch would be four optimizer steps per epoch.
-
-  If `--setup` is omitted in grid mode, you are prompted interactively to pick one of the four EMF grids (`u`/`m`/`s`/`c`); the VoIP grids must be named explicitly.
-- `--window <spec>` restricts the sweep to specific lookback/horizon window(s) instead of every window in the grid. The four EMF grids define the same four `(seq_len, pred_len)` windows, `192x96`, `192x336`, `336x96` and `336x336`, and the VoIP grids their own two, `48x12` and `24x6`. Defined is not run: of the four EMF windows, the live `logs/<setup>/` trees hold only the `336x96` benchmark for `multivariate`, `univariate` and `cluster` (the L-ladder rungs at other windows under `logs/_archive/`, the cluster ones upstream-era, are not benchmark runs), so the three-paradigm EMF comparison exists at that window alone (`univariate_series` has all four), and `--window 336x96` keeps a sweep to it. Each window is written as `LxO` (e.g. `336x96`), `L_O` (`336_96`), or the `logs/` directory form `L336_O96`; comma-separate to select several (e.g. `--window 336x96,336x336`). A malformed spec is a clean error up front rather than a mid-run failure; a well-formed window outside the grid's own list runs as a one-off, like an off-grid `--k`. Omit to run every window.
-- `--seeds <spec>` trains every cell on more than one seed instead of just the canonical `69421` (default: 1 seed). A count counts up from the canonical seed, so `--seeds 3` runs `69421`, `69422`, `69423`; a comma-separated list (`--seeds 69422,69423`) selects those seeds exactly, for topping up a grid that already has `69421`. A lone number is always a count, so a single explicit seed needs a trailing comma: `--seeds 69421,` runs that seed alone, while a bare `--seeds 69421` plans 69,421 seeds. Because the canonical seed comes first and resume is per `(cell, seed)`, adding seeds to a finished sweep re-runs only the new ones — the existing runs are skipped, not retrained. Seeds are run seed-major (the whole grid at one seed, then the next), so an interrupted multi-seed sweep leaves a complete grid at one seed rather than a handful of cells with error bars. Note that on the per-channel grid a seed multiplies *band* runs: a second seed on the full `--setup univariate` grid is another ~1,700 trainings.
-- `--k <spec>` applies to the cluster grids (`cluster`, `voip_cluster`) only: restrict the sweep to specific cluster count(s) instead of every `k` in the grid. A single value (`--k 5`) or a comma-separated list (`--k 1,2`); duplicates collapse and the values run in ascending order. A requested `k` need *not* be one of the grid's own `k_values`: `k=num_channels` on the EMF grid (one cluster per band) is not swept, and `--k 27` reaches it, or any other count, as a one-off without editing `forecasting/grids.py`. An off-grid value is logged as `[NOTE ] ... running as a one-off` so it is never mistaken for part of the sweep, and the `k_values` actually covered are recorded in `logs/grid_report_<setup>.json`. Passing `--k` to a grid without a `k` dimension is a clean error.
-- `--dry_run` lists the cells and their target log directories without training anything. Useful to preview what a sweep will do.
-- `--jobs <int>` applies to the per-channel (`--setup univariate`) grid only: how many band trainings run concurrently (default 8). Lower it if the GPU runs out of memory.
-
-  **Running the per-channel grid faster with CUDA MPS.** A per-channel band is a tiny single-channel model, so its kernels are small and short. With several bands in flight the GPU time-slices between their processes: `nvidia-smi` reports ~97% utilization while the card draws about 58% of its power limit and most of its memory sits idle. NVIDIA's Multi-Process Service lets those processes' kernels run on the GPU at the same time instead. It changes scheduling, not arithmetic -- bands rerun under it are bit-identical -- and on the RTX 5090 it measured 1.19x faster per band at `--jobs 8`, then a further 1.28x in total throughput at `--jobs 12` (Transformer bands, each still well under the 1.5x slowdown that would cancel the extra concurrency). Start the daemon on a private pipe directory so only processes you give that directory attach, and nobody else's GPU jobs are affected on a shared machine:
-
-  ```bash
-  export CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-$USER/pipe CUDA_MPS_LOG_DIRECTORY=/tmp/mps-$USER/log
-  mkdir -p "$CUDA_MPS_PIPE_DIRECTORY" "$CUDA_MPS_LOG_DIRECTORY"
-  nvidia-cuda-mps-control -d                     # start (serves only this pipe directory)
-  python main.py --grid --setup univariate --window 336x96 --jobs 12
-  echo quit | nvidia-cuda-mps-control            # stop it when the sweep is done
-  ```
-
-  It only pays for many small concurrent processes: a single multivariate or cluster cell gains nothing, and neither does ARIMA, which fits on the CPU. The levers that would be faster still -- a larger batch, mixed precision, `torch.compile`, fewer epochs -- all change the numbers, so they are not used on benchmark runs. Each run records in its `log.json` whether it ran under MPS, as `parameters/exp/cuda_mps` (true when a daemon was listening on the pipe directory the run was given), and that directory, as `parameters/exp/cuda_mps_pipe_dir`, so its timing is read against runs that shared the GPU the same way.
+| Flag | What it does |
+|---|---|
+| `--model`, `--dataset`, `--window` | Run only these models, datasets or windows (comma-separated). |
+| `--k` | Cluster grids only: run only these cluster counts. |
+| `--seeds` | Train each cell on more seeds, for example `--seeds 3` for 69421-69423. |
+| `--jobs` | How many trainings run at once. |
+| `--dry_run` | List the cells without training. |
 
 Examples:
 
 ```bash
-# Full multivariate sweep, all four windows
-python main.py --grid --setup multivariate
+# Everything in the multivariate grid at one window
+python main.py --grid --setup multivariate --window 336x96
 
-# Per-band grid, one window only, 4 concurrent band trainings
-python main.py --grid --setup univariate --window 336x96 --jobs 4
+# One model on one dataset, as a quick trial
+python main.py --grid --setup multivariate --model DLinear --dataset ed2022 --window 336x96
 
-# Preview the single-series sweep for two windows without training
-python main.py --grid --setup univariate_series --window 192x96,336x96 --dry_run
-
-# Single-series sweep on one window, three seeds (69421-69423) for error bars
-python main.py --grid --setup univariate_series --window 336x96 --seeds 3
-
-# Cluster sweep, one window, every k in the grid (90 cells)
-python main.py --grid --setup cluster --window 336x96
-
-# Cluster at k=1 only (one cluster for every channel), the controlled baseline
+# The cluster grid at k=1 (no clustering), the controlled baseline
 python main.py --grid --setup cluster --window 336x96 --k 1
-
-# Trial run: DLinear+CCM on one dataset/window, sweeping k (4 cells).
-# --k 1 is the controlled no-clustering baseline; it matches the plain DLinear
-# cell below within seed noise (see the `cluster` notes above).
-python main.py --grid --setup cluster \
-    --model DLinear --dataset ed2022 --window 336x96 --k 1,2,4,6
-
-# The plain DLinear cell it sits beside, if not already on disk
-python main.py --grid --setup multivariate \
-    --model DLinear --dataset ed2022 --window 336x96
-
-# Build the comparison table (adds a k column on the cluster tree)
-python results/make.py extract && python results/make.py tables
 ```
 
-### Seeds and outputs
+**[docs/grids.md](./docs/grids.md) is the full grid reference.**
+It covers every flag in detail, how the cluster grid works and where it differs from the CCM paper's code, its two evaluation protocols, seeds and reproducibility, and running the per-channel grid faster with CUDA MPS.
 
-In single-job mode `main.py` iterates over every seed in `args.exp.seed_list`, building a fresh `Experiment` per seed.
-Grid mode ignores the config's `seed_list` and pins the seeds itself — the canonical `69421` unless `--seeds` asks for more — so a cell's log path is stable and the resume check can find it.
-With offline logging (`exp.neptune=False`), outputs land under `logs/<ablation_id>_<model_id>_<exp.id>/<seed>/`, containing the resolved `args.yaml`, `log.json` metrics, best weights `supervised.pth`, conformal calibration `scores` (when enabled), and 10 randomly-sampled forecast plots named `plot_<index>.png` (for example `plot_5320.png`), where `<index>` is a random position in the test set, not a sequential `plot_0.png … plot_9.png`.
+## Outputs and results
 
-A seed pins the initialization, not the GPU arithmetic: no run requests deterministic kernels, and the logged multivariate Transformer run at ED2022 `L336_O96`, seed `69421` (MSE 0.5060 after 99 epochs), does not reproduce on today's GPU stack, where reruns at the code that logged it and at current code agree with each other at MSE 0.4950 after 79 epochs. So the Transformer cells carry about 2% GPU run-to-run noise on top of their known seed collapse (only `69421` trains; at `69422` and `69423` the multivariate Transformer is dead from init on all three EMF datasets).
+Every run writes to its own folder:
 
-## Usage: hyperparameter tuning
+```
+logs/<setup>/<model_id>/<dataset>/L<lookback>_O<horizon>_<cp|pf>/<seed>/
+```
+
+`cp` means conformal prediction was on; `pf` means point forecasts only.
+Each folder holds the resolved `args.yaml`, the metrics in `log.json`, the best weights `supervised.pth`, and 10 forecast plots from random test positions (`plot_<index>.png`).
+
+To turn the logs into tables:
+
+```bash
+python results/make.py extract   # logs/   -> results/frames/*.csv (one row per run)
+python results/make.py tables    # frames/ -> results/tables/*.md
+```
+
+Start reading at [`results/tables/index.md`](./results/tables/index.md).
+[`results/README.md`](./results/README.md) documents every table, figure and check.
+
+## Uncertainty (conformal prediction)
+
+When `conf.conf` is on in a job's config, each run calibrates prediction intervals on the validation set and reports how often the test values fall inside them.
+The target error rate is `conf.alpha` (default 0.1, meaning 90% coverage).
+It reports coverage per horizon step and over the whole horizon, with and without a Bonferroni correction, plus the interval widths.
+The code is in `forecasting/<setup>/conformal/coverage.py`.
+
+The paper's Trade-off Score (TOS), which balances coverage against interval width, is computed offline by `tradeoff.py`.
+It uses paths relative to its own folder, so run it from there:
+
+```bash
+cd forecasting/univariate/conformal
+python tradeoff.py <dataset> <pred_len> <alpha>
+```
+
+It reads `forecasting/univariate/analysis/neptune/results/conformal/ctsf.csv`, which is produced from Neptune results (see below).
+
+## Other tools
+
+### Hyperparameter tuning
 
 ```bash
 python forecasting/univariate/tuning/tune.py <job_name> [--cc] [--acc <account>]
 ```
 
-Use `forecasting/multivariate/tuning/tune.py` for the multivariate jobs.
-The tuner reads `forecasting/<setup>/jobs/exp/<job_name>/ablation.yaml`, takes the `itertools` product of the ablation grid, and either runs each configuration locally or, with `--cc`, submits SLURM / Compute Canada jobs via `jobs/hpc/submit.py`.
+The tuner reads the job's `ablation.yaml`, runs every combination in it, and with `--cc` submits them as SLURM jobs on Compute Canada instead of running locally.
+Use `forecasting/multivariate/tuning/tune.py` for multivariate jobs.
+Only the `rf_emf/*` jobs ship an `ablation.yaml`, so the `rf_emf_mv/*` jobs cannot be tuned out of the box.
 
-Each setup ships its own tuner: `forecasting/univariate/tuning/tune.py` hardcodes the `forecasting/univariate` base path, and `forecasting/multivariate/tuning/tune.py` hardcodes the `forecasting/multivariate` base path.
-Caveat: only the `rf_emf/*` jobs ship an `ablation.yaml`.
-The five `rf_emf_mv/*` job folders contain only `args.yaml`, so the tuner cannot grid-search the multivariate-specific models out of the box; it would not find an ablation file.
+### Neptune logging
 
-## Usage: conformal prediction and uncertainty quantification
+Logging to [Neptune](https://neptune.ai) is optional.
+Set `neptune: True` under `exp` in a job's `args.yaml` and provide `NEPTUNE_API_TOKEN` in the environment (a `.env` file works).
+Without it, everything stays local under `logs/`.
+`forecasting/<setup>/analysis/neptune/get_results.py` collects a tuning run's results from Neptune into a `results.csv`.
 
-Conformal prediction is shared between the two setups (`forecasting/<setup>/conformal/`, byte-identical between them).
+### EMF measurement plots
 
-- `coverage.py` is used at train/test time when `conf.conf` is set.
-  It calibrates per-step L1 nonconformity scores on the validation set, computes uncorrected and Bonferroni-corrected critical scores per horizon and channel (from `conf.alpha`, default 0.1), forms prediction intervals as `pred ± scores`, and reports independent (per-horizon) and joint (all-horizon) coverage plus interval widths.
-- `tradeoff.py` is an offline post-hoc script that computes the paper's Trade-off Score (TOS), combining weighted-average coverage with a sigmoid-transformed mean interval width.
-  It reads a results CSV and is invoked separately:
-
-```bash
-python forecasting/univariate/conformal/tradeoff.py <dataset> <pred_len> <alpha>
-```
-
-## Usage: multivariate EMF analysis CLI
-
-The `multivariate/` tool visualizes the processed measurement CSVs and has its own detailed documentation in [`multivariate/README.md`](./multivariate/README.md).
+`multivariate/` is a separate plotting tool for the raw measurement CSVs (EMF levels over time and band correlation heatmaps).
+It has nothing to do with model training.
 
 ```bash
-cd multivariate/src
-../../venv/bin/python emf_multivariate.py <command> [options]
+python multivariate/src/emf_multivariate.py all
 ```
 
-Commands are `all`, `emf-levels`, `heatmaps`, and `normalize`.
-Paths are resolved relative to the script, so the working directory does not matter: it reads `data/multivariate/processed/` and writes `results/figures/` (override with `--outdir`).
-See `multivariate/README.md` for the full option tables and dataset labels.
+The commands are `all`, `emf-levels`, `heatmaps` and `normalize`.
+See [`multivariate/README.md`](./multivariate/README.md) for the options.
 
-## Experiment tracking and HPC
+## Further reading
 
-Neptune.ai logging is optional and free for researchers and students.
-Set `neptune: True` in `args.yaml` (under the `exp` category) and provide `NEPTUNE_API_TOKEN` in the environment (a `.env` file is supported).
-With Neptune enabled the run logs to the configured project and uploads the config and model checkpoint; otherwise all logs stay offline under `logs/`.
-
-To aggregate a hyperparameter run, `forecasting/<setup>/analysis/neptune/get_results.py` reads a `<model>.yaml` from `forecasting/<setup>/analysis/neptune/ablations/`, iterates every run, reports the best result by a `deciding_metric` (for example MSE), and saves `results.csv`.
-
-Cluster submission uses `submitit` through `forecasting/<setup>/jobs/hpc/submit.py`, driven by the SLURM / Compute Canada configuration and the `--cc` path of the tuner.
+| Doc | Covers |
+|---|---|
+| [`docs/grids.md`](./docs/grids.md) | Every grid and flag in detail, the cluster method, seeds, CUDA MPS |
+| [`forecasting/README.md`](./forecasting/README.md) | The forecasting package and how the two setups relate |
+| [`forecasting/univariate/README.md`](./forecasting/univariate/README.md) | The single-series setup: config, models, training |
+| [`forecasting/multivariate/README.md`](./forecasting/multivariate/README.md) | The many-band setup and how it differs |
+| [`results/README.md`](./results/README.md) | The results pipeline, tables and figures |
+| [`multivariate/README.md`](./multivariate/README.md) | The measurement plotting tool |
 
 ## License
 
-MIT License (declared in `pyproject.toml`).
+MIT, as declared in `pyproject.toml`.
+A `LICENSE` file has not been added yet.
 
-TODO: a `LICENSE` file is not yet present at the repository root and should be added.
+## Citation
 
-## Original paper and citation
-
-The methods reproduced here are from Mootoo, Tabassum, and Chiaraviglio (IEEE Transactions on Network Science and Engineering, 2025).
+The methods reproduced here are from Mootoo, Tabassum and Chiaraviglio (2025).
 If you use this work, please cite the original paper:
 
 ```bibtex
@@ -308,10 +299,10 @@ If you use this work, please cite the original paper:
 
 ## Acknowledgments
 
-Full credit for the EMForecaster method, the paper, and the underlying measurement datasets goes to the original authors, Xavier Mootoo, Hina Tabassum, and Luca Chiaraviglio.
+Full credit for the EMForecaster method, the paper and the measurement datasets goes to the original authors, Xavier Mootoo, Hina Tabassum and Luca Chiaraviglio.
 This repository only reproduces and extends their work.
 
 ## Contact
 
 Daniel Chahine (repository owner) - chahinedaniel0@gmail.com - https://github.com/DanielChahine0/emforecaster-repo.
-For access to the proprietary measurement data, contact the original paper's authors (Luca Chiaraviglio).
+For access to or reuse of the measurement data, contact the original paper's authors (Luca Chiaraviglio).
